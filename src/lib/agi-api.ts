@@ -1,12 +1,18 @@
+import { supabase } from "@/integrations/supabase/client";
+
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const API_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 async function agiCall(fn: string, body: Record<string, unknown>) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token || API_KEY;
+
   const resp = await fetch(`${BASE_URL}/functions/v1/${fn}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${token}`,
+      apikey: API_KEY,
     },
     body: JSON.stringify(body),
   });

@@ -13,14 +13,14 @@ async function getClerkUserId(req: Request): Promise<string | null> {
 }
 
 async function evaluateAnswer(apiKey: string, question: string, expected: string, actual: string) {
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `Score 0-10. Return JSON: {"score": N, "reasoning": "..."}` }, { role: "user", content: `Q: ${question}\nExpected: ${expected}\nActual: ${actual}` }] }) });
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "system", content: `Score 0-10. Return JSON: {"score": N, "reasoning": "..."}` }, { role: "user", content: `Q: ${question}\nExpected: ${expected}\nActual: ${actual}` }] }) });
   if (!resp.ok) return { score: 0, reasoning: "Evaluation failed" };
   const data = await resp.json();
   try { return JSON.parse((data.choices?.[0]?.message?.content || "").replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return { score: 5, reasoning: "Parse error" }; }
 }
 
 async function getAIAnswer(apiKey: string, question: string, systemPrompt: string) {
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: question }] }) });
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: question }] }) });
   if (!resp.ok) return "ERROR";
   const data = await resp.json();
   return data.choices?.[0]?.message?.content || "No response";

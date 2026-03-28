@@ -179,19 +179,39 @@ serve(async (req) => {
         const apiKey = Deno.env.get("E2B_API_KEY");
         if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
 
-        let streamUrl = "";
-        const desktop = await Sandbox.create({
-          apiKey,
-          timeoutMs: 300_000, // 5 minute timeout
-          videoStream: true,
-          onVideoStreamStart: (url) => { streamUrl = url; },
-        });
+        let streamUrl: string | null = null;
+
+        // Try creating with video stream first, fall back without
+        let desktop: Sandbox;
+        try {
+          desktop = await Sandbox.create({
+            apiKey,
+            timeoutMs: 300_000,
+            videoStream: true,
+            onVideoStreamStart: (url) => { streamUrl = url; },
+          });
+        } catch {
+          // Video stream not supported — create without it
+          desktop = await Sandbox.create({
+            apiKey,
+            timeoutMs: 300_000,
+          });
+        }
 
         const sandboxId = desktop.sandboxId;
 
+        // Try to get stream URL if we don't have one yet
+        if (!streamUrl) {
+          try {
+            streamUrl = await desktop.getVideoStreamUrl();
+          } catch {
+            // Video streaming not available — will use screenshot-only mode
+          }
+        }
+
         return json({
           sessionId: sandboxId,
-          streamUrl: streamUrl || await desktop.getVideoStreamUrl(),
+          streamUrl: streamUrl || null,
           status: "running",
         });
       }

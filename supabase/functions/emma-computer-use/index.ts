@@ -125,6 +125,7 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
       timeout: 300,
       autoPause: false,
       allow_internet_access: true,
+      secure: true,
       metadata: { userId, task: task || "general" },
     }),
   });
@@ -231,7 +232,12 @@ async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<U
 }
 
 // Helper to get or reconnect to a sandbox
-async function getSandbox(sandboxId: string): Promise<SandboxSession> {
+async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {
+  if (envdAccessToken) {
+    const session = { sandboxId, envdAccessToken };
+    sandboxCache.set(sandboxId, session);
+    return session;
+  }
   return await connectSandbox(sandboxId);
 }
 
@@ -405,18 +411,18 @@ serve(async (req) => {
         return json({
           sessionId: sandbox.sandboxId,
           streamUrl: null,
-          envdAccessToken: "server-managed",
+          envdAccessToken: sandbox.envdAccessToken,
           status: "running",
         });
       }
 
       // Take a screenshot of the sandbox
       case "screenshot": {
-        const { sessionId } = body;
+        const { sessionId, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
-          const sandbox = await getSandbox(sessionId);
+          const sandbox = await getSandbox(sessionId, envdAccessToken);
           const screenshot = await captureScreenshot(sandbox);
           return json({ screenshot });
         } catch (error) {
@@ -425,20 +431,20 @@ serve(async (req) => {
       }
 
       case "wait_until_ready": {
-        const { sessionId } = body;
+        const { sessionId, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
-        const sandbox = await getSandbox(sessionId);
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
         const readiness = await waitForDesktopReady(sandbox);
         return readiness.ready ? json(readiness) : json(readiness, 408);
       }
 
       // Execute an action on the sandbox (mouse/keyboard)
       case "execute": {
-        const { sessionId, actionType, params } = body;
+        const { sessionId, actionType, params, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
-        const sandbox = await getSandbox(sessionId);
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
         let result: any = { success: true };
         let pyCode = "";
 
@@ -517,10 +523,10 @@ serve(async (req) => {
 
       // AI reasoning step: take screenshot, send to AI, get next action
       case "think": {
-        const { sessionId, task, actionHistory, userMessage } = body;
+        const { sessionId, task, actionHistory, userMessage, envdAccessToken } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
 
-        const sandbox = await getSandbox(sessionId);
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
         let screenshotBase64 = "";
 
         try {

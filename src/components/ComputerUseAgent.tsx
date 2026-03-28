@@ -87,47 +87,76 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
     const startStepId = addStep({ action: "start_session", reasoning: "Spinning up isolated OS environment...", status: "executing" });
 
+    let sid: string;
+    let token: string;
+
     try {
       const res = await cuApi("start_session", { task: task.trim() }, getToken);
-      setSessionId(res.sessionId);
+      sid = res.sessionId;
+      token = res.envdAccessToken;
+      setSessionId(sid);
       setStreamUrl(res.streamUrl);
-      setEnvdToken(res.envdAccessToken);
-      updateStep(startStepId, { status: "done", reasoning: `Desktop sandbox ready (${res.sessionId.slice(0, 8)}...)` });
-
-      setStatus("running");
-      setIsRunning(true);
-
-      const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop initialization signal...", status: "executing" });
-      const readiness = await cuApi("wait_until_ready", { sessionId: res.sessionId, envdAccessToken: res.envdAccessToken }, getToken) as DesktopReadyResponse;
-
-      if (readiness.screenshot) {
-        setCurrentScreenshot(readiness.screenshot);
-      }
-
-      updateStep(waitStepId, {
-        status: "done",
-        screenshot: readiness.screenshot,
-        reasoning: `${readiness.message} (${Math.ceil(readiness.waitedMs / 1000)}s)`,
-      });
-
-      // Start the agent loop
-      await runAgentLoop(res.sessionId, task.trim(), res.envdAccessToken);
+      setEnvdToken(token);
+      updateStep(startStepId, { status: "done", reasoning: `Desktop sandbox ready (${sid.slice(0, 8)}...)` });
     } catch (e: any) {
-      const errorMessage = e.message || "Failed to start session";
-
-      if (errorMessage.includes("Desktop did not finish initializing")) {
-        addStep({
-          action: "wait_for_desktop",
-          reasoning: errorMessage,
-          status: "error",
-        });
-      }
-
-      updateStep(startStepId, { status: "error", reasoning: `Failed: ${errorMessage}` });
+      updateStep(startStepId, { status: "error", reasoning: `Failed: ${e.message || "Failed to start session"}` });
       setIsRunning(false);
       setStatus("error");
-      toast.error(errorMessage);
+      toast.error(e.message || "Failed to start session");
+      return;
     }
+
+    // Desktop init + readiness polling — separate try/catch so errors aren't blamed on start_session
+    const initStepId = addStep({ action: "init_desktop", reasoning: "Initializing display server...", status: "executing" });
+    try {
+      await cuApi("init_desktop", { sessionId: sid, envdAccessToken: token }, getToken);
+      updateStep(initStepId, { status: "done", reasoning: "Desktop services started" });
+    } catch (e: any) {
+      updateStep(initStepId, { status: "error", reasoning: `Init failed: ${e.message}` });
+      setIsRunning(false);
+      setStatus("error");
+      toast.error(e.message || "Desktop init failed");
+      return;
+    }
+
+    setStatus("running");
+    setIsRunning(true);
+
+    // Poll for screenshot readiness (client-side loop, short server calls)
+    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop to become ready...", status: "executing" });
+    const pollStart = Date.now();
+    const POLL_TIMEOUT = 45_000;
+    let ready = false;
+
+    while (Date.now() - pollStart < POLL_TIMEOUT && !abortRef.current) {
+      try {
+        const result = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken);
+        if (result.screenshot) {
+          setCurrentScreenshot(result.screenshot);
+          updateStep(waitStepId, {
+            status: "done",
+            screenshot: result.screenshot,
+            reasoning: `Desktop ready (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
+          });
+          ready = true;
+          break;
+        }
+      } catch {
+        // Screenshot not ready yet, keep polling
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    if (!ready) {
+      updateStep(waitStepId, { status: "error", reasoning: "Desktop did not become ready in time" });
+      setIsRunning(false);
+      setStatus("error");
+      toast.error("Desktop did not become ready in time");
+      return;
+    }
+
+    // Start the agent loop
+    await runAgentLoop(sid, task.trim(), token);
   }, [task, getToken, addStep, updateStep]);
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {

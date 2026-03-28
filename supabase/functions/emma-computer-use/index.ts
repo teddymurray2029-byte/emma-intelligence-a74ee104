@@ -538,12 +538,23 @@ serve(async (req) => {
         }
       }
 
+      // Initialize desktop services (Xvfb, window manager) — fast, no polling
+      case "init_desktop": {
+        const { sessionId, envdAccessToken } = body;
+        if (!sessionId) return json({ error: "Missing sessionId" }, 400);
+
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        console.log(`[emma-cu] init_desktop for ${sessionId}`);
+        await initDesktop(sandbox);
+        console.log(`[emma-cu] init_desktop done for ${sessionId}`);
+        return json({ success: true, message: "Desktop services started" });
+      }
+
       case "wait_until_ready": {
         const { sessionId, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
-        await initDesktop(sandbox);
         const readiness = await waitForDesktopReady(sandbox);
         return readiness.ready ? json(readiness) : json(readiness, 408);
       }

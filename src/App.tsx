@@ -13,6 +13,7 @@ import Settings from "./pages/Settings";
 import AGIDashboard from "./pages/AGIDashboard";
 import ASITransformation from "./pages/ASITransformation";
 import ApiKeys from "./pages/ApiKeys";
+import AdminLearning from "./pages/AdminLearning";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -47,6 +48,7 @@ const App = () => (
             <Route path="/agi" element={<ProtectedRoute><AGIDashboard /></ProtectedRoute>} />
             <Route path="/asi" element={<ProtectedRoute><ASITransformation /></ProtectedRoute>} />
             <Route path="/api-keys" element={<ProtectedRoute><ApiKeys /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><AdminLearning /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

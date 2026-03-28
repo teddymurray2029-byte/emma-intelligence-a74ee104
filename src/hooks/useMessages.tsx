@@ -1,37 +1,43 @@
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { dbProxy } from "@/lib/db-proxy";
 import type { Message } from "@/lib/emma-stream";
 
-export function useMessages(conversationId: string | null) {
+export function useMessages(conversationId: string | null, getToken?: () => Promise<string | null>) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const tokenGetter = getToken || (async () => null);
 
   const load = useCallback(async () => {
     if (!conversationId) { setMessages([]); return; }
     setLoading(true);
-    const { data } = await supabase
-      .from("messages")
-      .select("role, content, metadata")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
-    if (data) {
-      setMessages(data.map((m: any) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        imageUrl: m.metadata?.imageUrl,
-      })));
+    try {
+      const { data } = await dbProxy("list_messages", { conversation_id: conversationId }, tokenGetter);
+      if (data) {
+        setMessages(data.map((m: any) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          imageUrl: m.metadata?.imageUrl,
+        })));
+      }
+    } catch (e) {
+      console.error("Failed to load messages:", e);
     }
     setLoading(false);
-  }, [conversationId]);
+  }, [conversationId, tokenGetter]);
 
   const saveMessage = async (role: string, content: string, metadata?: Record<string, any>) => {
     if (!conversationId) return;
-    await supabase.from("messages").insert({
-      conversation_id: conversationId,
-      role,
-      content,
-      metadata: metadata || {},
-    });
+    try {
+      await dbProxy("save_message", {
+        conversation_id: conversationId,
+        role,
+        content,
+        metadata: metadata || {},
+      }, tokenGetter);
+    } catch (e) {
+      console.error("Failed to save message:", e);
+    }
   };
 
   const addLocal = (msg: Message) => {

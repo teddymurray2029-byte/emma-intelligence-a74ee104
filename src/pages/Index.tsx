@@ -14,7 +14,8 @@ import { VoicePanel } from "@/components/VoicePanel";
 import { DataAnalysisPanel } from "@/components/DataAnalysisPanel";
 import { MemoryControlPanel } from "@/components/MemoryControlPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
-import { streamChat, generateImage, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
+import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
+import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
@@ -22,9 +23,9 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { useNavigate, Navigate } from "react-router-dom";
 import { toast } from "sonner";
-import { PanelRightClose, PanelRightOpen, Zap, Shield } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
+import { dbProxy } from "@/lib/db-proxy";
 
 const WELCOME_SUGGESTIONS = [
   { text: "Research quantum computing breakthroughs in 2026", mode: "research" as EmmaMode },
@@ -34,11 +35,11 @@ const WELCOME_SUGGESTIONS = [
 ];
 
 export default function Index() {
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, loading: authLoading, signOut, getToken } = useAuth();
   const navigate = useNavigate();
-  const { conversations, create, remove, rename } = useConversations(user?.id);
+  const { conversations, create, remove, rename, update } = useConversations(user?.id, getToken);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId);
+  const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId, getToken);
   const [isLoading, setIsLoading] = useState(false);
   const [showRight, setShowRight] = useState(true);
   const [mode, setMode] = useState<EmmaMode>("chat");
@@ -46,10 +47,16 @@ export default function Index() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Set token getters for API modules
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (getToken) {
+      setStreamTokenGetter(getToken);
+      setAgiTokenGetter(getToken);
     }
+  }, [getToken]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isLoading]);
 
   useEffect(() => { loadMessages(); }, [activeConvId, loadMessages]);
@@ -69,7 +76,7 @@ export default function Index() {
       convId = conv.id;
       setActiveConvId(conv.id);
     } else if (messages.length === 0) {
-      await supabase.from("conversations").update({ title: input.slice(0, 60) }).eq("id", convId);
+      await update(convId, { title: input.slice(0, 60) });
     }
     return convId;
   };
@@ -80,62 +87,38 @@ export default function Index() {
     const conv = await create(title);
     if (!conv) { toast.error("Failed to create branch"); return; }
     for (const msg of branchedMessages) {
-      await supabase.from("messages").insert({
+      await dbProxy("save_message", {
         conversation_id: conv.id, role: msg.role, content: msg.content,
         metadata: msg.imageUrl ? { imageUrl: msg.imageUrl } : {},
-      });
+      }, getToken);
     }
-    await supabase.from("conversations").update({ parent_id: activeConvId } as any).eq("id", conv.id);
+    await update(conv.id, { parent_id: activeConvId });
     setActiveConvId(conv.id);
     toast.success("Conversation branched!");
-  }, [messages, create, activeConvId]);
+  }, [messages, create, activeConvId, getToken, update]);
 
   const handleCreateArtifact = useCallback((title: string, content: string, type: string) => {
-    const artifact: Artifact = {
-      id: crypto.randomUUID(),
-      title,
-      type: type as Artifact["type"],
-      content,
-      version: 1,
-      versions: [{ content, timestamp: new Date().toISOString() }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const artifact: Artifact = { id: crypto.randomUUID(), title, type: type as Artifact["type"], content, version: 1, versions: [{ content, timestamp: new Date().toISOString() }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     setArtifacts(prev => [...prev, artifact]);
-    setMode("artifacts");
-    setShowRight(true);
+    setMode("artifacts"); setShowRight(true);
     toast.success(`Artifact created: ${title}`);
   }, []);
 
   const handleUpdateArtifact = useCallback((id: string, content: string) => {
-    setArtifacts(prev => prev.map(a =>
-      a.id === id ? {
-        ...a,
-        content,
-        version: a.version + 1,
-        versions: [...a.versions, { content, timestamp: new Date().toISOString() }],
-        updatedAt: new Date().toISOString(),
-      } : a
-    ));
+    setArtifacts(prev => prev.map(a => a.id === id ? { ...a, content, version: a.version + 1, versions: [...a.versions, { content, timestamp: new Date().toISOString() }], updatedAt: new Date().toISOString() } : a));
   }, []);
 
-  const handleDeleteArtifact = useCallback((id: string) => {
-    setArtifacts(prev => prev.filter(a => a.id !== id));
-  }, []);
+  const handleDeleteArtifact = useCallback((id: string) => { setArtifacts(prev => prev.filter(a => a.id !== id)); }, []);
 
   const send = async (input: string) => {
     const convId = await ensureConversation(input);
     if (!convId) return;
 
-    // Check for artifact creation pattern
-    const artifactMatch = input.match(/^(?:create|make|build|write)\s+(?:a\s+)?(?:new\s+)?(code|document|report|plan|html|react)\s*[:\-]?\s*(.+)/i);
-
     if (input.startsWith("/image ")) {
       const prompt = input.slice(7).trim();
       if (!prompt) { toast.error("Please provide an image prompt"); return; }
       const userMsg: Message = { role: "user", content: input };
-      addLocal(userMsg);
-      await saveMessage("user", input);
+      addLocal(userMsg); await saveMessage("user", input);
       setIsLoading(true);
       try {
         updateLastAssistant("🎨 Generating image...");
@@ -144,198 +127,103 @@ export default function Index() {
         updateLastAssistant(content, imageUrl);
         await saveMessage("assistant", content, { imageUrl });
       } catch (err: any) {
-        updateLastAssistant(`Failed to generate image: ${err.message}`);
-        await saveMessage("assistant", `Failed to generate image: ${err.message}`);
+        updateLastAssistant(`Failed: ${err.message}`);
+        await saveMessage("assistant", `Failed: ${err.message}`);
       }
-      setIsLoading(false);
-      return;
+      setIsLoading(false); return;
     }
 
     const userMsg: Message = { role: "user", content: input, mode };
-    addLocal(userMsg);
-    await saveMessage("user", input);
+    addLocal(userMsg); await saveMessage("user", input);
     setIsLoading(true);
-
     let assistantSoFar = "";
-    const allMessages = [...messages, userMsg];
 
     try {
       await streamChat({
-        messages: allMessages,
-        mode,
-        answerStyle,
-        onDelta: (chunk) => {
-          assistantSoFar += chunk;
-          updateLastAssistant(assistantSoFar);
-        },
+        messages: [...messages, userMsg], mode, answerStyle,
+        onDelta: (chunk) => { assistantSoFar += chunk; updateLastAssistant(assistantSoFar); },
         onDone: async () => {
           setIsLoading(false);
           if (assistantSoFar) {
             await saveMessage("assistant", assistantSoFar);
-
-            // Auto-detect artifacts in response
             const codeBlocks = assistantSoFar.match(/```(\w+)?\n([\s\S]*?)```/g);
-            if (codeBlocks && codeBlocks.length > 0 && assistantSoFar.length > 500) {
-              // Suggest creating artifact if large code block
+            if (codeBlocks?.length && assistantSoFar.length > 500) {
               const firstBlock = codeBlocks[0];
               const lang = firstBlock.match(/```(\w+)/)?.[1] || "text";
               const code = firstBlock.replace(/```\w*\n/, "").replace(/```$/, "");
-              if (code.length > 200) {
-                handleCreateArtifact(`Generated ${lang}`, code, "code");
-              }
+              if (code.length > 200) handleCreateArtifact(`Generated ${lang}`, code, "code");
             }
           }
         },
-        onError: (err) => {
-          setIsLoading(false);
-          toast.error(err);
-        },
+        onError: (err) => { setIsLoading(false); toast.error(err); },
       });
-    } catch {
-      setIsLoading(false);
-      toast.error("Failed to connect to Emma");
-    }
+    } catch { setIsLoading(false); toast.error("Failed to connect to Emma"); }
   };
 
-  if (authLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <EmmaAvatar size="lg" />
-      </div>
-    );
-  }
-
+  if (authLoading) return <div className="h-screen flex items-center justify-center bg-background"><EmmaAvatar size="lg" /></div>;
   if (!user) return <Navigate to="/sign-in" />;
 
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";
 
-  // Determine what to show in the right panel based on mode
   const renderRightPanel = () => {
     switch (mode) {
-      case "research":
-        return <ResearchPanel onCreateArtifact={handleCreateArtifact} />;
-      case "artifacts":
-        return (
-          <ArtifactPanel
-            artifacts={artifacts}
-            onUpdate={handleUpdateArtifact}
-            onCreate={handleCreateArtifact}
-            onDelete={handleDeleteArtifact}
-          />
-        );
-      case "think":
-        return <ThinkPanel />;
-      case "builder":
-        return <BuilderPanel />;
-      case "voice":
-        return <VoicePanel />;
-      case "data":
-        return <DataAnalysisPanel />;
-      case "memory":
-        return <MemoryControlPanel />;
-      default:
-        return <InspectorPanel isProcessing={isLoading} />;
+      case "research": return <ResearchPanel onCreateArtifact={handleCreateArtifact} />;
+      case "artifacts": return <ArtifactPanel artifacts={artifacts} onUpdate={handleUpdateArtifact} onCreate={handleCreateArtifact} onDelete={handleDeleteArtifact} />;
+      case "think": return <ThinkPanel />;
+      case "builder": return <BuilderPanel />;
+      case "voice": return <VoicePanel />;
+      case "data": return <DataAnalysisPanel />;
+      case "memory": return <MemoryControlPanel />;
+      default: return <InspectorPanel isProcessing={isLoading} />;
     }
   };
 
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
-        <EmmaSidebar
-          conversations={conversations}
-          activeId={activeConvId}
-          onSelect={handleSelectConv}
-          onCreate={handleNewChat}
-          onDelete={remove}
-          onRename={rename}
-          onNavigate={navigate}
-          onSignOut={signOut}
-        />
-
+        <EmmaSidebar conversations={conversations} activeId={activeConvId} onSelect={handleSelectConv} onCreate={handleNewChat} onDelete={remove} onRename={rename} onNavigate={navigate} onSignOut={signOut} />
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Header */}
           <header className="h-auto flex flex-col border-b border-border bg-card">
             <div className="h-11 flex items-center px-3 gap-2">
               <SidebarTrigger />
               <div className="flex items-center gap-2 flex-1">
                 <h1 className="text-sm font-semibold text-foreground">Emma</h1>
-                <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                  AI Workspace
-                </span>
+                <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">AI Workspace</span>
               </div>
-
-              {/* Answer style toggle (chat mode only) */}
               {isChatMode && (
                 <div className="flex items-center gap-0.5 mr-2">
                   {(["concise", "standard", "deep", "direct"] as AnswerStyle[]).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setAnswerStyle(s)}
-                      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
-                        answerStyle === s
-                          ? s === "direct" ? "bg-accent/20 text-accent" : "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
+                    <button key={s} onClick={() => setAnswerStyle(s)} className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${answerStyle === s ? s === "direct" ? "bg-accent/20 text-accent" : "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
                       {s === "direct" ? <span className="flex items-center gap-0.5"><Zap className="h-2 w-2" />{s}</span> : s}
                     </button>
                   ))}
                 </div>
               )}
-
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-primary emma-pulse" />
-                <span className="text-xs font-mono text-primary">ONLINE</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 ml-1"
-                onClick={() => setShowRight(!showRight)}
-              >
+              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-primary emma-pulse" /><span className="text-xs font-mono text-primary">ONLINE</span></div>
+              <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
                 {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
               </Button>
             </div>
-
-            {/* Mode Switcher */}
-            <div className="px-3 pb-2 overflow-x-auto">
-              <ModeSwitcher mode={mode} onChange={setMode} compact />
-            </div>
+            <div className="px-3 pb-2 overflow-x-auto"><ModeSwitcher mode={mode} onChange={setMode} compact /></div>
           </header>
 
           <div className="flex-1 overflow-hidden">
             <ResizablePanelGroup direction="horizontal">
-              {/* Left: Chat (always visible, but sized based on mode) */}
               <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>
                 <div className="flex flex-col h-full">
                   <div ref={scrollRef} className="flex-1 overflow-y-auto">
                     <AnimatePresence mode="wait">
                       {showWelcome ? (
-                        <motion.div
-                          key="welcome"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8"
-                        >
+                        <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8">
                           <EmmaAvatar size="lg" />
                           <div className="text-center space-y-3 max-w-lg">
-                            <h2 className="text-2xl font-bold emma-glow-text">
-                              Hello, I'm Emma
-                            </h2>
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              Your AI operating system — research, create, analyze, and build with
-                              autonomous agents, persistent memory, and source-grounded answers.
-                            </p>
+                            <h2 className="text-2xl font-bold emma-glow-text">Hello, I'm Emma</h2>
+                            <p className="text-sm text-muted-foreground leading-relaxed">Your AI operating system — research, create, analyze, and build with autonomous agents, persistent memory, and source-grounded answers.</p>
                           </div>
                           <div className="grid grid-cols-2 gap-2 max-w-md w-full">
                             {WELCOME_SUGGESTIONS.map((s) => (
-                              <button
-                                key={s.text}
-                                onClick={() => { setMode(s.mode); if (s.mode === "chat") send(s.text); }}
-                                className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1"
-                              >
+                              <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") send(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
                                 <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
                                 <p>{s.text}</p>
                               </button>
@@ -343,52 +231,24 @@ export default function Index() {
                           </div>
                         </motion.div>
                       ) : (
-                        <motion.div
-                          key="chat"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          className="max-w-3xl mx-auto px-4 py-6 space-y-4"
-                        >
+                        <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-6 space-y-4">
                           {messages.map((m, i) => (
-                            <ChatMessage
-                              key={i}
-                              message={m}
-                              index={i}
-                              conversationId={activeConvId}
-                              onBranch={handleBranch}
-                              onOpenInEditor={(code, lang) => {
-                                handleCreateArtifact(`Code Snippet (${lang})`, code, "code");
-                              }}
-                            />
+                            <ChatMessage key={i} message={m} index={i} conversationId={activeConvId} onBranch={handleBranch} onOpenInEditor={(code, lang) => handleCreateArtifact(`Code Snippet (${lang})`, code, "code")} />
                           ))}
                           {isLoading && messages[messages.length - 1]?.role === "user" && (
-                            <div className="flex gap-3">
-                              <EmmaAvatar size="sm" />
-                              <TypingIndicator />
-                            </div>
+                            <div className="flex gap-3"><EmmaAvatar size="sm" /><TypingIndicator /></div>
                           )}
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
-
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
                     <ChatInput onSend={send} disabled={isLoading} userId={user.id} />
-                    <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">
-                      Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle} · Multi-Agent · Memory-Aware
-                    </p>
+                    <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle} · Multi-Agent · Memory-Aware</p>
                   </div>
                 </div>
               </ResizablePanel>
-
-              {showRight && (
-                <>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={45} minSize={25}>
-                    {renderRightPanel()}
-                  </ResizablePanel>
-                </>
-              )}
+              {showRight && (<><ResizableHandle withHandle /><ResizablePanel defaultSize={45} minSize={25}>{renderRightPanel()}</ResizablePanel></>)}
             </ResizablePanelGroup>
           </div>
         </div>

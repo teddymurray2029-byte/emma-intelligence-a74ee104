@@ -525,7 +525,7 @@ serve(async (req) => {
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         console.log(`[emma-cu] init_desktop for ${sessionId}`);
-        await initDesktop(sandbox);
+        await kickstartDesktop(sandbox);
         console.log(`[emma-cu] init_desktop done for ${sessionId}`);
         return json({ success: true, message: "Desktop services started" });
       }

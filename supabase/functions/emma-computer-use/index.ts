@@ -1,14 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
+import { Sandbox } from "npm:@e2b/desktop@1.0.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const E2B_API = "https://api.e2b.dev";
 const DESKTOP_BOOT_TIMEOUT_MS = 45_000;
 const DESKTOP_BOOT_POLL_MS = 2_000;
 
@@ -25,51 +25,33 @@ function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// E2B Desktop sandbox helpers
-async function e2bRequest(path: string, method = "GET", body?: any) {
+// Connect to an existing E2B Desktop sandbox by ID
+async function connectDesktop(sandboxId: string): Promise<Sandbox> {
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) throw new Error("E2B_API_KEY not configured");
-
-  const resp = await fetch(`${E2B_API}${path}`, {
-    method,
-    headers: {
-      "X-API-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`E2B API error ${resp.status}: ${err}`);
-  }
-  return resp.json();
+  return Sandbox.connect(sandboxId, { apiKey });
 }
 
-async function captureDesktopScreenshot(sessionId: string) {
-  const apiKey = Deno.env.get("E2B_API_KEY");
-  if (!apiKey) throw new Error("E2B_API_KEY not configured");
-
-  const screenshotResp = await fetch(`https://${sessionId}-8000.e2b.dev/screenshot`, {
-    headers: { "X-API-Key": apiKey },
-  });
-
-  if (!screenshotResp.ok) {
-    const errorText = await screenshotResp.text().catch(() => "Screenshot unavailable");
-    throw new Error(`Screenshot unavailable (${screenshotResp.status}): ${errorText.slice(0, 120)}`);
-  }
-
-  const buffer = await screenshotResp.arrayBuffer();
-  return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+// Take a screenshot and return as base64
+async function captureDesktopScreenshot(desktop: Sandbox): Promise<string> {
+  const imageBytes = await desktop.takeScreenshot("bytes");
+  return btoa(String.fromCharCode(...imageBytes));
 }
 
-async function waitForDesktopReady(sessionId: string) {
+async function waitForDesktopReady(sandboxId: string): Promise<{
+  ready: boolean;
+  screenshot?: string;
+  waitedMs: number;
+  message: string;
+  error?: string;
+}> {
   const startedAt = Date.now();
   let lastError = "Desktop is still starting";
 
   while (Date.now() - startedAt < DESKTOP_BOOT_TIMEOUT_MS) {
     try {
-      const screenshot = await captureDesktopScreenshot(sessionId);
+      const desktop = await connectDesktop(sandboxId);
+      const screenshot = await captureDesktopScreenshot(desktop);
       return {
         ready: true,
         screenshot,
@@ -194,15 +176,22 @@ serve(async (req) => {
     switch (action) {
       // Create a new desktop sandbox
       case "start_session": {
-        const sandbox = await e2bRequest("/sandboxes", "POST", {
-          templateID: "desktop",
-          timeout: 300, // 5 minute timeout
-          metadata: { userId, task: body.task || "general" },
+        const apiKey = Deno.env.get("E2B_API_KEY");
+        if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
+
+        let streamUrl = "";
+        const desktop = await Sandbox.create({
+          apiKey,
+          timeoutMs: 300_000, // 5 minute timeout
+          videoStream: true,
+          onVideoStreamStart: (url) => { streamUrl = url; },
         });
 
+        const sandboxId = desktop.sandboxId;
+
         return json({
-          sessionId: sandbox.sandboxID || sandbox.id,
-          streamUrl: `https://${sandbox.sandboxID || sandbox.id}-8080-${sandbox.clientID || sandbox.clientId}.e2b.dev`,
+          sessionId: sandboxId,
+          streamUrl: streamUrl || await desktop.getVideoStreamUrl(),
           status: "running",
         });
       }
@@ -213,7 +202,8 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
-          const screenshot = await captureDesktopScreenshot(sessionId);
+          const desktop = await connectDesktop(sessionId);
+          const screenshot = await captureDesktopScreenshot(desktop);
           return json({ screenshot });
         } catch (error) {
           return json({ screenshot: null, error: error instanceof Error ? error.message : "Screenshot unavailable" });
@@ -233,58 +223,54 @@ serve(async (req) => {
         const { sessionId, actionType, params } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
-        const apiKey = Deno.env.get("E2B_API_KEY")!;
-        const controlUrl = `https://${sessionId}-8000.e2b.dev`;
-
+        const desktop = await connectDesktop(sessionId);
         let result: any = { success: true };
 
         switch (actionType) {
-          case "click":
-          case "double_click":
+          case "click": {
+            if (params.x !== undefined && params.y !== undefined) {
+              await desktop.moveMouse(params.x, params.y);
+            }
+            await desktop.leftClick();
+            break;
+          }
+          case "double_click": {
+            if (params.x !== undefined && params.y !== undefined) {
+              await desktop.moveMouse(params.x, params.y);
+            }
+            await desktop.doubleClick();
+            break;
+          }
           case "move_mouse": {
-            await fetch(`${controlUrl}/mouse/${actionType}`, {
-              method: "POST",
-              headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-              body: JSON.stringify({ x: params.x, y: params.y }),
-            });
+            await desktop.moveMouse(params.x, params.y);
             break;
           }
           case "type": {
-            await fetch(`${controlUrl}/keyboard/type`, {
-              method: "POST",
-              headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-              body: JSON.stringify({ text: params.text }),
-            });
+            await desktop.write(params.text);
             break;
           }
           case "hotkey": {
-            await fetch(`${controlUrl}/keyboard/hotkey`, {
-              method: "POST",
-              headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-              body: JSON.stringify({ keys: params.keys }),
-            });
+            await desktop.hotkey(...(params.keys as string[]));
             break;
           }
           case "scroll": {
-            await fetch(`${controlUrl}/mouse/scroll`, {
-              method: "POST",
-              headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-              body: JSON.stringify(params),
-            });
+            if (params.x !== undefined && params.y !== undefined) {
+              await desktop.moveMouse(params.x, params.y);
+            }
+            const amount = (params.direction === "up" ? -(params.amount || 3) : (params.amount || 3));
+            await desktop.scroll(amount);
             break;
           }
           case "open_url": {
-            // Open URL via xdg-open or direct browser command
-            await fetch(`${controlUrl}/execute`, {
-              method: "POST",
-              headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-              body: JSON.stringify({ command: `xdg-open "${params.url}" &` }),
-            });
+            await desktop.open(params.url);
             break;
           }
           case "wait": {
-            // Just wait — client will handle timing
             result = { success: true, waited: params.seconds || 2 };
+            break;
+          }
+          case "press": {
+            await desktop.press(params.key);
             break;
           }
         }
@@ -300,7 +286,8 @@ serve(async (req) => {
         let screenshotBase64 = "";
 
         try {
-          screenshotBase64 = await captureDesktopScreenshot(sessionId);
+          const desktop = await connectDesktop(sessionId);
+          screenshotBase64 = await captureDesktopScreenshot(desktop);
         } catch {
           // If screenshot fails, use a blank description
         }
@@ -324,7 +311,8 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
-          await e2bRequest(`/sandboxes/${sessionId}`, "DELETE");
+          const desktop = await connectDesktop(sessionId);
+          await desktop.kill();
         } catch {
           // Sandbox may already be destroyed
         }

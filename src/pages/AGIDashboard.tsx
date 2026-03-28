@@ -111,7 +111,7 @@ export default function AGIDashboard() {
   };
 
   if (authLoading) return null;
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/sign-in" />;
 
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Eye },

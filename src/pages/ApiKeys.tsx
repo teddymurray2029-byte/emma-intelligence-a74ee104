@@ -111,7 +111,7 @@ export default function ApiKeys() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">
           <p className="text-muted-foreground">Sign in to manage API keys</p>
-          <Button onClick={() => navigate("/login")}>Sign In</Button>
+          <Button onClick={() => <Button onClick={() => navigate("/sign-in")}>Sign In</Button>}>Sign In</Button>
         </div>
       </div>
     );

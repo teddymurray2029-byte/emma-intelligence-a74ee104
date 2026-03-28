@@ -205,7 +205,7 @@ export default function Index() {
     );
   }
 
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/sign-in" />;
 
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";

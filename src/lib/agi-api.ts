@@ -17,6 +17,7 @@ async function agiCall(fn: string, body: Record<string, unknown>) {
   return resp.json();
 }
 
+// Benchmark Engine
 export async function runBenchmarks(category = "all") {
   return agiCall("emma-benchmark", { action: "run", category });
 }
@@ -25,6 +26,7 @@ export async function getBenchmarkHistory() {
   return agiCall("emma-benchmark", { action: "history" });
 }
 
+// Self-Improvement Engine
 export async function analyzeSelfImprovement() {
   return agiCall("emma-self-improve", { action: "analyze" });
 }
@@ -33,10 +35,29 @@ export async function applySelfImprovement() {
   return agiCall("emma-self-improve", { action: "apply" });
 }
 
+// Goals & Memory
 export async function getGoals() {
   return agiCall("emma-self-improve", { action: "goals" });
 }
 
 export async function getMemoryEpisodes() {
   return agiCall("emma-self-improve", { action: "memory" });
+}
+
+// Orchestrator
+export async function runCognitiveLoop(input: string) {
+  return agiCall("emma-orchestrator", { action: "run_loop", input });
+}
+
+export async function getSystemStatus() {
+  return agiCall("emma-orchestrator", { action: "status" });
+}
+
+// Safety
+export async function validateContent(content: string, contentType: "code" | "prompt") {
+  return agiCall("emma-safety", { action: "validate", content, contentType });
+}
+
+export async function getHealthCheck() {
+  return agiCall("emma-safety", { action: "health" });
 }

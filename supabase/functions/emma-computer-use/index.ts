@@ -152,49 +152,25 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
   return session;
 }
 
-async function initDesktop(sandbox: SandboxSession): Promise<void> {
+// Fire-and-forget: kick off Xvfb + WM in a single background script, return immediately
+async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
-  if (cached?.desktopInitialized || sandbox.desktopInitialized) return;
+  if (cached?.desktopInitialized) return;
 
-  const xvfbStart = await runCommand(
+  // Single combined command: start Xvfb, wait briefly for socket, start WM — all in background
+  await runCommand(
     sandbox,
     "bash",
-    ["-lc", "pgrep -x Xvfb >/dev/null || nohup Xvfb :0 -screen 0 1024x768x24 -ac >/tmp/xvfb.log 2>&1 </dev/null &"],
+    ["-lc", `nohup bash -c '
+      pgrep -x Xvfb || Xvfb :0 -screen 0 1024x768x24 -ac &
+      for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done
+      if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session || DISPLAY=:0 startxfce4 &; fi
+    ' >/tmp/desktop-boot.log 2>&1 &`],
     5,
     {},
   );
-  if (xvfbStart.exitCode !== 0) {
-    throw new Error(`Failed to start Xvfb: ${xvfbStart.stderr || xvfbStart.stdout || "unknown error"}`);
-  }
 
-  const displayReady = await runCommand(
-    sandbox,
-    "bash",
-    ["-lc", "for i in $(seq 1 15); do test -S /tmp/.X11-unix/X0 && exit 0 || sleep 1; done; (cat /tmp/xvfb.log 2>/dev/null || true); exit 1"],
-    20,
-    {},
-  );
-  if (displayReady.exitCode !== 0) {
-    throw new Error(`X display :0 did not become ready: ${displayReady.stderr || displayReady.stdout || "socket missing"}`);
-  }
-
-  const wmStart = await runCommand(
-    sandbox,
-    "bash",
-    ["-lc", "if command -v startxfce4 >/dev/null; then pgrep -f 'xfce4-session|startxfce4' >/dev/null || nohup env DISPLAY=:0 startxfce4 >/tmp/startxfce4.log 2>&1 </dev/null &; fi"],
-    5,
-    {},
-  );
-  if (wmStart.exitCode !== 0) {
-    throw new Error(`Failed to start desktop session: ${wmStart.stderr || wmStart.stdout || "unknown error"}`);
-  }
-
-  // Install screenshot tools if missing
-  await runCommand(sandbox, "bash", ["-lc", "which scrot || apt-get install -y scrot 2>/dev/null"], 10, {});
-  await runCommand(sandbox, "bash", ["-lc", "pip3 install pyautogui pillow 2>/dev/null || true"], 15, {});
-
-  const initializedSession = { ...sandbox, desktopInitialized: true };
-  sandboxCache.set(sandbox.sandboxId, initializedSession);
+  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -386,7 +362,7 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
       if (lastError.includes("Can't connect to display") || lastError.includes("/tmp/.X11-unix/X0")) {
         sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
         try {
-          await initDesktop({ ...sandbox, desktopInitialized: false });
+          await kickstartDesktop({ ...sandbox, desktopInitialized: false });
         } catch (reinitError) {
           lastError = reinitError instanceof Error ? reinitError.message : lastError;
         }
@@ -516,6 +492,10 @@ serve(async (req) => {
         const sandbox = await createSandbox(userId, body.task);
         console.log(`[emma-cu] Sandbox created: ${sandbox.sandboxId}`);
 
+        // Fire-and-forget desktop kickstart (returns in <1s)
+        await kickstartDesktop(sandbox);
+        console.log(`[emma-cu] Desktop kickstarted for ${sandbox.sandboxId}`);
+
         return json({
           sessionId: sandbox.sandboxId,
           streamUrl: null,
@@ -531,6 +511,8 @@ serve(async (req) => {
 
         try {
           const sandbox = await getSandbox(sessionId, envdAccessToken);
+          // Ensure desktop is kicked off before trying screenshot
+          await kickstartDesktop(sandbox);
           const screenshot = await captureScreenshot(sandbox);
           return json({ screenshot });
         } catch (error) {
@@ -545,7 +527,7 @@ serve(async (req) => {
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         console.log(`[emma-cu] init_desktop for ${sessionId}`);
-        await initDesktop(sandbox);
+        await kickstartDesktop(sandbox);
         console.log(`[emma-cu] init_desktop done for ${sessionId}`);
         return json({ success: true, message: "Desktop services started" });
       }

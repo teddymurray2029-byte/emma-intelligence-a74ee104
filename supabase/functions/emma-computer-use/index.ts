@@ -362,7 +362,7 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
       if (lastError.includes("Can't connect to display") || lastError.includes("/tmp/.X11-unix/X0")) {
         sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
         try {
-          await initDesktop({ ...sandbox, desktopInitialized: false });
+          await kickstartDesktop({ ...sandbox, desktopInitialized: false });
         } catch (reinitError) {
           lastError = reinitError instanceof Error ? reinitError.message : lastError;
         }

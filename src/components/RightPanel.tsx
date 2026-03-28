@@ -1,9 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Code2, Bot, Terminal } from "lucide-react";
+import { useState } from "react";
+import { Code2, Bot, Target, Database } from "lucide-react";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { AgentSwarm } from "./AgentSwarm";
+import { BenchmarkPanel } from "./BenchmarkPanel";
+import { MemoryPanel } from "./MemoryPanel";
+import { ScrollArea } from "./ui/scroll-area";
 
-type Tab = "ide" | "agents";
+type Tab = "ide" | "agents" | "bench" | "memory";
 
 interface RightPanelProps {
   isProcessing?: boolean;
@@ -16,6 +19,8 @@ export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps)
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "ide", label: "IDE", icon: Code2 },
     { id: "agents", label: "Agents", icon: Bot },
+    { id: "bench", label: "Bench", icon: Target },
+    { id: "memory", label: "Memory", icon: Database },
   ];
 
   return (
@@ -25,7 +30,7 @@ export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps)
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
               tab === t.id
                 ? "text-primary border-b-2 border-primary"
                 : "text-muted-foreground hover:text-foreground"
@@ -43,6 +48,16 @@ export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps)
       <div className="flex-1 overflow-hidden">
         {tab === "ide" && <CodeEditor ref={editorRef} />}
         {tab === "agents" && <AgentSwarm isProcessing={isProcessing} />}
+        {tab === "bench" && (
+          <ScrollArea className="h-full">
+            <div className="p-4"><BenchmarkPanel /></div>
+          </ScrollArea>
+        )}
+        {tab === "memory" && (
+          <ScrollArea className="h-full">
+            <div className="p-4"><MemoryPanel /></div>
+          </ScrollArea>
+        )}
       </div>
     </div>
   );

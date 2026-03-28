@@ -9,6 +9,7 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
 import Settings from "./pages/Settings";
+import AGIDashboard from "./pages/AGIDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/agi" element={<AGIDashboard />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

@@ -157,21 +157,25 @@ async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized) return;
 
-  // Start Xvfb in background, wait for X socket, then start WM — all in one command
-  // This blocks until X0 socket exists (up to 10s), which is fine for a single edge function call
-  const result = await runCommand(
-    sandbox,
-    "bash",
-    ["-lc", [
-      "pgrep -x Xvfb >/dev/null || Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log &",
-      "for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done",
-      "test -S /tmp/.X11-unix/X0 || { echo 'X socket not ready'; exit 1; }",
-      "if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session >/dev/null || DISPLAY=:0 startxfce4 &>/tmp/xfce.log & fi",
-      "echo 'desktop-ready'",
-    ].join("; ")],
-    15,
-    {},
-  );
+  // Start Xvfb in background, wait for X socket, then start WM
+  // Use newline-joined script to avoid &; syntax errors
+  const script = `
+pgrep -x Xvfb >/dev/null || Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log &
+for i in $(seq 1 20); do
+  test -S /tmp/.X11-unix/X0 && break
+  sleep 0.5
+done
+if ! test -S /tmp/.X11-unix/X0; then
+  echo 'X socket not ready'
+  exit 1
+fi
+if command -v startxfce4 >/dev/null 2>&1; then
+  pgrep -f xfce4-session >/dev/null || DISPLAY=:0 startxfce4 &>/tmp/xfce.log &
+fi
+echo 'desktop-ready'
+`.trim();
+
+  const result = await runCommand(sandbox, "bash", ["-lc", script], 15, {});
 
   console.log(`[kickstart] exit=${result.exitCode} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`);
 
@@ -562,12 +566,12 @@ serve(async (req) => {
 
         try {
           const sandbox = await getSandbox(sessionId, envdAccessToken);
-          // Ensure desktop is kicked off before trying screenshot
           await kickstartDesktop(sandbox);
           const screenshot = await captureScreenshot(sandbox);
           return json({ screenshot });
         } catch (error) {
-          return json({ screenshot: null, error: error instanceof Error ? error.message : "Screenshot unavailable" });
+          const msg = error instanceof Error ? error.message : "Screenshot unavailable";
+          return json({ screenshot: null, error: msg, status: "screenshot_failed" }, 503);
         }
       }
 
@@ -589,7 +593,9 @@ serve(async (req) => {
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         const readiness = await waitForDesktopReady(sandbox);
-        return readiness.ready ? json(readiness) : json(readiness, 408);
+        return readiness.ready
+          ? json({ ...readiness, status: "ready" })
+          : json({ ...readiness, status: "boot_failed" }, 408);
       }
 
       // Execute an action on the sandbox (mouse/keyboard)

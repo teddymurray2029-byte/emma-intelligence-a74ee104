@@ -152,7 +152,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { messages, feedback } = await req.json();
+    const { messages, feedback, mode, answerStyle } = await req.json();
     if (!messages || !Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: "Messages array required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -177,6 +177,24 @@ serve(async (req) => {
 
     // Build system prompt with feedback + memory context
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
+
+    // Mode-specific prompt augmentation
+    if (mode === "direct") {
+      systemPrompt += `\n\n## DIRECT MODE\nBe maximally direct. Fewer hedges when confidence is high. Clearly label uncertainty. Challenge bad assumptions. Prefer truth over politeness.`;
+    }
+    if (answerStyle === "concise") {
+      systemPrompt += `\n\n## STYLE: CONCISE\nKeep answers brief and to the point. No unnecessary elaboration.`;
+    } else if (answerStyle === "deep") {
+      systemPrompt += `\n\n## STYLE: DEEP\nProvide thorough, detailed analysis. Cover edge cases and nuances.`;
+    } else if (answerStyle === "direct") {
+      systemPrompt += `\n\n## STYLE: DIRECT\nBe blunt. State conclusions first. Skip pleasantries. Mark uncertainty explicitly.`;
+    }
+    if (mode === "data") {
+      systemPrompt += `\n\n## DATA ANALYSIS MODE\nYou are analyzing data. Provide structured insights, statistics, patterns. Use tables and code when helpful.`;
+    }
+    if (mode === "voice") {
+      systemPrompt += `\n\n## VOICE MODE\nKeep responses conversational and concise. Avoid markdown formatting. Speak naturally.`;
+    }
 
     // Inject recent memory context
     if (userId !== "anonymous") {

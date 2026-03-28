@@ -168,6 +168,34 @@ function collectProcessOutput(value: unknown, state: { stdout: string; stderr: s
   }
 }
 
+function buildConnectEnvelope(message: Record<string, unknown>): Uint8Array {
+  const payload = new TextEncoder().encode(JSON.stringify(message));
+  const envelope = new Uint8Array(5 + payload.length);
+  envelope[0] = 0; // flags: no compression
+  new DataView(envelope.buffer).setUint32(1, payload.length, false); // big-endian length
+  envelope.set(payload, 5);
+  return envelope;
+}
+
+function parseConnectStream(raw: Uint8Array): Array<Record<string, unknown>> {
+  const results: Array<Record<string, unknown>> = [];
+  let offset = 0;
+  while (offset + 5 <= raw.length) {
+    const _flags = raw[offset];
+    const length = new DataView(raw.buffer, raw.byteOffset + offset + 1, 4).getUint32(0, false);
+    offset += 5;
+    if (offset + length > raw.length) break;
+    const chunk = new TextDecoder().decode(raw.slice(offset, offset + length));
+    offset += length;
+    try {
+      results.push(JSON.parse(chunk));
+    } catch {
+      // skip unparseable chunks
+    }
+  }
+  return results;
+}
+
 async function runCommand(
   sandbox: SandboxSession,
   cmd: string,
@@ -182,7 +210,7 @@ async function runCommand(
       "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
       "Content-Type": "application/connect+json",
     },
-    body: JSON.stringify({
+    body: buildConnectEnvelope({
       process: {
         cmd,
         args,
@@ -197,16 +225,20 @@ async function runCommand(
     throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
   }
 
-  const raw = await response.text();
   const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
 
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      collectProcessOutput(JSON.parse(trimmed), state);
-    } catch {
-      state.stderr += `${trimmed}\n`;
+  const rawBytes = new Uint8Array(await response.arrayBuffer());
+  const messages = parseConnectStream(rawBytes);
+  messages.forEach((msg) => collectProcessOutput(msg, state));
+
+  // Parse exit status from "end" event
+  for (const msg of messages) {
+    const event = (msg as any)?.event;
+    if (event?.end) {
+      const statusStr: string = event.end.status || "";
+      const match = statusStr.match(/exit status (\d+)/);
+      if (match) state.exitCode = parseInt(match[1], 10);
+      else if (event.end.exited) state.exitCode = 0;
     }
   }
 

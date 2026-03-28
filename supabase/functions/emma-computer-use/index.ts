@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
-import { Sandbox } from "npm:@e2b/desktop@1.0.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,6 +8,7 @@ const corsHeaders = {
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const E2B_API = "https://api.e2b.app";
 const DESKTOP_BOOT_TIMEOUT_MS = 45_000;
 const DESKTOP_BOOT_POLL_MS = 2_000;
 
@@ -25,20 +25,106 @@ function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// Connect to an existing E2B Desktop sandbox by ID
-async function connectDesktop(sandboxId: string): Promise<Sandbox> {
+// E2B REST API helpers
+function getApiKey(): string {
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) throw new Error("E2B_API_KEY not configured");
-  return Sandbox.connect(sandboxId, { apiKey });
+  return apiKey;
 }
 
-// Take a screenshot and return as base64
-async function captureDesktopScreenshot(desktop: Sandbox): Promise<string> {
-  const imageBytes = await desktop.takeScreenshot("bytes");
+async function e2bApi(path: string, method = "GET", body?: any) {
+  const apiKey = getApiKey();
+  const resp = await fetch(`${E2B_API}${path}`, {
+    method,
+    headers: {
+      "X-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`E2B API error ${resp.status}: ${err}`);
+  }
+  if (resp.status === 204) return {};
+  return resp.json();
+}
+
+// Run a command inside the sandbox via envd Connect protocol
+async function runCommand(sandboxId: string, envdAccessToken: string, cmd: string, args: string[] = [], timeoutMs = 30000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const envdUrl = `https://49983-${sandboxId}.e2b.app/process.Process/Start`;
+
+  const resp = await fetch(envdUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/connect+json",
+      "Connect-Protocol-Version": "1",
+      "Connect-Timeout-Ms": String(timeoutMs),
+      "Authorization": `Bearer ${envdAccessToken}`,
+    },
+    body: JSON.stringify({
+      process: { cmd, args, envs: { DISPLAY: ":0" } },
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Command failed ${resp.status}: ${err}`);
+  }
+
+  // Parse Connect streaming response (newline-delimited JSON)
+  const text = await resp.text();
+  let stdout = "";
+  let stderr = "";
+  let exitCode = 0;
+
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      const event = msg.result || msg;
+      if (event.event?.data) {
+        const data = event.event.data;
+        if (data.stdout) stdout += atob(data.stdout);
+        if (data.stderr) stderr += atob(data.stderr);
+      }
+      if (event.event?.end) {
+        exitCode = event.event.end.exitCode || 0;
+      }
+    } catch {
+      // Skip unparseable lines
+    }
+  }
+
+  return { stdout, stderr, exitCode };
+}
+
+// Download a file from the sandbox
+async function downloadFile(sandboxId: string, envdAccessToken: string, filePath: string): Promise<Uint8Array> {
+  const url = `https://49983-${sandboxId}.e2b.app/files?path=${encodeURIComponent(filePath)}`;
+  const resp = await fetch(url, {
+    headers: { "Authorization": `Bearer ${envdAccessToken}` },
+  });
+  if (!resp.ok) throw new Error(`File download failed: ${resp.status}`);
+  return new Uint8Array(await resp.arrayBuffer());
+}
+
+// Take a screenshot using pyautogui and return base64
+async function captureScreenshot(sandboxId: string, envdAccessToken: string): Promise<string> {
+  await runCommand(sandboxId, envdAccessToken, "python3", [
+    "-c",
+    "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')",
+  ]);
+
+  const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
   return btoa(String.fromCharCode(...imageBytes));
 }
 
-async function waitForDesktopReady(sandboxId: string): Promise<{
+// In-memory store for sandbox access tokens (edge function is short-lived, so this is per-request)
+// We pass envdAccessToken through the client for simplicity
+const sandboxTokens = new Map<string, string>();
+
+async function waitForDesktopReady(sandboxId: string, envdAccessToken: string): Promise<{
   ready: boolean;
   screenshot?: string;
   waitedMs: number;
@@ -50,8 +136,7 @@ async function waitForDesktopReady(sandboxId: string): Promise<{
 
   while (Date.now() - startedAt < DESKTOP_BOOT_TIMEOUT_MS) {
     try {
-      const desktop = await connectDesktop(sandboxId);
-      const screenshot = await captureDesktopScreenshot(desktop);
+      const screenshot = await captureScreenshot(sandboxId, envdAccessToken);
       return {
         ready: true,
         screenshot,
@@ -176,19 +261,22 @@ serve(async (req) => {
     switch (action) {
       // Create a new desktop sandbox
       case "start_session": {
-        const apiKey = Deno.env.get("E2B_API_KEY");
-        if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
-
-        const desktop = await Sandbox.create({
-          apiKey,
-          timeoutMs: 300_000,
+        const sandbox = await e2bApi("/sandboxes", "POST", {
+          templateID: "desktop",
+          timeout: 300,
+          metadata: { userId, task: body.task || "general" },
         });
 
-        const sandboxId = desktop.sandboxId;
+        const sandboxId = sandbox.sandboxID;
+        const envdAccessToken = sandbox.envdAccessToken;
+
+        // Store token for subsequent requests
+        sandboxTokens.set(sandboxId, envdAccessToken);
 
         return json({
           sessionId: sandboxId,
           streamUrl: null,
+          envdAccessToken,
           status: "running",
         });
       }
@@ -197,10 +285,11 @@ serve(async (req) => {
       case "screenshot": {
         const { sessionId } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
+        const token = body.envdAccessToken || sandboxTokens.get(sessionId);
+        if (!token) return json({ error: "Missing envdAccessToken" }, 400);
 
         try {
-          const desktop = await connectDesktop(sessionId);
-          const screenshot = await captureDesktopScreenshot(desktop);
+          const screenshot = await captureScreenshot(sessionId, token);
           return json({ screenshot });
         } catch (error) {
           return json({ screenshot: null, error: error instanceof Error ? error.message : "Screenshot unavailable" });
@@ -210,8 +299,10 @@ serve(async (req) => {
       case "wait_until_ready": {
         const { sessionId } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
+        const token = body.envdAccessToken || sandboxTokens.get(sessionId);
+        if (!token) return json({ error: "Missing envdAccessToken" }, 400);
 
-        const readiness = await waitForDesktopReady(sessionId);
+        const readiness = await waitForDesktopReady(sessionId, token);
         return readiness.ready ? json(readiness) : json(readiness, 408);
       }
 
@@ -219,47 +310,49 @@ serve(async (req) => {
       case "execute": {
         const { sessionId, actionType, params } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
+        const token = body.envdAccessToken || sandboxTokens.get(sessionId);
+        if (!token) return json({ error: "Missing envdAccessToken" }, 400);
 
-        const desktop = await connectDesktop(sessionId);
         let result: any = { success: true };
+        let pyCode = "";
 
         switch (actionType) {
           case "click": {
-            if (params.x !== undefined && params.y !== undefined) {
-              await desktop.moveMouse(params.x, params.y);
-            }
-            await desktop.leftClick();
+            const x = params.x ?? 512;
+            const y = params.y ?? 384;
+            pyCode = `import pyautogui; pyautogui.click(${x}, ${y})`;
             break;
           }
           case "double_click": {
-            if (params.x !== undefined && params.y !== undefined) {
-              await desktop.moveMouse(params.x, params.y);
-            }
-            await desktop.doubleClick();
+            const x = params.x ?? 512;
+            const y = params.y ?? 384;
+            pyCode = `import pyautogui; pyautogui.doubleClick(${x}, ${y})`;
             break;
           }
           case "move_mouse": {
-            await desktop.moveMouse(params.x, params.y);
+            pyCode = `import pyautogui; pyautogui.moveTo(${params.x}, ${params.y})`;
             break;
           }
           case "type": {
-            await desktop.write(params.text);
+            const escaped = params.text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+            pyCode = `import pyautogui; pyautogui.typewrite('${escaped}', interval=0.02)`;
             break;
           }
           case "hotkey": {
-            await desktop.hotkey(...(params.keys as string[]));
+            const keys = (params.keys as string[]).map((k: string) => `'${k}'`).join(", ");
+            pyCode = `import pyautogui; pyautogui.hotkey(${keys})`;
             break;
           }
           case "scroll": {
-            if (params.x !== undefined && params.y !== undefined) {
-              await desktop.moveMouse(params.x, params.y);
-            }
-            const amount = (params.direction === "up" ? -(params.amount || 3) : (params.amount || 3));
-            await desktop.scroll(amount);
+            const amount = params.direction === "up" ? (params.amount || 3) : -(params.amount || 3);
+            const sx = params.x ?? 512;
+            const sy = params.y ?? 384;
+            pyCode = `import pyautogui; pyautogui.scroll(${amount}, x=${sx}, y=${sy})`;
             break;
           }
           case "open_url": {
-            await desktop.open(params.url);
+            const escaped = params.url.replace(/'/g, "\\'");
+            await runCommand(sessionId, token, "bash", ["-c", `DISPLAY=:0 xdg-open '${escaped}' &`]);
             break;
           }
           case "wait": {
@@ -267,8 +360,15 @@ serve(async (req) => {
             break;
           }
           case "press": {
-            await desktop.press(params.key);
+            pyCode = `import pyautogui; pyautogui.press('${params.key}')`;
             break;
+          }
+        }
+
+        if (pyCode) {
+          const cmdResult = await runCommand(sessionId, token, "python3", ["-c", pyCode]);
+          if (cmdResult.exitCode !== 0) {
+            result = { success: false, error: cmdResult.stderr || "Command failed" };
           }
         }
 
@@ -279,12 +379,13 @@ serve(async (req) => {
       case "think": {
         const { sessionId, task, actionHistory, userMessage } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
+        const token = body.envdAccessToken || sandboxTokens.get(sessionId);
+        if (!token) return json({ error: "Missing envdAccessToken" }, 400);
 
         let screenshotBase64 = "";
 
         try {
-          const desktop = await connectDesktop(sessionId);
-          screenshotBase64 = await captureDesktopScreenshot(desktop);
+          screenshotBase64 = await captureScreenshot(sessionId, token);
         } catch {
           // If screenshot fails, use a blank description
         }
@@ -308,11 +409,11 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
-          const desktop = await connectDesktop(sessionId);
-          await desktop.kill();
+          await e2bApi(`/sandboxes/${sessionId}`, "DELETE");
         } catch {
           // Sandbox may already be destroyed
         }
+        sandboxTokens.delete(sessionId);
         return json({ success: true, status: "destroyed" });
       }
 

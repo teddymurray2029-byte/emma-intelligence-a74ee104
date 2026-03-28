@@ -6,7 +6,8 @@ export type Artifact = { id: string; title: string; type: "text" | "markdown" | 
 export type ResearchReport = { id: string; objective: string; status: "planning" | "searching" | "analyzing" | "synthesizing" | "complete" | "error"; plan: string[]; currentStep: number; sources: Citation[]; summary: string; fullReport: string; openQuestions: string[]; confidence: number; createdAt: string };
 export type AgentTask = { id: string; description: string; status: "pending" | "planning" | "executing" | "paused" | "complete" | "failed"; plan: string[]; currentStep: number; logs: string[]; output: string; artifacts: string[]; createdAt: string };
 
-const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-chat`;
+const OLLAMA_URL = "http://localhost:11434/v1/chat/completions";
+const OLLAMA_MODEL = "qwen3.5:9b";
 const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-image-gen`;
 const RESEARCH_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-research`;
 

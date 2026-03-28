@@ -18,6 +18,7 @@ type SandboxSession = {
   sandboxId: string;
   envdAccessToken: string;
   domain?: string;
+  desktopInitialized?: boolean;
 };
 
 async function getClerkUserId(req: Request): Promise<string | null> {
@@ -141,15 +142,21 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
 }
 
 async function initDesktop(sandbox: SandboxSession): Promise<void> {
+  const cached = sandboxCache.get(sandbox.sandboxId);
+  if (cached?.desktopInitialized || sandbox.desktopInitialized) return;
+
   // Start Xvfb display server
-  await runCommand(sandbox, "bash", ["-lc", "Xvfb :0 -screen 0 1024x768x24 &"], 5, {});
+  await runCommand(sandbox, "bash", ["-lc", "pgrep -f 'Xvfb :0' >/dev/null || (Xvfb :0 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &)"], 5, {});
   // Give Xvfb a moment to start
   await new Promise((r) => setTimeout(r, 2000));
   // Start a lightweight window manager
-  await runCommand(sandbox, "bash", ["-lc", "DISPLAY=:0 startxfce4 &"], 5, {});
+  await runCommand(sandbox, "bash", ["-lc", "pgrep -f startxfce4 >/dev/null || (DISPLAY=:0 startxfce4 >/tmp/startxfce4.log 2>&1 &)"], 5, {});
   // Install screenshot tools if missing
   await runCommand(sandbox, "bash", ["-lc", "which scrot || apt-get install -y scrot 2>/dev/null"], 10, {});
   await runCommand(sandbox, "bash", ["-lc", "pip3 install pyautogui pillow 2>/dev/null || true"], 15, {});
+
+  const initializedSession = { ...sandbox, desktopInitialized: true };
+  sandboxCache.set(sandbox.sandboxId, initializedSession);
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -452,9 +459,6 @@ serve(async (req) => {
       case "start_session": {
         const sandbox = await createSandbox(userId, body.task);
 
-        // Initialize the desktop display server
-        await initDesktop(sandbox);
-
         return json({
           sessionId: sandbox.sandboxId,
           streamUrl: null,
@@ -482,6 +486,7 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
+        await initDesktop(sandbox);
         const readiness = await waitForDesktopReady(sandbox);
         return readiness.ready ? json(readiness) : json(readiness, 408);
       }

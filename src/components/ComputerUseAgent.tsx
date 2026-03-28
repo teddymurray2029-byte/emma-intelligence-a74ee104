@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer } from "lucide-react";
+import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer, Tv } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -131,6 +131,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
+  const [viewMode, setViewMode] = useState<"stream" | "screenshot">("stream");
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
@@ -149,7 +150,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (session) {
         const url = CU_URL;
         const payload = JSON.stringify({ action: "stop_session", sessionId: session.sid, envdAccessToken: session.token });
-        // Use sendBeacon for reliability during unload
         if (navigator.sendBeacon) {
           const blob = new Blob([payload], { type: "application/json" });
           navigator.sendBeacon(url, blob);
@@ -163,7 +163,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     window.addEventListener("beforeunload", cleanup);
     return () => {
       window.removeEventListener("beforeunload", cleanup);
-      cleanup(); // Also cleanup on component unmount
+      cleanup();
     };
   }, []);
 
@@ -206,6 +206,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     abortRef.current = false;
+    setStreamUrl(null);
+    setViewMode("stream");
 
     // Phase 1: Create sandbox (should be fast, <5s)
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
@@ -218,7 +220,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       sid = res.sessionId;
       token = res.envdAccessToken;
       setSessionId(sid);
-      setStreamUrl(res.streamUrl);
+      if (res.streamUrl) setStreamUrl(res.streamUrl);
       setEnvdToken(token);
       sessionRef.current = { sid, token };
       updateStep(startStepId, { status: "done", reasoning: `Sandbox created (${sid.slice(0, 8)}...)` });
@@ -235,10 +237,13 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setStatus("running");
     setIsRunning(true);
     setIsBooting(true);
-    const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + window manager)...", status: "executing" });
+    const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + XFCE via xdpyinfo verification)...", status: "executing" });
 
     try {
       const readiness = await cuApi("wait_until_ready", { sessionId: sid, envdAccessToken: token }, getToken, 120_000);
+
+      // Pick up stream URL from readiness response
+      if (readiness.streamUrl) setStreamUrl(readiness.streamUrl);
 
       if (readiness.ready && readiness.screenshot) {
         const meaningful = await isMeaningfulScreenshot(readiness.screenshot);
@@ -370,9 +375,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
+    setStreamUrl(null);
     sessionRef.current = null;
   };
-
 
   const getStatusIcon = (s: AgentStep["status"]) => {
     switch (s) {
@@ -389,6 +394,51 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     if (action === "screenshot") return <Camera className="h-3 w-3" />;
     if (action.includes("sandbox") || action.includes("boot")) return <Monitor className="h-3 w-3" />;
     return <div className="h-3 w-3" />;
+  };
+
+  const renderDesktopView = () => {
+    // VNC live stream available
+    if (streamUrl && viewMode === "stream") {
+      return (
+        <iframe
+          src={streamUrl}
+          className="w-full h-full border-0"
+          title="Emma Desktop (Live)"
+          sandbox="allow-same-origin allow-scripts"
+        />
+      );
+    }
+
+    // Screenshot fallback
+    if (currentScreenshot) {
+      return (
+        <img
+          src={`data:image/png;base64,${currentScreenshot}`}
+          alt="Desktop screenshot"
+          className="max-w-full max-h-full object-contain"
+        />
+      );
+    }
+
+    // Loading state
+    return (
+      <div className="text-center space-y-3">
+        <Monitor className="h-12 w-12 text-muted-foreground mx-auto" />
+        <p className="text-xs text-muted-foreground">
+          {status === "starting" ? "Creating sandbox..." : status === "running" && !currentScreenshot ? "Booting virtual desktop..." : "Desktop view will appear here"}
+        </p>
+        {(status === "starting" || (status === "running" && !currentScreenshot)) && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
+        {isBooting && (
+          <div className="w-48 mt-3 space-y-1.5">
+            <Progress value={(bootElapsed / BOOT_TIMEOUT_SECONDS) * 100} className="h-1.5" />
+            <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+              <Timer className="h-3 w-3" />
+              <span>{bootElapsed}s / {BOOT_TIMEOUT_SECONDS}s</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -447,6 +497,23 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}...</span>}
                   </div>
                   <div className="flex gap-1">
+                    {/* View mode toggle */}
+                    {streamUrl && (
+                      <div className="flex gap-0.5 mr-1">
+                        <button
+                          onClick={() => setViewMode("stream")}
+                          className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${viewMode === "stream" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          <Tv className="h-3 w-3 inline mr-0.5" />Live
+                        </button>
+                        <button
+                          onClick={() => setViewMode("screenshot")}
+                          className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${viewMode === "screenshot" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          <Camera className="h-3 w-3 inline mr-0.5" />Snap
+                        </button>
+                      </div>
+                    )}
                     {status === "error" && (
                       <Button variant="secondary" size="sm" className="h-7 gap-1 text-xs" onClick={startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry
@@ -461,28 +528,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                 </div>
 
                 <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
-                  {streamUrl ? (
-                    <iframe src={streamUrl} className="w-full h-full border-0" title="Emma Desktop" sandbox="allow-same-origin allow-scripts" />
-                  ) : currentScreenshot ? (
-                    <img src={`data:image/png;base64,${currentScreenshot}`} alt="Desktop screenshot" className="max-w-full max-h-full object-contain" />
-                  ) : (
-                    <div className="text-center space-y-3">
-                      <Monitor className="h-12 w-12 text-muted-foreground mx-auto" />
-                      <p className="text-xs text-muted-foreground">
-                        {status === "starting" ? "Creating sandbox..." : status === "running" && !currentScreenshot ? "Booting virtual desktop..." : "Desktop view will appear here"}
-                      </p>
-                      {(status === "starting" || (status === "running" && !currentScreenshot)) && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
-                      {isBooting && (
-                        <div className="w-48 mt-3 space-y-1.5">
-                          <Progress value={(bootElapsed / BOOT_TIMEOUT_SECONDS) * 100} className="h-1.5" />
-                          <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
-                            <Timer className="h-3 w-3" />
-                            <span>{bootElapsed}s / {BOOT_TIMEOUT_SECONDS}s</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {renderDesktopView()}
                 </div>
 
                 {isRunning && (

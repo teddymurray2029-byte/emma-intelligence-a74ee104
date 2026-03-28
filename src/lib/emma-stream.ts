@@ -1,5 +1,5 @@
 export type Message = { role: "user" | "assistant"; content: string; imageUrl?: string; citations?: Citation[]; mode?: EmmaMode; metadata?: Record<string, any> };
-export type EmmaMode = "chat" | "research" | "artifacts" | "voice" | "builder" | "think" | "memory" | "data" | "projects";
+export type EmmaMode = "chat" | "research" | "artifacts" | "voice" | "builder" | "think" | "memory" | "data" | "projects" | "agent";
 export type AnswerStyle = "concise" | "standard" | "deep" | "direct";
 export type Citation = { id: number; title: string; url?: string; snippet: string; source: "web" | "file" | "memory" | "internal" };
 export type Artifact = { id: string; title: string; type: "text" | "markdown" | "code" | "html" | "react" | "plan" | "report" | "table" | "prompt"; content: string; language?: string; version: number; versions: { content: string; timestamp: string }[]; createdAt: string; updatedAt: string };

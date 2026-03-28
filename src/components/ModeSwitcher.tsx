@@ -1,4 +1,4 @@
-import { MessageSquare, Search, FileCode2, Mic, Wrench, Brain, Database, BarChart3, FolderKanban } from "lucide-react";
+import { MessageSquare, Search, FileCode2, Mic, Wrench, Brain, Database, BarChart3, FolderKanban, Monitor } from "lucide-react";
 import type { EmmaMode } from "@/lib/emma-stream";
 
 const MODES: { id: EmmaMode; label: string; icon: React.ElementType; desc: string }[] = [
@@ -7,6 +7,7 @@ const MODES: { id: EmmaMode; label: string; icon: React.ElementType; desc: strin
   { id: "artifacts", label: "Artifacts", icon: FileCode2, desc: "Create & edit documents" },
   { id: "think", label: "Think", icon: Brain, desc: "Planning & reasoning" },
   { id: "builder", label: "Builder", icon: Wrench, desc: "Autonomous tasks" },
+  { id: "agent", label: "Agent", icon: Monitor, desc: "Computer-use agent with virtual OS" },
   { id: "projects", label: "Projects", icon: FolderKanban, desc: "IDE & source control" },
   { id: "voice", label: "Voice", icon: Mic, desc: "Live conversation" },
   { id: "data", label: "Data", icon: BarChart3, desc: "Analyze files & data" },

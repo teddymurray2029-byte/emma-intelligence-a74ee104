@@ -511,6 +511,8 @@ serve(async (req) => {
 
         try {
           const sandbox = await getSandbox(sessionId, envdAccessToken);
+          // Ensure desktop is kicked off before trying screenshot
+          await kickstartDesktop(sandbox);
           const screenshot = await captureScreenshot(sandbox);
           return json({ screenshot });
         } catch (error) {

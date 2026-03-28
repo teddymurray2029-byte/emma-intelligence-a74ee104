@@ -1,4 +1,4 @@
-import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw } from "lucide-react";
+import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -89,6 +89,17 @@ export default function Settings() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* API Keys */}
+        <div className="emma-surface-elevated emma-glow-border rounded-xl p-5 space-y-3">
+          <h3 className="text-sm font-medium text-foreground">Emma API</h3>
+          <p className="text-xs text-muted-foreground">OpenAI-compatible API. Let others use Emma by sharing an API key and base URL.</p>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate("/api-keys")}>
+            <Key className="h-3.5 w-3.5" />
+            Manage API Keys
+            <ExternalLink className="h-3 w-3" />
+          </Button>
         </div>
 
         {/* About */}

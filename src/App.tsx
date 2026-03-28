@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
 import Settings from "./pages/Settings";
 import AGIDashboard from "./pages/AGIDashboard";
+import ApiKeys from "./pages/ApiKeys";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,6 +29,7 @@ const App = () => (
           <Route path="/agents" element={<Agents />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/agi" element={<AGIDashboard />} />
+          <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

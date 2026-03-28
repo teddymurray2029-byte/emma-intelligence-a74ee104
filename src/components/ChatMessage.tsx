@@ -1,17 +1,20 @@
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import { EmmaAvatar } from "./EmmaAvatar";
-import { GitBranch, Download } from "lucide-react";
+import { GitBranch, Download, Code2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { VoiceOutput } from "./VoiceOutput";
 import type { Message } from "@/lib/emma-stream";
 
 interface ChatMessageProps {
   message: Message;
   index?: number;
   onBranch?: (index: number) => void;
+  onOpenInEditor?: (code: string, language: string) => void;
 }
 
-export function ChatMessage({ message, index, onBranch }: ChatMessageProps) {
+export function ChatMessage({ message, index, onBranch, onOpenInEditor }: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -35,7 +38,36 @@ export function ChatMessage({ message, index, onBranch }: ChatMessageProps) {
             <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
           ) : (
             <div className="prose prose-sm prose-invert max-w-none text-foreground [&_code]:bg-secondary [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:font-mono [&_code]:text-primary [&_pre]:bg-secondary [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-border [&_a]:text-primary [&_strong]:text-foreground [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_li]:text-foreground">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
+              <ReactMarkdown
+                rehypePlugins={[rehypeHighlight]}
+                components={{
+                  pre({ children, ...props }) {
+                    // Extract code content and language for "Open in Editor"
+                    const codeChild = (children as any)?.props;
+                    const codeText = codeChild?.children?.[0] || "";
+                    const className = codeChild?.className || "";
+                    const langMatch = className.match(/language-(\w+)/);
+                    const lang = langMatch ? langMatch[1] : "typescript";
+
+                    return (
+                      <div className="relative group/code">
+                        <pre {...props}>{children}</pre>
+                        {onOpenInEditor && codeText && (
+                          <button
+                            onClick={() => onOpenInEditor(String(codeText), lang)}
+                            className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm rounded-lg p-1.5 opacity-0 group-hover/code:opacity-100 transition-opacity flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                          >
+                            <Code2 className="h-3 w-3" />
+                            Open in Editor
+                          </button>
+                        )}
+                      </div>
+                    );
+                  },
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
             </div>
           )}
         </div>
@@ -54,9 +86,27 @@ export function ChatMessage({ message, index, onBranch }: ChatMessageProps) {
           </div>
         )}
 
-        {/* Branch button */}
-        {onBranch && index !== undefined && (
+        {/* Action buttons */}
+        {!isUser && (
           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+            <VoiceOutput text={message.content} />
+            {onBranch && index !== undefined && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                onClick={() => onBranch(index)}
+              >
+                <GitBranch className="h-3 w-3" />
+                Branch
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Branch button for user messages */}
+        {isUser && onBranch && index !== undefined && (
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 justify-end">
             <Button
               variant="ghost"
               size="sm"

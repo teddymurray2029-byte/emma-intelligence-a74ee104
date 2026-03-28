@@ -3,9 +3,10 @@ import {
   Plus,
   Bot,
   BarChart3,
-  
+  Settings,
   LogOut,
   Trash2,
+  GitBranch,
 } from "lucide-react";
 import {
   Sidebar,
@@ -20,6 +21,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
 import type { Conversation } from "@/hooks/useConversations";
 
 interface EmmaSidebarProps {
@@ -28,6 +30,7 @@ interface EmmaSidebarProps {
   onSelect: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
   onNavigate: (path: string) => void;
   onSignOut: () => void;
 }
@@ -38,11 +41,27 @@ export function EmmaSidebar({
   onSelect,
   onCreate,
   onDelete,
+  onRename,
   onNavigate,
   onSignOut,
 }: EmmaSidebarProps) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+
+  const startRename = (c: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingId(c.id);
+    setEditTitle(c.title);
+  };
+
+  const commitRename = () => {
+    if (editingId && editTitle.trim()) {
+      onRename(editingId, editTitle.trim());
+    }
+    setEditingId(null);
+  };
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border">
@@ -81,10 +100,34 @@ export function EmmaSidebar({
                     onClick={() => onSelect(c.id)}
                     className={`group ${activeId === c.id ? "bg-secondary text-foreground" : ""}`}
                   >
-                    <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                    {(c as any).parent_id ? (
+                      <GitBranch className="h-4 w-4 flex-shrink-0 text-accent" />
+                    ) : (
+                      <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                    )}
                     {!collapsed && (
                       <>
-                        <span className="truncate flex-1 text-sm">{c.title}</span>
+                        {editingId === c.id ? (
+                          <input
+                            className="flex-1 bg-transparent text-sm outline-none border-b border-primary"
+                            value={editTitle}
+                            onChange={(e) => setEditTitle(e.target.value)}
+                            onBlur={commitRename}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitRename();
+                              if (e.key === "Escape") setEditingId(null);
+                            }}
+                            autoFocus
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <span
+                            className="truncate flex-1 text-sm"
+                            onDoubleClick={(e) => startRename(c, e)}
+                          >
+                            {c.title}
+                          </span>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); onDelete(c.id); }}
                           className="opacity-0 group-hover:opacity-100 transition-opacity"
@@ -115,6 +158,12 @@ export function EmmaSidebar({
                 <SidebarMenuButton onClick={() => onNavigate("/dashboard")}>
                   <BarChart3 className="h-4 w-4" />
                   {!collapsed && <span>Dashboard</span>}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => onNavigate("/settings")}>
+                  <Settings className="h-4 w-4" />
+                  {!collapsed && <span>Settings</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

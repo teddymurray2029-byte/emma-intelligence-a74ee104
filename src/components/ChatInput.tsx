@@ -1,14 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Paperclip, Mic, MicOff, Image } from "lucide-react";
+import { Send, Paperclip, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { FileUpload } from "./FileUpload";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
+  userId?: string;
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, userId }: ChatInputProps) {
   const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -26,6 +28,16 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setInput("");
+  };
+
+  const handleFileUploaded = (url: string, fileName: string) => {
+    onSend(`📎 Uploaded file: [${fileName}](${url})\n\nPlease analyze this file.`);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    // File drop is handled by FileUpload component via the input
+    toast("Use the 📎 button to upload files");
   };
 
   const toggleVoice = useCallback(() => {
@@ -72,15 +84,32 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }, [isListening]);
 
   return (
-    <div className="emma-glow-border rounded-2xl emma-surface-elevated p-2 flex items-end gap-1.5">
-      <Button
-        size="icon"
-        variant="ghost"
-        className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9"
-        disabled={disabled}
-      >
-        <Paperclip className="h-4 w-4" />
-      </Button>
+    <div
+      className="emma-glow-border rounded-2xl emma-surface-elevated p-2 flex items-end gap-1.5"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
+      {userId ? (
+        <FileUpload userId={userId} onFileUploaded={handleFileUploaded} disabled={disabled}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9"
+            disabled={disabled}
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+        </FileUpload>
+      ) : (
+        <Button
+          size="icon"
+          variant="ghost"
+          className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9"
+          disabled={disabled}
+        >
+          <Paperclip className="h-4 w-4" />
+        </Button>
+      )}
 
       <Button
         size="icon"

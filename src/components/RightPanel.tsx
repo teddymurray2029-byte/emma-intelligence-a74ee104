@@ -1,15 +1,16 @@
-import { useState } from "react";
-import { Code2, Bot } from "lucide-react";
-import { CodeEditor } from "./CodeEditor";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Code2, Bot, Terminal } from "lucide-react";
+import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { AgentSwarm } from "./AgentSwarm";
 
 type Tab = "ide" | "agents";
 
 interface RightPanelProps {
   isProcessing?: boolean;
+  editorRef?: React.RefObject<CodeEditorHandle | null>;
 }
 
-export function RightPanel({ isProcessing = false }: RightPanelProps) {
+export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("ide");
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
@@ -40,7 +41,7 @@ export function RightPanel({ isProcessing = false }: RightPanelProps) {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "ide" && <CodeEditor />}
+        {tab === "ide" && <CodeEditor ref={editorRef} />}
         {tab === "agents" && <AgentSwarm isProcessing={isProcessing} />}
       </div>
     </div>

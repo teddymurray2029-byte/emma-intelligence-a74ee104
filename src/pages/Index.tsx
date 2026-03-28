@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import type { CodeEditorHandle } from "@/components/CodeEditor";
 
 const WELCOME_SUGGESTIONS = [
   "Build me a landing page",
@@ -28,12 +29,13 @@ const WELCOME_SUGGESTIONS = [
 export default function Index() {
   const { user, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
-  const { conversations, create, remove } = useConversations(user?.id);
+  const { conversations, create, remove, rename } = useConversations(user?.id);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId);
   const [isLoading, setIsLoading] = useState(false);
   const [showRight, setShowRight] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<CodeEditorHandle | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -73,7 +75,6 @@ export default function Index() {
     const conv = await create(title);
     if (!conv) { toast.error("Failed to create branch"); return; }
 
-    // Save branched messages to new conversation
     for (const msg of branchedMessages) {
       await supabase.from("messages").insert({
         conversation_id: conv.id,
@@ -83,15 +84,22 @@ export default function Index() {
       });
     }
 
+    // Update parent_id for branch tracking
+    await supabase.from("conversations").update({ parent_id: activeConvId } as any).eq("id", conv.id);
+
     setActiveConvId(conv.id);
     toast.success("Conversation branched!");
-  }, [messages, create]);
+  }, [messages, create, activeConvId]);
+
+  const handleOpenInEditor = useCallback((code: string, language: string) => {
+    editorRef.current?.openCode(code, language);
+    if (!showRight) setShowRight(true);
+  }, [showRight]);
 
   const send = async (input: string) => {
     const convId = await ensureConversation(input);
     if (!convId) return;
 
-    // Check for /image command
     if (input.startsWith("/image ")) {
       const prompt = input.slice(7).trim();
       if (!prompt) { toast.error("Please provide an image prompt"); return; }
@@ -115,7 +123,6 @@ export default function Index() {
       return;
     }
 
-    // Normal chat
     const userMsg: Message = { role: "user", content: input };
     addLocal(userMsg);
     await saveMessage("user", input);
@@ -169,6 +176,7 @@ export default function Index() {
           onSelect={handleSelectConv}
           onCreate={handleNewChat}
           onDelete={remove}
+          onRename={rename}
           onNavigate={navigate}
           onSignOut={signOut}
         />
@@ -245,6 +253,7 @@ export default function Index() {
                               message={m}
                               index={i}
                               onBranch={handleBranch}
+                              onOpenInEditor={handleOpenInEditor}
                             />
                           ))}
                           {isLoading && messages[messages.length - 1]?.role === "user" && (
@@ -259,7 +268,7 @@ export default function Index() {
                   </div>
 
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
-                    <ChatInput onSend={send} disabled={isLoading} />
+                    <ChatInput onSend={send} disabled={isLoading} userId={user.id} />
                     <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">
                       Emma ASI · Multi-Agent · Unlimited Context
                     </p>
@@ -271,7 +280,7 @@ export default function Index() {
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel defaultSize={45} minSize={25}>
-                    <RightPanel isProcessing={isLoading} />
+                    <RightPanel isProcessing={isLoading} editorRef={editorRef} />
                   </ResizablePanel>
                 </>
               )}

@@ -51,13 +51,13 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        aether: {
-          blue: "hsl(var(--aether-blue))",
-          "blue-dim": "hsl(var(--aether-blue-dim))",
-          amber: "hsl(var(--aether-amber))",
-          purple: "hsl(var(--aether-purple))",
-          surface: "hsl(var(--aether-surface))",
-          "surface-elevated": "hsl(var(--aether-surface-elevated))",
+        emma: {
+          blue: "hsl(var(--emma-blue))",
+          "blue-dim": "hsl(var(--emma-blue-dim))",
+          amber: "hsl(var(--emma-amber))",
+          purple: "hsl(var(--emma-purple))",
+          surface: "hsl(var(--emma-surface))",
+          "surface-elevated": "hsl(var(--emma-surface-elevated))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",

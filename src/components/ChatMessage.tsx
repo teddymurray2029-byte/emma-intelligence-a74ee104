@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
-import { AetherAvatar } from "./AetherAvatar";
+import { EmmaAvatar } from "./EmmaAvatar";
 import type { Message } from "@/lib/emma-stream";
 
 export function ChatMessage({ message }: { message: Message }) {
@@ -13,13 +13,13 @@ export function ChatMessage({ message }: { message: Message }) {
       transition={{ duration: 0.25 }}
       className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}
     >
-      {!isUser && <AetherAvatar size="sm" />}
+      {!isUser && <EmmaAvatar size="sm" />}
 
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "aether-surface-elevated aether-glow-border rounded-bl-sm"
+            : "emma-surface-elevated emma-glow-border rounded-bl-sm"
         }`}
       >
         {isUser ? (

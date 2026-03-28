@@ -26,36 +26,21 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <div className="aether-glow-border rounded-2xl aether-surface-elevated p-2 flex items-end gap-2">
-      <Button
-        size="icon"
-        variant="ghost"
-        className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9"
-        disabled={disabled}
-      >
+    <div className="emma-glow-border rounded-2xl emma-surface-elevated p-2 flex items-end gap-2">
+      <Button size="icon" variant="ghost" className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9" disabled={disabled}>
         <Paperclip className="h-4 w-4" />
       </Button>
       <textarea
         ref={textareaRef}
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSubmit();
-          }
-        }}
-        placeholder="Message Aether..."
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+        placeholder="Message Emma..."
         disabled={disabled}
         rows={1}
         className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground text-sm resize-none outline-none px-2 py-2 max-h-40 font-sans"
       />
-      <Button
-        onClick={handleSubmit}
-        disabled={disabled || !input.trim()}
-        size="icon"
-        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl flex-shrink-0 h-9 w-9"
-      >
+      <Button onClick={handleSubmit} disabled={disabled || !input.trim()} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl flex-shrink-0 h-9 w-9">
         <Send className="h-4 w-4" />
       </Button>
     </div>

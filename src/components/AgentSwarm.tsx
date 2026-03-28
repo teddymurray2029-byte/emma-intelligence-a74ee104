@@ -21,7 +21,7 @@ const AGENTS: Agent[] = [
 const statusColors: Record<string, string> = {
   idle: "bg-muted-foreground/30",
   thinking: "bg-accent animate-pulse",
-  active: "bg-primary aether-pulse",
+  active: "bg-primary emma-pulse",
   done: "bg-green-500",
 };
 
@@ -40,7 +40,7 @@ export function AgentSwarm() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.08 }}
-            className="aether-surface-elevated aether-glow-border rounded-xl p-3 space-y-2"
+            className="emma-surface-elevated emma-glow-border rounded-xl p-3 space-y-2"
           >
             <div className="flex items-center gap-2">
               <agent.icon className="h-4 w-4 text-primary" />
@@ -55,7 +55,7 @@ export function AgentSwarm() {
         ))}
       </div>
 
-      <div className="mt-6 p-3 aether-surface-elevated rounded-xl border border-border">
+      <div className="mt-6 p-3 emma-surface-elevated rounded-xl border border-border">
         <p className="text-xs text-muted-foreground mb-2 font-mono">SWARM LOG</p>
         <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
           <p><span className="text-primary">▸</span> Director initialized</p>

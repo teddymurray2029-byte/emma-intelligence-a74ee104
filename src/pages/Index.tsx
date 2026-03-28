@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { TypingIndicator } from "@/components/TypingIndicator";
-import { AetherAvatar } from "@/components/AetherAvatar";
+import { EmmaAvatar } from "@/components/EmmaAvatar";
 import { RightPanel } from "@/components/RightPanel";
-import { AetherSidebar } from "@/components/AetherSidebar";
+import { EmmaSidebar } from "@/components/EmmaSidebar";
 import { streamChat, type Message } from "@/lib/emma-stream";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
@@ -57,14 +57,12 @@ export default function Index() {
   const send = async (input: string) => {
     let convId = activeConvId;
 
-    // Auto-create conversation if none active
     if (!convId) {
       const conv = await create(input.slice(0, 60));
       if (!conv) { toast.error("Failed to create conversation"); return; }
       convId = conv.id;
       setActiveConvId(conv.id);
     } else {
-      // Auto-title on first message
       if (messages.length === 0) {
         await supabase.from("conversations").update({ title: input.slice(0, 60) }).eq("id", convId);
       }
@@ -98,14 +96,14 @@ export default function Index() {
       });
     } catch {
       setIsLoading(false);
-      toast.error("Failed to connect to Aether");
+      toast.error("Failed to connect to Emma");
     }
   };
 
   if (authLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
-        <AetherAvatar size="lg" />
+        <EmmaAvatar size="lg" />
       </div>
     );
   }
@@ -117,7 +115,7 @@ export default function Index() {
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
-        <AetherSidebar
+        <EmmaSidebar
           conversations={conversations}
           activeId={activeConvId}
           onSelect={handleSelectConv}
@@ -128,17 +126,16 @@ export default function Index() {
         />
 
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Header */}
           <header className="h-12 flex items-center border-b border-border bg-card px-3 gap-2">
             <SidebarTrigger />
             <div className="flex items-center gap-2 flex-1">
-              <h1 className="text-sm font-semibold text-foreground">Aether</h1>
+              <h1 className="text-sm font-semibold text-foreground">Emma</h1>
               <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
                 ASI v1.0
               </span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-primary aether-pulse" />
+              <div className="w-2 h-2 rounded-full bg-primary emma-pulse" />
               <span className="text-xs font-mono text-primary">ONLINE</span>
             </div>
             <Button
@@ -151,10 +148,8 @@ export default function Index() {
             </Button>
           </header>
 
-          {/* Main content */}
           <div className="flex-1 overflow-hidden">
             <ResizablePanelGroup direction="horizontal">
-              {/* Chat panel */}
               <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={35}>
                 <div className="flex flex-col h-full">
                   <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -167,10 +162,10 @@ export default function Index() {
                           exit={{ opacity: 0 }}
                           className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8"
                         >
-                          <AetherAvatar size="lg" />
+                          <EmmaAvatar size="lg" />
                           <div className="text-center space-y-3 max-w-lg">
-                            <h2 className="text-2xl font-bold aether-glow-text">
-                              Hello, I'm Aether
+                            <h2 className="text-2xl font-bold emma-glow-text">
+                              Hello, I'm Emma
                             </h2>
                             <p className="text-sm text-muted-foreground leading-relaxed">
                               Your personal AI Operating System — an entire team of researchers,
@@ -182,7 +177,7 @@ export default function Index() {
                               <button
                                 key={s}
                                 onClick={() => send(s)}
-                                className="aether-surface-elevated aether-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left"
+                                className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left"
                               >
                                 {s}
                               </button>
@@ -201,7 +196,7 @@ export default function Index() {
                           ))}
                           {isLoading && messages[messages.length - 1]?.role === "user" && (
                             <div className="flex gap-3">
-                              <AetherAvatar size="sm" />
+                              <EmmaAvatar size="sm" />
                               <TypingIndicator />
                             </div>
                           )}
@@ -213,13 +208,12 @@ export default function Index() {
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
                     <ChatInput onSend={send} disabled={isLoading} />
                     <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">
-                      Aether ASI · Multi-Agent · Unlimited Context
+                      Emma ASI · Multi-Agent · Unlimited Context
                     </p>
                   </div>
                 </div>
               </ResizablePanel>
 
-              {/* Right panel */}
               {showRight && (
                 <>
                   <ResizableHandle withHandle />

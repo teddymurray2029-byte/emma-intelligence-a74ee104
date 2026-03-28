@@ -496,11 +496,14 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const { action } = body;
+    console.log(`[emma-cu] action=${action}`);
 
     switch (action) {
       // Create a new desktop sandbox
       case "start_session": {
+        console.log("[emma-cu] Creating sandbox...");
         const sandbox = await createSandbox(userId, body.task);
+        console.log(`[emma-cu] Sandbox created: ${sandbox.sandboxId}`);
 
         return json({
           sessionId: sandbox.sandboxId,

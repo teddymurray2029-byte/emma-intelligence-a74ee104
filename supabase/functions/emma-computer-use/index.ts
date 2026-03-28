@@ -152,25 +152,32 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
   return session;
 }
 
-// Fire-and-forget: kick off Xvfb + WM in a single background script, return immediately
+// Start Xvfb + WM, wait for X socket to appear (typically 2-3s), then return
 async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized) return;
 
-  // Single combined command: start Xvfb, wait briefly for socket, start WM — all in background
-  await runCommand(
+  // Start Xvfb in background, wait for X socket, then start WM — all in one command
+  // This blocks until X0 socket exists (up to 10s), which is fine for a single edge function call
+  const result = await runCommand(
     sandbox,
     "bash",
-    ["-lc", `nohup bash -c '
-      pgrep -x Xvfb || Xvfb :0 -screen 0 1024x768x24 -ac &
-      for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done
-      if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session || DISPLAY=:0 startxfce4 &; fi
-    ' >/tmp/desktop-boot.log 2>&1 &`],
-    5,
+    ["-lc", [
+      "pgrep -x Xvfb >/dev/null || Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log &",
+      "for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done",
+      "test -S /tmp/.X11-unix/X0 || { echo 'X socket not ready'; exit 1; }",
+      "if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session >/dev/null || DISPLAY=:0 startxfce4 &>/tmp/xfce.log & fi",
+      "echo 'desktop-ready'",
+    ].join("; ")],
+    15,
     {},
   );
 
-  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  console.log(`[kickstart] exit=${result.exitCode} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`);
+
+  if (result.exitCode === 0) {
+    sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  }
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -314,23 +321,27 @@ async function getSandbox(sandboxId: string, envdAccessToken?: string | null): P
 
 // Take a screenshot using the sandbox's command execution
 async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
-  // Try multiple screenshot methods
-  const methods: Array<{ cmd: string; args: string[]; envs?: Record<string, string> }> = [
-    { cmd: "import", args: ["-window", "root", "/tmp/screenshot.png"], envs: { DISPLAY: ":0" } },
-    { cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
-    { cmd: "python3", args: ["-c", "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')"], envs: { DISPLAY: ":0" } },
+  // Try multiple screenshot methods — scrot first (known installed), then pyautogui
+  // Note: `import` (ImageMagick) is NOT installed in the desktop template
+  const methods: Array<{ label: string; cmd: string; args: string[]; envs?: Record<string, string> }> = [
+    { label: "scrot", cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
+    { label: "scrot-bash", cmd: "bash", args: ["-lc", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"], envs: {} },
+    { label: "xdpyinfo+scrot", cmd: "bash", args: ["-lc", "export DISPLAY=:0; xdpyinfo >/dev/null 2>&1 && scrot /tmp/screenshot.png --overwrite"], envs: {} },
   ];
 
   let lastError = "";
   for (const method of methods) {
     try {
+      console.log(`[screenshot] trying ${method.label}...`);
       const result = await runCommand(sandbox, method.cmd, method.args, 15, method.envs ?? {});
+      console.log(`[screenshot] ${method.label}: exit=${result.exitCode} stdout=${result.stdout.slice(0,100)} stderr=${result.stderr.slice(0,200)}`);
       if (result.exitCode === 0) {
         return toBase64(await readSandboxFile(sandbox, "/tmp/screenshot.png"));
       }
       lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
     } catch (e) {
       lastError = e instanceof Error ? e.message : "Unknown error";
+      console.log(`[screenshot] ${method.label} threw: ${lastError}`);
     }
   }
 
@@ -474,9 +485,6 @@ Rules:
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const userId = await getClerkUserId(req);
-  if (!userId) return json({ error: "Unauthorized — sign in required" }, 401);
-
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
 
@@ -484,6 +492,49 @@ serve(async (req) => {
     const body = await req.json();
     const { action } = body;
     console.log(`[emma-cu] action=${action}`);
+
+    // Temporary debug action — no auth required
+    if (action === "debug_sandbox") {
+      const sandbox = await createSandbox("debug-user", "diagnostics");
+      const results: Record<string, any> = { sandboxId: sandbox.sandboxId };
+
+      // Check what's installed
+      const which = await runCommand(sandbox, "bash", ["-lc", "which Xvfb xdpyinfo scrot import python3 2>&1; echo '---'; dpkg -l | grep -iE 'xvfb|xfce|scrot|imagemagick' 2>&1 | head -20; echo '---'; ls -la /tmp/.X11-unix/ 2>&1; echo '---'; ps aux 2>&1 | head -30"], 15, {});
+      results.installed = { stdout: which.stdout, stderr: which.stderr, exitCode: which.exitCode };
+
+      // Check DISPLAY env
+      const displayCheck = await runCommand(sandbox, "bash", ["-lc", "echo DISPLAY=$DISPLAY; env | sort | head -30"], 5, {});
+      results.env = { stdout: displayCheck.stdout, stderr: displayCheck.stderr };
+
+      // Try starting Xvfb
+      const xvfb = await runCommand(sandbox, "bash", ["-lc", "Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log & sleep 3; cat /tmp/xvfb.log 2>&1; echo '---'; ls -la /tmp/.X11-unix/ 2>&1; echo '---'; ps aux | grep -i '[Xx]vfb'"], 10, {});
+      results.xvfb = { stdout: xvfb.stdout, stderr: xvfb.stderr, exitCode: xvfb.exitCode };
+
+      // Try scrot screenshot (after Xvfb is running)
+      const shot = await runCommand(sandbox, "bash", ["-lc", "DISPLAY=:0 scrot /tmp/test.png --overwrite 2>&1 && echo 'screenshot-ok' && ls -la /tmp/test.png || echo 'screenshot-failed'"], 10, {});
+      results.screenshot_scrot = { stdout: shot.stdout, stderr: shot.stderr, exitCode: shot.exitCode };
+
+      // Try scrot via envs parameter
+      const shot2 = await runCommand(sandbox, "scrot", ["/tmp/test2.png", "--overwrite"], 10, { DISPLAY: ":0" });
+      results.screenshot_scrot_envs = { stdout: shot2.stdout, stderr: shot2.stderr, exitCode: shot2.exitCode };
+
+      // Check if file was created
+      const fileCheck = await runCommand(sandbox, "bash", ["-lc", "ls -la /tmp/test*.png 2>&1"], 5, {});
+      results.files = { stdout: fileCheck.stdout };
+
+      // Cleanup
+      try {
+        await fetch(`${E2B_API_BASE}/sandboxes/${sandbox.sandboxId}`, {
+          method: "DELETE",
+          headers: { "X-API-Key": apiKey },
+        });
+      } catch {}
+
+      return json(results);
+    }
+
+    const userId = await getClerkUserId(req);
+    if (!userId) return json({ error: "Unauthorized — sign in required" }, 401);
 
     switch (action) {
       // Create a new desktop sandbox

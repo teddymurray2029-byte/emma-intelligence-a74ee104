@@ -252,6 +252,7 @@ export default function Index() {
                               key={i}
                               message={m}
                               index={i}
+                              conversationId={activeConvId}
                               onBranch={handleBranch}
                               onOpenInEditor={handleOpenInEditor}
                             />

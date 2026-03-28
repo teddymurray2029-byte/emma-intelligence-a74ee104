@@ -5,11 +5,13 @@ const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-image-
 
 export async function streamChat({
   messages,
+  feedback,
   onDelta,
   onDone,
   onError,
 }: {
   messages: Message[];
+  feedback?: { type: string; summary: string }[];
   onDelta: (deltaText: string) => void;
   onDone: () => void;
   onError: (error: string) => void;
@@ -20,7 +22,7 @@ export async function streamChat({
       "Content-Type": "application/json",
       Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({ messages: messages.map(m => ({ role: m.role, content: m.content })) }),
+    body: JSON.stringify({ messages: messages.map(m => ({ role: m.role, content: m.content })), feedback }),
   });
 
   if (!resp.ok) {

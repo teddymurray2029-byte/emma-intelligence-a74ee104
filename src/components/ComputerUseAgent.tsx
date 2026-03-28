@@ -1,0 +1,395 @@
+import { useState, useCallback, useRef, useEffect } from "react";
+import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+
+const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;
+
+interface AgentStep {
+  id: number;
+  action: string;
+  reasoning: string;
+  screenshot?: string;
+  timestamp: string;
+  status: "pending" | "executing" | "done" | "error";
+}
+
+interface ComputerUseAgentProps {
+  getToken: () => Promise<string | null>;
+}
+
+async function cuApi(action: string, params: Record<string, any>, getToken: () => Promise<string | null>) {
+  const token = await getToken();
+  const resp = await fetch(CU_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ action, ...params }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(err.error || `Error ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
+  const [task, setTask] = useState("");
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [steps, setSteps] = useState<AgentStep[]>([]);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [intervention, setIntervention] = useState("");
+  const [currentScreenshot, setCurrentScreenshot] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
+  const abortRef = useRef(false);
+  const stepIdRef = useRef(0);
+  const stepsRef = useRef<AgentStep[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [steps]);
+
+  const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
+    const newStep: AgentStep = { ...step, id: ++stepIdRef.current, timestamp: new Date().toISOString() };
+    stepsRef.current = [...stepsRef.current, newStep];
+    setSteps([...stepsRef.current]);
+    return newStep.id;
+  }, []);
+
+  const updateStep = useCallback((id: number, updates: Partial<AgentStep>) => {
+    stepsRef.current = stepsRef.current.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    setSteps([...stepsRef.current]);
+  }, []);
+
+  const startSession = useCallback(async () => {
+    if (!task.trim()) { toast.error("Enter a task first"); return; }
+
+    setStatus("starting");
+    setSummary(null);
+    setSteps([]);
+    stepsRef.current = [];
+    stepIdRef.current = 0;
+    abortRef.current = false;
+
+    const startStepId = addStep({ action: "start_session", reasoning: "Spinning up isolated OS environment...", status: "executing" });
+
+    try {
+      const res = await cuApi("start_session", { task: task.trim() }, getToken);
+      setSessionId(res.sessionId);
+      setStreamUrl(res.streamUrl);
+      updateStep(startStepId, { status: "done", reasoning: `Desktop sandbox ready (${res.sessionId.slice(0, 8)}...)` });
+
+      setStatus("running");
+      setIsRunning(true);
+
+      // Wait for desktop to boot
+      addStep({ action: "wait", reasoning: "Waiting for desktop to initialize...", status: "executing" });
+      await new Promise((r) => setTimeout(r, 5000));
+
+      // Start the agent loop
+      await runAgentLoop(res.sessionId, task.trim());
+    } catch (e: any) {
+      updateStep(startStepId, { status: "error", reasoning: `Failed: ${e.message}` });
+      setStatus("error");
+      toast.error(e.message);
+    }
+  }, [task, getToken, addStep, updateStep]);
+
+  const runAgentLoop = async (sid: string, taskDesc: string) => {
+    let actionHistory: { action: string; reasoning: string }[] = [];
+    const MAX_STEPS = 50;
+
+    for (let i = 0; i < MAX_STEPS; i++) {
+      if (abortRef.current) {
+        addStep({ action: "stopped", reasoning: "Task stopped by user", status: "done" });
+        break;
+      }
+
+      // Think step — AI analyzes screenshot and decides next action
+      const thinkStepId = addStep({ action: "thinking", reasoning: "Analyzing screen...", status: "executing" });
+
+      try {
+        const pendingIntervention = intervention;
+        if (pendingIntervention) setIntervention("");
+
+        const decision = await cuApi("think", {
+          sessionId: sid,
+          task: taskDesc,
+          actionHistory,
+          userMessage: pendingIntervention || undefined,
+        }, getToken);
+
+        if (decision.screenshot) {
+          setCurrentScreenshot(decision.screenshot);
+          updateStep(thinkStepId, { screenshot: decision.screenshot });
+        }
+
+        updateStep(thinkStepId, {
+          status: "done",
+          reasoning: decision.reasoning,
+          action: `think → ${decision.action}`,
+        });
+
+        actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
+
+        // Check if done
+        if (decision.done) {
+          setSummary(decision.summary || "Task completed.");
+          setStatus("done");
+          setIsRunning(false);
+          addStep({ action: "complete", reasoning: decision.summary || "Task completed successfully!", status: "done" });
+          break;
+        }
+
+        // Execute the action
+        if (decision.action !== "wait") {
+          const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
+
+          try {
+            await cuApi("execute", {
+              sessionId: sid,
+              actionType: decision.action,
+              params: decision.params,
+            }, getToken);
+            updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
+          } catch (e: any) {
+            updateStep(execStepId, { status: "error", reasoning: `Action failed: ${e.message}` });
+          }
+        }
+
+        // Small delay between actions
+        const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
+        await new Promise((r) => setTimeout(r, waitTime));
+      } catch (e: any) {
+        updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
+        // Wait and retry
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+
+    if (!abortRef.current && stepsRef.current.length >= MAX_STEPS) {
+      setSummary("Reached maximum step limit. Task may be partially complete.");
+      setStatus("done");
+      setIsRunning(false);
+    }
+  };
+
+  const stopSession = useCallback(async () => {
+    abortRef.current = true;
+    setStatus("stopping");
+    if (sessionId) {
+      try {
+        await cuApi("stop_session", { sessionId }, getToken);
+      } catch {}
+    }
+    setIsRunning(false);
+    setSessionId(null);
+    setStreamUrl(null);
+    setStatus("done");
+    toast.success("Agent stopped");
+  }, [sessionId, getToken]);
+
+  const handleIntervene = () => {
+    if (!intervention.trim()) return;
+    addStep({ action: "user_message", reasoning: `User: ${intervention.trim()}`, status: "done" });
+    // intervention will be picked up in the next think cycle
+  };
+
+  const getStatusIcon = (s: AgentStep["status"]) => {
+    switch (s) {
+      case "executing": return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
+      case "done": return <CheckCircle2 className="h-3 w-3 text-green-500" />;
+      case "error": return <AlertCircle className="h-3 w-3 text-destructive" />;
+      default: return <div className="h-3 w-3 rounded-full bg-muted" />;
+    }
+  };
+
+  const getActionIcon = (action: string) => {
+    if (action.includes("think")) return <Eye className="h-3 w-3" />;
+    if (action.includes("click") || action.includes("mouse")) return <MousePointer className="h-3 w-3" />;
+    if (action === "screenshot") return <Camera className="h-3 w-3" />;
+    if (action === "start_session") return <Monitor className="h-3 w-3" />;
+    return <div className="h-3 w-3" />;
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-background">
+      {/* Task Input Bar */}
+      {status === "idle" || status === "done" || status === "error" ? (
+        <div className="p-4 border-b border-border bg-card space-y-3">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Monitor className="h-4 w-4 text-primary" />
+              Emma Computer-Use Agent
+            </h3>
+            <p className="text-[10px] text-muted-foreground">Spins up an isolated virtual desktop where Emma controls mouse & keyboard to perform tasks.</p>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={task}
+              onChange={(e) => setTask(e.target.value)}
+              placeholder='e.g. "Research the top 3 AI coding tools and make a comparison doc"'
+              className="text-xs"
+              onKeyDown={(e) => { if (e.key === "Enter") startSession(); }}
+            />
+            <Button onClick={startSession} size="sm" className="gap-1.5 px-4">
+              <Play className="h-3.5 w-3.5" /> Start
+            </Button>
+          </div>
+          {/* Example tasks */}
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              "Apply to 10 frontend jobs on Indeed",
+              "Research AI tools and make a comparison table",
+              "Post a thread on X/Twitter",
+              "Book a flight on Delta under $450",
+            ].map((ex) => (
+              <button
+                key={ex}
+                onClick={() => setTask(ex)}
+                className="text-[9px] px-2 py-1 rounded-md bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Main Content */}
+      {status !== "idle" && (
+        <div className="flex-1 overflow-hidden">
+          <ResizablePanelGroup direction="horizontal">
+            {/* Desktop Stream / Screenshot View */}
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <div className="flex flex-col h-full">
+                {/* Control Bar */}
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : status === "error" ? "bg-destructive" : "bg-muted-foreground"}`} />
+                    <span className="text-xs font-mono text-foreground capitalize">{status}</span>
+                    {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}...</span>}
+                  </div>
+                  {isRunning && (
+                    <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={stopSession}>
+                      <Square className="h-3 w-3" /> Stop Emma
+                    </Button>
+                  )}
+                </div>
+
+                {/* Desktop View */}
+                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
+                  {streamUrl ? (
+                    <iframe
+                      src={streamUrl}
+                      className="w-full h-full border-0"
+                      title="Emma Desktop"
+                      sandbox="allow-same-origin allow-scripts"
+                    />
+                  ) : currentScreenshot ? (
+                    <img
+                      src={`data:image/png;base64,${currentScreenshot}`}
+                      alt="Desktop screenshot"
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <div className="text-center space-y-3">
+                      <Monitor className="h-12 w-12 text-muted-foreground mx-auto" />
+                      <p className="text-xs text-muted-foreground">
+                        {status === "starting" ? "Starting virtual desktop..." : "Desktop view will appear here"}
+                      </p>
+                      {status === "starting" && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
+                    </div>
+                  )}
+                </div>
+
+                {/* Intervention Chat */}
+                {isRunning && (
+                  <div className="px-3 py-2 border-t border-border bg-card">
+                    <div className="flex gap-2">
+                      <Input
+                        value={intervention}
+                        onChange={(e) => setIntervention(e.target.value)}
+                        placeholder="Intervene: tell Emma to change approach..."
+                        className="text-xs h-8"
+                        onKeyDown={(e) => { if (e.key === "Enter") handleIntervene(); }}
+                      />
+                      <Button size="sm" variant="secondary" className="h-8 px-2" onClick={handleIntervene}>
+                        <Send className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
+
+            {/* Action Log Panel */}
+            <ResizablePanel defaultSize={40} minSize={20}>
+              <div className="flex flex-col h-full bg-card">
+                <div className="px-3 py-2 border-b border-border">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
+                  <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
+                </div>
+                <ScrollArea className="flex-1">
+                  <div ref={scrollRef} className="p-2 space-y-1">
+                    {steps.map((step) => (
+                      <div key={step.id} className="flex gap-2 p-2 rounded-lg hover:bg-secondary/30 transition-colors group">
+                        <div className="flex-shrink-0 mt-0.5">{getStatusIcon(step.status)}</div>
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            {getActionIcon(step.action)}
+                            <span className="text-[10px] font-mono text-primary uppercase">{step.action}</span>
+                            <span className="text-[9px] text-muted-foreground ml-auto">
+                              {new Date(step.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-foreground leading-relaxed">{step.reasoning}</p>
+                          {step.screenshot && (
+                            <img
+                              src={`data:image/png;base64,${step.screenshot}`}
+                              alt="Step screenshot"
+                              className="w-full rounded border border-border mt-1 cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => setCurrentScreenshot(step.screenshot!)}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {steps.length === 0 && (
+                      <div className="p-4 text-center text-xs text-muted-foreground">
+                        Agent actions will appear here as Emma works...
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+
+                {/* Summary */}
+                {summary && (
+                  <div className="p-3 border-t border-border bg-primary/5">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">Task Summary</p>
+                        <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{summary}</p>
+                      </div>
+                    </div>
+                    <Button variant="secondary" size="sm" className="w-full mt-2 text-xs" onClick={() => { setStatus("idle"); setSteps([]); setSummary(null); }}>
+                      New Task
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+      )}
+    </div>
+  );
+}

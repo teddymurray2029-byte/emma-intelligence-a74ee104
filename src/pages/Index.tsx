@@ -16,6 +16,7 @@ import { MemoryControlPanel } from "@/components/MemoryControlPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { PaywallModal } from "@/components/PaywallModal";
 import { ProjectIDE } from "@/components/ProjectIDE";
+import { ComputerUseAgent } from "@/components/ComputerUseAgent";
 import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
@@ -212,6 +213,8 @@ export default function Index() {
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";
   const isProjectsMode = mode === "projects";
+  const isAgentMode = mode === "agent";
+  const isFullscreenMode = isProjectsMode || isAgentMode;
 
   const renderRightPanel = () => {
     switch (mode) {
@@ -249,7 +252,7 @@ export default function Index() {
                 </div>
               )}
               <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-primary emma-pulse" /><span className="text-xs font-mono text-primary">ONLINE</span></div>
-              {!isProjectsMode && (
+              {!isFullscreenMode && (
                 <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
                   {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                 </Button>
@@ -261,6 +264,8 @@ export default function Index() {
           <div className="flex-1 overflow-hidden">
             {isProjectsMode ? (
               <ProjectIDE getToken={getToken} />
+            ) : isAgentMode ? (
+              <ComputerUseAgent getToken={getToken} />
             ) : (
               <ResizablePanelGroup direction="horizontal">
                 <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>

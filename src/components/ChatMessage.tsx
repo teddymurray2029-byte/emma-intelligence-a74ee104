@@ -5,16 +5,18 @@ import { EmmaAvatar } from "./EmmaAvatar";
 import { GitBranch, Download, Code2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { VoiceOutput } from "./VoiceOutput";
+import { MessageFeedback } from "./MessageFeedback";
 import type { Message } from "@/lib/emma-stream";
 
 interface ChatMessageProps {
   message: Message;
   index?: number;
+  conversationId?: string | null;
   onBranch?: (index: number) => void;
   onOpenInEditor?: (code: string, language: string) => void;
 }
 
-export function ChatMessage({ message, index, onBranch, onOpenInEditor }: ChatMessageProps) {
+export function ChatMessage({ message, index, conversationId, onBranch, onOpenInEditor }: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -88,7 +90,8 @@ export function ChatMessage({ message, index, onBranch, onOpenInEditor }: ChatMe
 
         {/* Action buttons */}
         {!isUser && (
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 items-center">
+            <MessageFeedback conversationId={conversationId} messageContent={message.content} messageIndex={index ?? 0} />
             <VoiceOutput text={message.content} />
             {onBranch && index !== undefined && (
               <Button

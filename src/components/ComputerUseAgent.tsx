@@ -17,6 +17,26 @@ interface AgentStep {
   status: "pending" | "executing" | "done" | "error";
 }
 
+type CuApiErrorPayload = {
+  error?: string;
+  message?: string;
+  status?: string;
+  stage?: string;
+  errorCode?: string;
+};
+
+class CuApiError extends Error {
+  status: number;
+  payload?: CuApiErrorPayload;
+
+  constructor(message: string, status: number, payload?: CuApiErrorPayload) {
+    super(message);
+    this.name = "CuApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 interface ComputerUseAgentProps {
   getToken: () => Promise<string | null>;
 }
@@ -27,21 +47,50 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
   const tid = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const resp = await fetch(CU_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ action, ...params }),
-      signal: controller.signal,
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(CU_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action, ...params }),
+        signal: controller.signal,
+      });
+    } catch (e: any) {
+      if (e.name === "AbortError") throw new Error("Request timed out — the server took too long to respond");
+      throw new Error("Failed to reach the computer-use backend");
+    }
+
     const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
-    if (!resp.ok) throw new Error(data.error || `Error ${resp.status}`);
+    if (!resp.ok) {
+      const payload = data as CuApiErrorPayload;
+      const stage = payload.stage ? ` (${payload.stage.replace(/\n/g, ", ")})` : "";
+      const message = payload.error || payload.message || `Error ${resp.status}`;
+      throw new CuApiError(`${message}${stage}`, resp.status, payload);
+    }
     return data;
   } catch (e: any) {
+    if (e instanceof CuApiError) throw e;
     if (e.name === "AbortError") throw new Error("Request timed out — the server took too long to respond");
     throw e;
   } finally {
     clearTimeout(tid);
   }
+}
+
+function formatBootFailure(error: unknown) {
+  if (error instanceof CuApiError) {
+    const code = error.payload?.errorCode;
+    const stage = error.payload?.stage ? error.payload.stage.replace(/\n/g, ", ") : null;
+
+    if (code === "black_screen") return `Desktop stayed black during startup${stage ? ` (${stage})` : ""}`;
+    if (code === "window_manager_not_ready") return `Desktop session failed to start${stage ? ` (${stage})` : ""}`;
+    if (code === "display_not_ready") return `Virtual display did not come up${stage ? ` (${stage})` : ""}`;
+    if (code === "screenshot_failed") return `Desktop screenshot capture failed${stage ? ` (${stage})` : ""}`;
+    return error.message;
+  }
+
+  if (error instanceof Error) return error.message;
+  return "Desktop boot failed";
 }
 
 function isMeaningfulScreenshot(base64: string): Promise<boolean> {
@@ -155,10 +204,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         throw new Error(`${reason}${stage}`);
       }
     } catch (e: any) {
-      updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${e.message}` });
+      const message = formatBootFailure(e);
+      updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${message}` });
       setIsRunning(false);
       setStatus("error");
-      toast.error(`Desktop boot failed: ${e.message}`);
+      toast.error(`Desktop boot failed: ${message}`);
       return;
     }
 
@@ -195,10 +245,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
+        const isWaitingForDesktop = decision.status === "black_screen";
         updateStep(thinkStepId, {
-          status: "done",
+          status: isWaitingForDesktop ? "executing" : "done",
           reasoning: decision.reasoning,
-          action: `think → ${decision.action}`,
+          action: isWaitingForDesktop ? "think → wait_for_desktop" : `think → ${decision.action}`,
         });
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });

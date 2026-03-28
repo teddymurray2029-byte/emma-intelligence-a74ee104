@@ -21,7 +21,6 @@ type SandboxSession = {
   envdAccessToken: string;
   domain?: string;
   desktopInitialized?: boolean;
-  streamUrl?: string;
 };
 
 type ScreenshotAnalysis = {
@@ -269,30 +268,7 @@ async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
     console.error(`[kickstart] wm launch error: ${e}`);
   }
 
-  // Step 4: Start VNC server for live streaming
-  console.log(`[kickstart] step4: start VNC`);
-  try {
-    const vncResult = await runCommand(
-      sandbox, "bash",
-      ["-c", `
-        if pgrep -x x11vnc >/dev/null; then
-          echo 'vnc-already-running'
-        else
-          x11vnc -display :0 -nopw -forever -shared -rfbport 5900 -bg -o /tmp/x11vnc.log 2>&1 || echo 'x11vnc-failed'
-          echo 'vnc-started'
-        fi
-      `.trim()],
-      10, {},
-    );
-    console.log(`[kickstart] vnc: exit=${vncResult.exitCode} out=${vncResult.stdout.trim()}`);
-  } catch (e) {
-    console.warn(`[kickstart] VNC start error (non-fatal): ${e}`);
-  }
-
-  // Build stream URL
-  const streamUrl = `https://6080-${sandbox.sandboxId}.e2b.app/vnc.html?autoconnect=true&resize=scale`;
-
-  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true, streamUrl });
+  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -418,7 +394,6 @@ async function getSandbox(sandboxId: string, envdAccessToken?: string | null): P
       envdAccessToken,
       domain: cached?.domain,
       desktopInitialized: cached?.desktopInitialized,
-      streamUrl: cached?.streamUrl,
     };
     sandboxCache.set(sandboxId, session);
     return session;
@@ -465,8 +440,7 @@ async function getDesktopStage(sandbox: SandboxSession): Promise<string> {
   try {
     const r = await runCommand(sandbox, "bash", ["-c",
       "echo -n 'display='; xdpyinfo -display :0 >/dev/null 2>&1 && echo yes || echo no; " +
-      "echo -n 'wm_focus='; xdotool getwindowfocus >/dev/null 2>&1 && echo yes || echo no; " +
-      "echo -n 'vnc='; pgrep -x x11vnc >/dev/null && echo yes || echo no"
+      "echo -n 'wm_focus='; xdotool getwindowfocus >/dev/null 2>&1 && echo yes || echo no"
     ], 5);
     return r.stdout.trim();
   } catch {
@@ -541,9 +515,6 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
         continue;
       }
 
-      // Get stream URL from cache
-      const cached = sandboxCache.get(sandbox.sandboxId);
-
       return {
         ready: true,
         screenshot,
@@ -551,7 +522,6 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
         message: "Desktop ready",
         stage: lastStage,
         errorCode: undefined,
-        streamUrl: cached?.streamUrl || null,
       };
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Screenshot capture failed";

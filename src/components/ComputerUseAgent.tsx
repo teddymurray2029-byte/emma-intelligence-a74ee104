@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer, Tv } from "lucide-react";
+import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -121,7 +121,6 @@ function isMeaningfulScreenshot(base64: string): Promise<boolean> {
 export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [task, setTask] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [envdToken, setEnvdToken] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [steps, setSteps] = useState<AgentStep[]>([]);
@@ -131,7 +130,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
-  const [viewMode, setViewMode] = useState<"stream" | "screenshot">("stream");
+  
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
@@ -206,8 +205,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     abortRef.current = false;
-    setStreamUrl(null);
-    setViewMode("stream");
 
     // Phase 1: Create sandbox (should be fast, <5s)
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
@@ -220,7 +217,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       sid = res.sessionId;
       token = res.envdAccessToken;
       setSessionId(sid);
-      if (res.streamUrl) setStreamUrl(res.streamUrl);
+      
       setEnvdToken(token);
       sessionRef.current = { sid, token };
       updateStep(startStepId, { status: "done", reasoning: `Sandbox created (${sid.slice(0, 8)}...)` });
@@ -241,9 +238,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
     try {
       const readiness = await cuApi("wait_until_ready", { sessionId: sid, envdAccessToken: token }, getToken, 120_000);
-
-      // Pick up stream URL from readiness response
-      if (readiness.streamUrl) setStreamUrl(readiness.streamUrl);
 
       if (readiness.ready && readiness.screenshot) {
         const meaningful = await isMeaningfulScreenshot(readiness.screenshot);
@@ -357,7 +351,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     }
     setIsRunning(false);
     setSessionId(null);
-    setStreamUrl(null);
     setEnvdToken(null);
     sessionRef.current = null;
     setIsBooting(false);
@@ -375,7 +368,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
-    setStreamUrl(null);
     sessionRef.current = null;
   };
 
@@ -397,19 +389,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   };
 
   const renderDesktopView = () => {
-    // VNC live stream available
-    if (streamUrl && viewMode === "stream") {
-      return (
-        <iframe
-          src={streamUrl}
-          className="w-full h-full border-0"
-          title="Emma Desktop (Live)"
-          sandbox="allow-same-origin allow-scripts"
-        />
-      );
-    }
-
-    // Screenshot fallback
     if (currentScreenshot) {
       return (
         <img
@@ -497,23 +476,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}...</span>}
                   </div>
                   <div className="flex gap-1">
-                    {/* View mode toggle */}
-                    {streamUrl && (
-                      <div className="flex gap-0.5 mr-1">
-                        <button
-                          onClick={() => setViewMode("stream")}
-                          className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${viewMode === "stream" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          <Tv className="h-3 w-3 inline mr-0.5" />Live
-                        </button>
-                        <button
-                          onClick={() => setViewMode("screenshot")}
-                          className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${viewMode === "screenshot" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          <Camera className="h-3 w-3 inline mr-0.5" />Snap
-                        </button>
-                      </div>
-                    )}
                     {status === "error" && (
                       <Button variant="secondary" size="sm" className="h-7 gap-1 text-xs" onClick={startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry

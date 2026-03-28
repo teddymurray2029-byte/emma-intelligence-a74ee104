@@ -152,25 +152,32 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
   return session;
 }
 
-// Fire-and-forget: kick off Xvfb + WM in a single background script, return immediately
+// Start Xvfb + WM, wait for X socket to appear (typically 2-3s), then return
 async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized) return;
 
-  // Single combined command: start Xvfb, wait briefly for socket, start WM — all in background
-  await runCommand(
+  // Start Xvfb in background, wait for X socket, then start WM — all in one command
+  // This blocks until X0 socket exists (up to 10s), which is fine for a single edge function call
+  const result = await runCommand(
     sandbox,
     "bash",
-    ["-lc", `nohup bash -c '
-      pgrep -x Xvfb || Xvfb :0 -screen 0 1024x768x24 -ac &
-      for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done
-      if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session || DISPLAY=:0 startxfce4 &; fi
-    ' >/tmp/desktop-boot.log 2>&1 &`],
-    5,
+    ["-lc", [
+      "pgrep -x Xvfb >/dev/null || Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log &",
+      "for i in $(seq 1 20); do test -S /tmp/.X11-unix/X0 && break || sleep 0.5; done",
+      "test -S /tmp/.X11-unix/X0 || { echo 'X socket not ready'; exit 1; }",
+      "if command -v startxfce4 >/dev/null; then pgrep -f xfce4-session >/dev/null || DISPLAY=:0 startxfce4 &>/tmp/xfce.log & fi",
+      "echo 'desktop-ready'",
+    ].join("; ")],
+    15,
     {},
   );
 
-  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  console.log(`[kickstart] exit=${result.exitCode} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`);
+
+  if (result.exitCode === 0) {
+    sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  }
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {

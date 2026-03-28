@@ -1,96 +1,118 @@
 
 
-# Plan: Clerk-Supabase Integration + Admin Aggregate Learning System
+# Plan: Admin Unlimited Messages + Project Management IDE with Source Control
 
 ## Summary
 
-Two major deliverables: (1) Bridge Clerk auth with Supabase so database operations work, and (2) Build an admin dashboard that aggregates all user data to improve Emma's intelligence through learned patterns.
+Three deliverables: (1) Admin bypasses message limits, (2) Full project management with filesystem/IDE/GitHub integration, (3) ZIP upload extraction and project export.
 
-## Part 1: Clerk-Supabase JWT Bridge
+## Part 1: Admin Unlimited Messages
 
-Since Clerk manages auth but Supabase RLS expects `auth.uid()`, edge functions need to verify Clerk JWTs and use the service role for DB operations on behalf of users.
+**`src/pages/Index.tsx`** — Update `checkUsageAndSend`:
+- After getting user, check admin status via `dbProxy("check_admin")` (cache result in state)
+- If admin, skip all usage tracking and paywall — call `send()` directly
 
-### Changes
+**`src/hooks/useAuth.tsx`** — Add `isAdmin` state:
+- On user load, call `dbProxy("check_admin")` and expose `isAdmin` boolean
+- Used by Index.tsx to bypass limits
 
-**New edge function: `supabase/functions/clerk-auth-bridge/index.ts`**
-- Accepts Clerk session token, verifies it using `CLERK_SECRET_KEY`
-- Returns a Supabase-compatible user context
-- Used by other edge functions to resolve Clerk user ID
+## Part 2: Project Management System
 
-**Update all edge functions** (`emma-chat`, `emma-orchestrator`, `emma-benchmark`, `emma-self-improve`, `emma-causal-engine`, `emma-multi-agent`, `emma-safety`, `emma-research`, `emma-web-search`, `emma-code-exec`, `emma-image-gen`)
-- Replace `supabase.auth.getUser(token)` with Clerk JWT verification via the JWKS endpoint (`https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json`)
-- Use `jose` library to verify JWT and extract `sub` (Clerk user ID)  
-- Use service role client for DB operations, passing Clerk user ID as `user_id`
+### New database table: `projects`
+- `id` (uuid), `user_id` (text), `name` (text), `description` (text), `files` (jsonb — `{path: string, content: string}[]`), `github_repo` (text, nullable), `github_token` (text, nullable), `created_at`, `updated_at`
 
-**Update `src/lib/agi-api.ts`**
-- Pass Clerk session token (from `useSession`) instead of Supabase access token
+### New db-proxy actions
+Add to `emma-db-proxy/index.ts`:
+- `create_project`, `list_projects`, `get_project`, `update_project`, `delete_project` — CRUD on projects table
+- `update_project_files` — update the `files` jsonb column
 
-**Update `src/hooks/useAuth.tsx`**
-- Export session token getter using `useSession` from Clerk
+### New edge function: `supabase/functions/emma-github/index.ts`
+- Actions: `push`, `pull`, `commit`, `list_repos`, `get_status`
+- Uses `GITHUB_TOKEN` secret (already configured)
+- Interacts with GitHub API to push/pull files, create commits
+- Clerk JWT verification for auth
 
-**Update `src/hooks/useConversations.tsx` and `src/hooks/useMessages.tsx`**
-- Route DB operations through edge functions instead of direct Supabase client calls (since RLS won't recognize Clerk users)
-- OR: Create a new edge function `emma-db-proxy` that handles CRUD for conversations/messages with Clerk auth
+### New components
 
-**Database migration**
-- The `user_id` columns currently expect Supabase UUIDs. Clerk IDs are strings like `user_2x...`. Need to alter `user_id` columns from `uuid` to `text` across all tables: `conversations`, `messages` (via conversations), `memory_episodes`, `goals`, `benchmark_runs`, `improvement_logs`, `api_keys`, `profiles`, `user_roles`
-- Update RLS policies to remove `auth.uid()` references (they won't work with Clerk) and instead use service-role-only access with edge function gatekeeping
-- Drop the `handle_new_user` trigger (it fires on Supabase auth signup, not Clerk)
+**`src/components/ProjectManager.tsx`** — Project list/create UI:
+- Create new project (name, description)
+- List user's projects with select/delete
+- Current active project indicator
 
-## Part 2: Admin Aggregate Learning Dashboard
+**`src/components/FileExplorer.tsx`** — Filesystem tree:
+- Tree view of project files (from `files` jsonb)
+- Create/rename/delete files and folders
+- Click to open in CodeEditor
+- Context menu for file operations
 
-### New database tables
+**`src/components/GitPanel.tsx`** — Source control panel:
+- Connect GitHub repo (repo URL input)
+- Push/Pull/Commit buttons with commit message input
+- Status display (modified files, ahead/behind)
+- Diff viewer for changed files
 
-**`admin_insights` table**
-- `id`, `insight_type` (pattern/weakness/improvement/trend), `category`, `description`, `data` (jsonb), `applied`, `created_at`
-- No user_id — these are system-wide aggregations
+### Updated components
 
-**`learning_patterns` table**  
-- `id`, `pattern_type` (common_question/failure_mode/success_pattern/user_behavior), `pattern_data` (jsonb), `frequency`, `confidence_score`, `applied_to_prompt_version`, `created_at`
+**`src/components/CodeEditor.tsx`** — Enhanced:
+- Accept `projectFiles` prop and `onFilesChange` callback
+- File tabs now driven by project filesystem
+- Save propagates back to project state
 
-**`prompt_evolutions` table**
-- `id`, `version`, `prompt_text`, `source_insights` (jsonb array of insight IDs), `performance_delta`, `active`, `created_at`
+**`src/components/RightPanel.tsx`** — Not currently used on Index but the IDE/project tabs will be integrated into the right panel via a new "Projects" mode
 
-### New edge function: `supabase/functions/emma-admin-learn/index.ts`
+**`src/components/ModeSwitcher.tsx`** — Add "Projects" mode:
+- New mode `"projects"` with `FolderKanban` icon
 
-Actions:
-- **`aggregate_data`**: Query across ALL users' memory_episodes, benchmark_runs, improvement_logs, conversations, and goals. Produce aggregate statistics: common question categories, average quality scores, frequent failure modes, most effective improvement types
-- **`extract_patterns`**: Use AI (gemini-2.5-pro) to analyze aggregated data and extract learning patterns — what types of queries Emma handles poorly, what reasoning approaches work best, common user needs
-- **`generate_improvement`**: Based on patterns, use AI to generate improved system prompts, new benchmark questions, and reasoning pipeline adjustments
-- **`apply_improvement`**: Write new prompt version to `prompt_evolutions`, update the active system prompt version used by `emma-chat` and `emma-self-improve`
-- **`get_dashboard`**: Return full admin analytics: user count, total conversations, aggregate scores, pattern list, improvement history, trend charts data
+**`src/lib/emma-stream.ts`** — Add `"projects"` to `EmmaMode` type
 
-All actions require admin role verification.
+**`src/pages/Index.tsx`** — Right panel for `"projects"` mode:
+- Renders a layout with FileExplorer (left), CodeEditor (center), GitPanel (bottom)
+- Project selector in header
+- Active project state management
 
-### New page: `src/pages/AdminLearning.tsx`
+## Part 3: ZIP Handling
 
-Tabs:
-1. **Aggregate Analytics** — Total users, conversations, messages, memory episodes. Charts showing quality score trends, category breakdowns, usage patterns over time
-2. **Learned Patterns** — Table of extracted patterns with type, frequency, confidence. Ability to mark patterns as "applied" or "dismissed"
-3. **Prompt Evolution** — History of system prompt versions with performance deltas. Side-by-side diff view. "Generate New Version" button that triggers AI analysis
-4. **Mass Improvement** — One-click "Analyze All Data & Improve" button that runs the full pipeline: aggregate → extract patterns → generate improvement → preview → apply
-5. **User Insights** — Anonymized breakdown of user behavior patterns, common queries, satisfaction trends
+### ZIP extraction on upload
 
-### Route and navigation
-- Add `/admin` route in `App.tsx`, protected + admin-role-gated
-- Add admin link in sidebar/settings for admin users
+**`src/components/FileUpload.tsx`**:
+- Accept `.zip` files in the file input
+- Use `JSZip` library to extract zip contents client-side
+- When a zip is uploaded: extract all files, create a new project (or add to current), populate the filesystem
+- For non-zip files, keep existing upload behavior
 
-### Admin role check
-- Create edge function logic to verify admin role: check `user_roles` table for the Clerk user ID with `role = 'admin'`
-- Frontend: query admin status on load, conditionally show admin UI
+### ZIP export (download current project)
 
-## File Changes Summary
+**`src/components/ProjectManager.tsx`**:
+- "Export as ZIP" button on active project
+- Use `JSZip` to bundle all project files into a downloadable zip
+- Trigger browser download
+
+## Updated File Summary
 
 | File | Action |
 |------|--------|
-| All 11 edge functions | Update auth from Supabase to Clerk JWT verification |
-| `src/lib/agi-api.ts` | Pass Clerk token |
-| `src/hooks/useAuth.tsx` | Add session token access |
-| `src/hooks/useConversations.tsx` | Route through edge function proxy |
-| `src/hooks/useMessages.tsx` | Route through edge function proxy |
-| `supabase/functions/emma-db-proxy/index.ts` | New — CRUD proxy with Clerk auth |
-| `supabase/functions/emma-admin-learn/index.ts` | New — aggregation + learning engine |
-| `src/pages/AdminLearning.tsx` | New — admin dashboard |
-| `src/App.tsx` | Add `/admin` route |
-| Database migration | Alter user_id columns uuid→text, update RLS, drop trigger |
+| `src/hooks/useAuth.tsx` | Add `isAdmin` state with cached check |
+| `src/pages/Index.tsx` | Admin bypass, projects mode, project state |
+| `src/lib/emma-stream.ts` | Add `"projects"` to EmmaMode |
+| `src/components/ModeSwitcher.tsx` | Add Projects mode tab |
+| `src/components/ProjectManager.tsx` | New — project CRUD + ZIP export |
+| `src/components/FileExplorer.tsx` | New — filesystem tree view |
+| `src/components/GitPanel.tsx` | New — GitHub push/pull/commit UI |
+| `src/components/ProjectIDE.tsx` | New — combined IDE layout (explorer + editor + git) |
+| `src/components/CodeEditor.tsx` | Accept project files prop |
+| `src/components/FileUpload.tsx` | ZIP extraction support |
+| `src/components/ChatInput.tsx` | Accept .zip in attachment |
+| `supabase/functions/emma-db-proxy/index.ts` | Project CRUD actions |
+| `supabase/functions/emma-github/index.ts` | New — GitHub API integration |
+| Database migration | Create `projects` table |
+
+## Dependencies
+- `jszip` — for ZIP creation and extraction (client-side)
+
+## Technical Details
+
+- Projects store files as JSONB to avoid needing a separate file storage system — suitable for code projects up to ~5MB
+- GitHub integration uses the REST API v3 with the existing `GITHUB_TOKEN` secret
+- Admin check is cached per session to avoid repeated API calls
+- ZIP extraction runs entirely client-side for speed
 

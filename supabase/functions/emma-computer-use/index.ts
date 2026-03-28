@@ -21,6 +21,7 @@ type SandboxSession = {
   envdAccessToken: string;
   domain?: string;
   desktopInitialized?: boolean;
+  streamUrl?: string;
 };
 
 type ScreenshotAnalysis = {
@@ -116,7 +117,7 @@ async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
       });
 
       if (data.sandboxID && data.envdAccessToken) {
-        const session = {
+        const session: SandboxSession = {
           sandboxId: data.sandboxID,
           envdAccessToken: data.envdAccessToken,
           domain: data.domain,
@@ -136,6 +137,7 @@ async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
   throw new Error(lastError);
 }
 
+// SDK-aligned: pass DISPLAY=:0 as env at sandbox creation
 async function createSandbox(userId: string, task?: string): Promise<SandboxSession> {
   const data = await e2bApi<{ sandboxID: string; envdAccessToken: string; domain?: string }>("/sandboxes", {
     method: "POST",
@@ -145,11 +147,12 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
       autoPause: false,
       allow_internet_access: true,
       secure: true,
+      envs: { DISPLAY: ":0" },
       metadata: { userId, task: task || "general" },
     }),
   });
 
-  const session = {
+  const session: SandboxSession = {
     sandboxId: data.sandboxID,
     envdAccessToken: data.envdAccessToken,
     domain: data.domain,
@@ -187,17 +190,35 @@ function analyzeScreenshot(bytes: Uint8Array): ScreenshotAnalysis {
   }
 }
 
-// Launch Xvfb + WM in fully detached mode. Each command is short and non-blocking.
+// ===== SDK-ALIGNED kickstartDesktop =====
+// Matches E2B Desktop SDK's _start() method exactly:
+// 1. Xvfb with -retro -dpi 96 -nolisten flags
+// 2. Verify with xdpyinfo (not socket file check)
+// 3. Start XFCE directly (not via dbus-launch wrapper)
+// 4. Start VNC for live streaming
 async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized) return;
 
-  // Step 1: Start Xvfb if not running (nohup, fully detached)
+  // Step 1: Start Xvfb with SDK-correct flags
   console.log(`[kickstart] step1: start Xvfb for ${sandbox.sandboxId}`);
   try {
     const xvfbResult = await runCommand(
       sandbox, "bash",
-      ["-c", "pgrep -x Xvfb >/dev/null && echo 'already-running' || (nohup Xvfb :0 -screen 0 1024x768x24 -ac </dev/null >/tmp/xvfb.log 2>&1 & disown; echo 'started')"],
+      ["-c", `
+        if xdpyinfo -display :0 >/dev/null 2>&1; then
+          echo 'display-already-active'
+        elif pgrep -x Xvfb >/dev/null; then
+          echo 'xvfb-process-exists-but-display-not-ready'
+          kill -9 $(pgrep -x Xvfb) 2>/dev/null || true
+          sleep 0.5
+          Xvfb :0 -screen 0 1024x768x24 -ac -retro -dpi 96 -nolisten tcp -nolisten unix &
+          echo 'xvfb-restarted'
+        else
+          Xvfb :0 -screen 0 1024x768x24 -ac -retro -dpi 96 -nolisten tcp -nolisten unix &
+          echo 'xvfb-started'
+        fi
+      `.trim()],
       10, {},
     );
     console.log(`[kickstart] xvfb: exit=${xvfbResult.exitCode} out=${xvfbResult.stdout.trim()}`);
@@ -205,30 +226,42 @@ async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
     console.error(`[kickstart] xvfb launch error: ${e}`);
   }
 
-  // Step 2: Brief poll for X socket (up to 5s)
-  console.log(`[kickstart] step2: poll for X socket`);
+  // Step 2: Poll for display with xdpyinfo (SDK method)
+  console.log(`[kickstart] step2: poll display with xdpyinfo`);
   try {
     const pollResult = await runCommand(
       sandbox, "bash",
-      ["-c", "for i in 1 2 3 4 5 6 7 8 9 10; do test -S /tmp/.X11-unix/X0 && echo 'socket-ready' && exit 0; sleep 0.5; done; echo 'socket-timeout'; exit 1"],
-      8, {},
+      ["-c", "for i in $(seq 1 20); do xdpyinfo -display :0 >/dev/null 2>&1 && echo 'display-ready' && exit 0; sleep 0.5; done; echo 'display-timeout'; exit 1"],
+      15, {},
     );
-    console.log(`[kickstart] socket poll: exit=${pollResult.exitCode} out=${pollResult.stdout.trim()}`);
+    console.log(`[kickstart] xdpyinfo poll: exit=${pollResult.exitCode} out=${pollResult.stdout.trim()}`);
     if (pollResult.exitCode !== 0) {
-      console.warn(`[kickstart] X socket not ready after 5s`);
-      return; // Don't mark as initialized
+      console.warn(`[kickstart] Display :0 not ready after 10s (xdpyinfo failed)`);
+      return;
     }
   } catch (e) {
-    console.error(`[kickstart] socket poll error: ${e}`);
+    console.error(`[kickstart] xdpyinfo poll error: ${e}`);
     return;
   }
 
-  // Step 3: Start window manager if not running (fully detached)
-  console.log(`[kickstart] step3: start WM`);
+  // Step 3: Start XFCE directly (SDK-aligned: just run startxfce4 in background)
+  console.log(`[kickstart] step3: start WM (SDK-aligned)`);
   try {
     const wmResult = await runCommand(
       sandbox, "bash",
-      ["-c", "if pgrep -f xfce4-session >/dev/null || pgrep -x xfwm4 >/dev/null || pgrep -x xfdesktop >/dev/null; then echo 'wm-already-running'; else nohup bash -lc 'export DISPLAY=:0; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/runtime-root}; mkdir -p \"$XDG_RUNTIME_DIR\"; chmod 700 \"$XDG_RUNTIME_DIR\"; if command -v dbus-launch >/dev/null; then exec dbus-launch --exit-with-session startxfce4; else exec startxfce4; fi' </dev/null >/tmp/xfce.log 2>&1 & disown; echo 'wm-started'; fi"],
+      ["-c", `
+        if xdotool getwindowfocus >/dev/null 2>&1; then
+          echo 'wm-has-focus-window'
+        else
+          export DISPLAY=:0
+          export XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-/tmp/runtime-root}
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          startxfce4 &
+          XFCE_PID=$!
+          echo "wm-started-pid=$XFCE_PID"
+        fi
+      `.trim()],
       10, {},
     );
     console.log(`[kickstart] wm: exit=${wmResult.exitCode} out=${wmResult.stdout.trim()}`);
@@ -236,7 +269,30 @@ async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
     console.error(`[kickstart] wm launch error: ${e}`);
   }
 
-  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  // Step 4: Start VNC server for live streaming
+  console.log(`[kickstart] step4: start VNC`);
+  try {
+    const vncResult = await runCommand(
+      sandbox, "bash",
+      ["-c", `
+        if pgrep -x x11vnc >/dev/null; then
+          echo 'vnc-already-running'
+        else
+          x11vnc -display :0 -nopw -forever -shared -rfbport 5900 -bg -o /tmp/x11vnc.log 2>&1 || echo 'x11vnc-failed'
+          echo 'vnc-started'
+        fi
+      `.trim()],
+      10, {},
+    );
+    console.log(`[kickstart] vnc: exit=${vncResult.exitCode} out=${vncResult.stdout.trim()}`);
+  } catch (e) {
+    console.warn(`[kickstart] VNC start error (non-fatal): ${e}`);
+  }
+
+  // Build stream URL
+  const streamUrl = `https://6080-${sandbox.sandboxId}.e2b.app/vnc.html?autoconnect=true&resize=scale`;
+
+  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true, streamUrl });
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -313,7 +369,7 @@ async function runCommand(
         "Content-Type": "application/connect+json",
       },
       body: buildConnectEnvelope({
-        process: { cmd, args, envs },
+        process: { cmd, args, envs: { DISPLAY: ":0", ...envs } },
         stdin: false,
         timeout,
       }),
@@ -357,11 +413,12 @@ async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<U
 async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {
   if (envdAccessToken) {
     const cached = sandboxCache.get(sandboxId);
-    const session = {
+    const session: SandboxSession = {
       sandboxId,
       envdAccessToken,
       domain: cached?.domain,
       desktopInitialized: cached?.desktopInitialized,
+      streamUrl: cached?.streamUrl,
     };
     sandboxCache.set(sandboxId, session);
     return session;
@@ -369,22 +426,26 @@ async function getSandbox(sandboxId: string, envdAccessToken?: string | null): P
   return await connectSandbox(sandboxId);
 }
 
+// SDK-aligned screenshot: use scrot --pointer with unique filenames
 async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
   return (await captureScreenshotData(sandbox)).base64;
 }
 
 async function captureScreenshotData(sandbox: SandboxSession): Promise<{ base64: string; analysis: ScreenshotAnalysis }> {
-  const methods: Array<{ label: string; cmd: string; args: string[]; envs?: Record<string, string> }> = [
-    { label: "scrot", cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
-    { label: "scrot-bash", cmd: "bash", args: ["-c", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"], envs: {} },
+  const screenshotPath = `/tmp/screenshot-${Date.now()}.png`;
+  const methods: Array<{ label: string; cmd: string; args: string[] }> = [
+    { label: "scrot", cmd: "scrot", args: ["--pointer", screenshotPath] },
+    { label: "scrot-bash", cmd: "bash", args: ["-c", `scrot --pointer ${screenshotPath}`] },
   ];
 
   let lastError = "";
   for (const method of methods) {
     try {
-      const result = await runCommand(sandbox, method.cmd, method.args, 10, method.envs ?? {});
+      const result = await runCommand(sandbox, method.cmd, method.args, 10);
       if (result.exitCode === 0) {
-        const bytes = await readSandboxFile(sandbox, "/tmp/screenshot.png");
+        const bytes = await readSandboxFile(sandbox, screenshotPath);
+        // Cleanup async
+        runCommand(sandbox, "rm", ["-f", screenshotPath], 3).catch(() => {});
         return {
           base64: toBase64(bytes),
           analysis: analyzeScreenshot(bytes),
@@ -399,13 +460,14 @@ async function captureScreenshotData(sandbox: SandboxSession): Promise<{ base64:
   throw new Error(`Screenshot failed: ${lastError}`);
 }
 
+// SDK-aligned stage detection: xdpyinfo + xdotool getwindowfocus
 async function getDesktopStage(sandbox: SandboxSession): Promise<string> {
   try {
     const r = await runCommand(sandbox, "bash", ["-c",
-      "echo -n 'xvfb='; pgrep -x Xvfb >/dev/null && echo yes || echo no; " +
-      "echo -n 'socket='; test -S /tmp/.X11-unix/X0 && echo yes || echo no; " +
-      "echo -n 'wm='; (pgrep -f xfce4-session >/dev/null || pgrep -x xfwm4 >/dev/null || pgrep -x xfdesktop >/dev/null) && echo yes || echo no"
-    ], 5, {});
+      "echo -n 'display='; xdpyinfo -display :0 >/dev/null 2>&1 && echo yes || echo no; " +
+      "echo -n 'wm_focus='; xdotool getwindowfocus >/dev/null 2>&1 && echo yes || echo no; " +
+      "echo -n 'vnc='; pgrep -x x11vnc >/dev/null && echo yes || echo no"
+    ], 5);
     return r.stdout.trim();
   } catch {
     return "unknown";
@@ -420,6 +482,7 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   stage?: string;
   error?: string;
   errorCode?: string;
+  streamUrl?: string;
 }> {
   const startedAt = Date.now();
   let lastError = "Desktop is still starting";
@@ -428,17 +491,19 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   let blackFrameCount = 0;
 
   while (Date.now() - startedAt < DESKTOP_BOOT_TIMEOUT_MS) {
-    // Check current boot stage
+    // Check current boot stage with SDK-aligned checks
     lastStage = await getDesktopStage(sandbox);
-    console.log(`[wait_ready] stage: ${lastStage} elapsed=${Date.now() - startedAt}ms`);
+    const elapsed = Date.now() - startedAt;
+    console.log(`[wait_ready] stage: ${lastStage} elapsed=${elapsed}ms`);
 
-    // Re-kickstart if display/session is not ready
-    if (lastStage.includes("xvfb=no") || lastStage.includes("socket=no") || lastStage.includes("wm=no")) {
-      lastErrorCode = lastStage.includes("xvfb=no") || lastStage.includes("socket=no")
-        ? "display_not_ready"
-        : "window_manager_not_ready";
+    const hasDisplay = lastStage.includes("display=yes");
+    const hasWmFocus = lastStage.includes("wm_focus=yes");
+
+    // Re-kickstart if display or WM not ready
+    if (!hasDisplay || !hasWmFocus) {
+      lastErrorCode = !hasDisplay ? "display_not_ready" : "window_manager_not_ready";
       lastError = `Desktop boot is incomplete (${lastStage.replace(/\n/g, ", ")})`;
-      console.log(`[wait_ready] session not ready (${lastErrorCode}), re-kickstarting...`);
+      console.log(`[wait_ready] not ready (${lastErrorCode}), re-kickstarting...`);
       sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
       try {
         await kickstartDesktop({ ...sandbox, desktopInitialized: false });
@@ -450,7 +515,7 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
       continue;
     }
 
-    // Display is up — try screenshot
+    // Display is up + WM has focus — try screenshot
     try {
       const { base64: screenshot, analysis } = await captureScreenshotData(sandbox);
       if (!analysis.meaningful) {
@@ -459,10 +524,13 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
         lastError = `Desktop is still rendering a black frame (brightness=${analysis.averageBrightness.toFixed(1)}, visible=${(analysis.nonDarkRatio * 100).toFixed(1)}%)`;
         console.warn(`[wait_ready] black screenshot ${blackFrameCount}: ${lastError}`);
 
-        if (blackFrameCount >= 2) {
+        if (blackFrameCount >= 3) {
+          // Force restart the WM
           sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
           try {
+            await runCommand(sandbox, "bash", ["-c", "pkill -9 -f startxfce4; pkill -9 xfwm4; pkill -9 xfdesktop; sleep 1"], 5);
             await kickstartDesktop({ ...sandbox, desktopInitialized: false });
+            blackFrameCount = 0; // Reset after force restart
           } catch (e) {
             lastError = e instanceof Error ? e.message : lastError;
             lastErrorCode = "kickstart_failed";
@@ -473,6 +541,9 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
         continue;
       }
 
+      // Get stream URL from cache
+      const cached = sandboxCache.get(sandbox.sandboxId);
+
       return {
         ready: true,
         screenshot,
@@ -480,10 +551,11 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
         message: "Desktop ready",
         stage: lastStage,
         errorCode: undefined,
+        streamUrl: cached?.streamUrl || null,
       };
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Screenshot capture failed";
-       lastErrorCode = "screenshot_failed";
+      lastErrorCode = "screenshot_failed";
       console.log(`[wait_ready] screenshot failed: ${lastError}`);
     }
 
@@ -589,6 +661,55 @@ Rules:
   }
 }
 
+// ===== xdotool-based action execution (replaces pyautogui) =====
+function buildXdotoolCommand(actionType: string, params: any): { cmd: string; args: string[] } | null {
+  switch (actionType) {
+    case "click": {
+      const x = params.x ?? 512;
+      const y = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click 1`] };
+    }
+    case "double_click": {
+      const x = params.x ?? 512;
+      const y = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click --repeat 2 --delay 100 1`] };
+    }
+    case "move_mouse": {
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
+    }
+    case "type": {
+      // xdotool type with delay; escape special chars
+      const text = (params.text || "").replace(/'/g, "'\\''");
+      // For long text, chunk it
+      if (text.length > 100) {
+        const chunks: string[] = [];
+        for (let i = 0; i < text.length; i += 50) {
+          chunks.push(text.slice(i, i + 50));
+        }
+        const cmds = chunks.map(c => `xdotool type --delay 12 '${c}'`).join(" && ");
+        return { cmd: "bash", args: ["-c", cmds] };
+      }
+      return { cmd: "bash", args: ["-c", `xdotool type --delay 12 '${text}'`] };
+    }
+    case "hotkey": {
+      const keys = (params.keys as string[]).join("+");
+      return { cmd: "bash", args: ["-c", `xdotool key ${keys}`] };
+    }
+    case "press": {
+      return { cmd: "bash", args: ["-c", `xdotool key ${params.key}`] };
+    }
+    case "scroll": {
+      const clicks = params.amount || 3;
+      const button = params.direction === "up" ? 4 : 5;
+      const sx = params.x ?? 512;
+      const sy = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${sx} ${sy} && xdotool click --repeat ${clicks} --delay 50 ${button}`] };
+    }
+    default:
+      return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -616,7 +737,7 @@ serve(async (req) => {
 
         return json({
           sessionId: sandbox.sandboxId,
-          streamUrl: null,
+          streamUrl: null, // Will be available after kickstart completes
           envdAccessToken: sandbox.envdAccessToken,
           status: "created",
         });
@@ -656,68 +777,26 @@ serve(async (req) => {
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         let result: any = { success: true };
-        let pyCode = "";
 
-        switch (actionType) {
-          case "click": {
-            const x = params.x ?? 512;
-            const y = params.y ?? 384;
-            pyCode = `import pyautogui; pyautogui.click(${x}, ${y})`;
-            break;
-          }
-          case "double_click": {
-            const x = params.x ?? 512;
-            const y = params.y ?? 384;
-            pyCode = `import pyautogui; pyautogui.doubleClick(${x}, ${y})`;
-            break;
-          }
-          case "move_mouse": {
-            pyCode = `import pyautogui; pyautogui.moveTo(${params.x}, ${params.y})`;
-            break;
-          }
-          case "type": {
-            const escaped = params.text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-            pyCode = `import pyautogui; pyautogui.typewrite('${escaped}', interval=0.02)`;
-            break;
-          }
-          case "hotkey": {
-            const keys = (params.keys as string[]).map((k: string) => `'${k}'`).join(", ");
-            pyCode = `import pyautogui; pyautogui.hotkey(${keys})`;
-            break;
-          }
-          case "scroll": {
-            const amount = params.direction === "up" ? (params.amount || 3) : -(params.amount || 3);
-            const sx = params.x ?? 512;
-            const sy = params.y ?? 384;
-            pyCode = `import pyautogui; pyautogui.scroll(${amount}, x=${sx}, y=${sy})`;
-            break;
-          }
-          case "open_url": {
-            await runCommand(
-              sandbox, "bash",
-              ["-c", `DISPLAY=:0 xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
-              10,
-            );
-            break;
-          }
-          case "wait": {
-            result = { success: true, waited: params.seconds || 2 };
-            break;
-          }
-          case "press": {
-            pyCode = `import pyautogui; pyautogui.press('${params.key}')`;
-            break;
-          }
-        }
-
-        if (pyCode) {
-          try {
-            const cmdResult = await runCommand(sandbox, "python3", ["-c", pyCode], 15, { DISPLAY: ":0" });
-            if (cmdResult.exitCode !== 0) {
-              result = { success: false, error: cmdResult.stderr || "Command failed" };
+        if (actionType === "open_url") {
+          await runCommand(
+            sandbox, "bash",
+            ["-c", `xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
+            10,
+          );
+        } else if (actionType === "wait") {
+          result = { success: true, waited: params.seconds || 2 };
+        } else {
+          const xdoCmd = buildXdotoolCommand(actionType, params);
+          if (xdoCmd) {
+            try {
+              const cmdResult = await runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15);
+              if (cmdResult.exitCode !== 0) {
+                result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
+              }
+            } catch (e) {
+              result = { success: false, error: e instanceof Error ? e.message : "Command execution failed" };
             }
-          } catch (e) {
-            result = { success: false, error: e instanceof Error ? e.message : "Command execution failed" };
           }
         }
 

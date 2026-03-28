@@ -1,10 +1,23 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+
+async function getClerkUserId(req: Request): Promise<string> {
+  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+  if (!token || token.length < 20) return "anonymous";
+  if (token === Deno.env.get("SUPABASE_ANON_KEY")) return "anonymous";
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    return (payload.sub as string) || "anonymous";
+  } catch { return "anonymous"; }
+}
 
 const COGNITIVE_SYSTEM_PROMPT = `You are Emma — a multi-agent cognitive reasoning system. You demonstrate intelligence through reasoning depth, self-correction, and novel thinking. You NEVER claim to be ASI or AGI.
 
@@ -69,75 +82,38 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
-async function executeToolCall(
-  supabase: any,
-  userId: string,
-  tool: string,
-  args: any
-): Promise<{ result: string; success: boolean }> {
+async function executeToolCall(supabase: any, userId: string, tool: string, args: any): Promise<{ result: string; success: boolean }> {
   try {
     switch (tool) {
       case "memory_store": {
         const { content, type } = args;
         if (!content) return { result: "Error: content required", success: false };
-        await supabase.from("memory_episodes").insert({
-          user_id: userId,
-          episode_type: type || "semantic",
-          content,
-          relevance_score: 5,
-        });
+        await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: type || "semantic", content, relevance_score: 5 });
         return { result: `Stored ${type || "semantic"} memory: "${content.slice(0, 80)}"`, success: true };
       }
       case "memory_recall": {
         const { query } = args;
-        const { data } = await supabase
-          .from("memory_episodes")
-          .select("content, episode_type, relevance_score, created_at")
-          .eq("user_id", userId)
-          .order("relevance_score", { ascending: false })
-          .limit(10);
+        const { data } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score, created_at").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(10);
         if (!data?.length) return { result: "No relevant memories found.", success: true };
-        const filtered = data.filter((m: any) => {
-          const q = (query || "").toLowerCase();
-          return m.content.toLowerCase().includes(q) || q.split(" ").some((w: string) => w.length > 3 && m.content.toLowerCase().includes(w));
-        });
-        const results = (filtered.length ? filtered : data.slice(0, 5))
-          .map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`)
-          .join("\n");
+        const filtered = data.filter((m: any) => { const q = (query || "").toLowerCase(); return m.content.toLowerCase().includes(q) || q.split(" ").some((w: string) => w.length > 3 && m.content.toLowerCase().includes(w)); });
+        const results = (filtered.length ? filtered : data.slice(0, 5)).map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`).join("\n");
         return { result: results || "No relevant memories found.", success: true };
       }
       case "goal_create": {
         const { description, priority, type } = args;
         if (!description) return { result: "Error: description required", success: false };
-        await supabase.from("goals").insert({
-          user_id: userId,
-          description,
-          priority: priority || 5,
-          goal_type: type || "user",
-          status: "active",
-        });
+        await supabase.from("goals").insert({ user_id: userId, description, priority: priority || 5, goal_type: type || "user", status: "active" });
         return { result: `Created goal: "${description}" (priority: ${priority || 5})`, success: true };
       }
       case "benchmark_status": {
-        const { data } = await supabase
-          .from("benchmark_runs")
-          .select("total_score, category_scores, created_at")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
+        const { data } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
         if (!data) return { result: "No benchmark data available. Run benchmarks first.", success: true };
-        const cats = Object.entries(data.category_scores || {})
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(", ");
+        const cats = Object.entries(data.category_scores || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
         return { result: `Latest score: ${data.total_score}/100. Categories: ${cats}. Run: ${data.created_at}`, success: true };
       }
-      default:
-        return { result: `Unknown tool: ${tool}`, success: false };
+      default: return { result: `Unknown tool: ${tool}`, success: false };
     }
-  } catch (e) {
-    return { result: `Tool error: ${e instanceof Error ? e.message : "unknown"}`, success: false };
-  }
+  } catch (e) { return { result: `Tool error: ${e instanceof Error ? e.message : "unknown"}`, success: false }; }
 }
 
 const REFINEMENT_PROMPT = `You are the REFINEMENT AGENT. Improve the draft response:
@@ -162,94 +138,50 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const userId = await getClerkUserId(req);
 
-    // Extract user from auth header
-    const authHeader = req.headers.get("Authorization");
-    const token = authHeader?.replace("Bearer ", "");
-    let userId = "anonymous";
-    if (token && token !== Deno.env.get("SUPABASE_ANON_KEY")) {
-      const { data: { user } } = await supabase.auth.getUser(token);
-      if (user) userId = user.id;
-    }
-
-    // Build system prompt with feedback + memory context
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
 
-    // Mode-specific prompt augmentation
-    if (mode === "direct") {
-      systemPrompt += `\n\n## DIRECT MODE\nBe maximally direct. Fewer hedges when confidence is high. Clearly label uncertainty. Challenge bad assumptions. Prefer truth over politeness.`;
-    }
-    if (answerStyle === "concise") {
-      systemPrompt += `\n\n## STYLE: CONCISE\nKeep answers brief and to the point. No unnecessary elaboration.`;
-    } else if (answerStyle === "deep") {
-      systemPrompt += `\n\n## STYLE: DEEP\nProvide thorough, detailed analysis. Cover edge cases and nuances.`;
-    } else if (answerStyle === "direct") {
-      systemPrompt += `\n\n## STYLE: DIRECT\nBe blunt. State conclusions first. Skip pleasantries. Mark uncertainty explicitly.`;
-    }
-    if (mode === "data") {
-      systemPrompt += `\n\n## DATA ANALYSIS MODE\nYou are analyzing data. Provide structured insights, statistics, patterns. Use tables and code when helpful.`;
-    }
-    if (mode === "voice") {
-      systemPrompt += `\n\n## VOICE MODE\nKeep responses conversational and concise. Avoid markdown formatting. Speak naturally.`;
+    if (mode === "direct") systemPrompt += `\n\n## DIRECT MODE\nBe maximally direct. Fewer hedges when confidence is high. Clearly label uncertainty. Challenge bad assumptions. Prefer truth over politeness.`;
+    if (answerStyle === "concise") systemPrompt += `\n\n## STYLE: CONCISE\nKeep answers brief and to the point.`;
+    else if (answerStyle === "deep") systemPrompt += `\n\n## STYLE: DEEP\nProvide thorough, detailed analysis.`;
+    else if (answerStyle === "direct") systemPrompt += `\n\n## STYLE: DIRECT\nBe blunt. State conclusions first. Skip pleasantries.`;
+    if (mode === "data") systemPrompt += `\n\n## DATA ANALYSIS MODE\nYou are analyzing data. Provide structured insights, statistics, patterns.`;
+    if (mode === "voice") systemPrompt += `\n\n## VOICE MODE\nKeep responses conversational and concise. Avoid markdown.`;
+
+    // Check for evolved prompt
+    const { data: activePrompt } = await supabase.from("prompt_evolutions").select("prompt_text").eq("active", true).limit(1).single();
+    if (activePrompt?.prompt_text) {
+      systemPrompt += `\n\n## LEARNED IMPROVEMENTS\n${activePrompt.prompt_text}`;
     }
 
-    // Inject recent memory context
     if (userId !== "anonymous") {
-      const { data: memories } = await supabase
-        .from("memory_episodes")
-        .select("content, episode_type")
-        .eq("user_id", userId)
-        .order("relevance_score", { ascending: false })
-        .limit(5);
+      const { data: memories } = await supabase.from("memory_episodes").select("content, episode_type").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(5);
       if (memories?.length) {
-        const memContext = memories.map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 100)}`).join("\n");
-        systemPrompt += `\n\n## RECALLED MEMORIES\n${memContext}`;
+        systemPrompt += `\n\n## RECALLED MEMORIES\n${memories.map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 100)}`).join("\n")}`;
       }
-
-      // Inject active goals
-      const { data: goals } = await supabase
-        .from("goals")
-        .select("description, priority")
-        .eq("user_id", userId)
-        .eq("status", "active")
-        .order("priority", { ascending: true })
-        .limit(3);
+      const { data: goals } = await supabase.from("goals").select("description, priority").eq("user_id", userId).eq("status", "active").order("priority", { ascending: true }).limit(3);
       if (goals?.length) {
-        const goalContext = goals.map((g: any) => `[P${g.priority}] ${g.description}`).join("\n");
-        systemPrompt += `\n\n## ACTIVE GOALS\n${goalContext}`;
+        systemPrompt += `\n\n## ACTIVE GOALS\n${goals.map((g: any) => `[P${g.priority}] ${g.description}`).join("\n")}`;
       }
     }
 
-    if (feedback && Array.isArray(feedback) && feedback.length > 0) {
-      const feedbackContext = feedback
-        .slice(-5)
-        .map((f: any) => `[FEEDBACK ${f.type}]: "${f.summary}"`)
-        .join("\n");
-      systemPrompt += `\n\n## RECENT FEEDBACK\n${feedbackContext}`;
+    if (feedback?.length) {
+      systemPrompt += `\n\n## RECENT FEEDBACK\n${feedback.slice(-5).map((f: any) => `[FEEDBACK ${f.type}]: "${f.summary}"`).join("\n")}`;
     }
 
     const useRefinement = isComplexQuery(messages);
 
     if (useRefinement) {
-      // TWO-PASS with tool execution in between
-      const draftResponse = await callAI(LOVABLE_API_KEY, [
-        { role: "system", content: systemPrompt },
-        ...messages,
-      ], false);
-
+      const draftResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false);
       if (!draftResponse.ok) return handleError(draftResponse);
-
       const draftData = await draftResponse.json();
       let draftContent = draftData.choices?.[0]?.message?.content || "";
 
-      // Process tool calls in the draft
       const toolPattern = /```tool\s*\n\{[\s\S]*?\}\s*\n```/g;
       const toolBlocks = draftContent.match(toolPattern) || [];
       let toolResults = "";
-
       for (const block of toolBlocks) {
         try {
           const jsonStr = block.replace(/```tool\s*\n/, "").replace(/\s*\n```/, "");
@@ -257,62 +189,35 @@ serve(async (req) => {
           const result = await executeToolCall(supabase, userId, tool, args);
           toolResults += `\n[TOOL:${tool}] ${result.result}`;
           draftContent = draftContent.replace(block, `> 🔧 ${tool}: ${result.result}`);
-        } catch { /* skip malformed tool calls */ }
+        } catch {}
       }
 
-      // Store interaction as episodic memory
       if (userId !== "anonymous") {
         const lastUserMsg = messages[messages.length - 1]?.content || "";
         if (lastUserMsg.length > 20) {
-          await supabase.from("memory_episodes").insert({
-            user_id: userId,
-            episode_type: "interaction",
-            content: `User asked: "${lastUserMsg.slice(0, 200)}". Emma provided a detailed response with multi-agent reasoning.`,
-            relevance_score: 3,
-          });
+          await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 200)}". Emma provided a detailed response.`, relevance_score: 3 });
         }
       }
 
-      // Pass 2: Refine and stream
       const refineContent = toolResults
-        ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft response to refine:\n${draftContent}`
-        : `Original query: ${messages[messages.length - 1].content}\n\nDraft response to refine:\n${draftContent}`;
+        ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
+        : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
 
-      const refinedResponse = await callAI(LOVABLE_API_KEY, [
-        { role: "system", content: REFINEMENT_PROMPT },
-        { role: "user", content: refineContent },
-      ], true);
-
+      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
       if (!refinedResponse.ok) return handleError(refinedResponse);
-
-      return new Response(refinedResponse.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-      });
+      return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
 
-    // SIMPLE PATH: Single-pass streaming with memory storage
     if (userId !== "anonymous") {
       const lastUserMsg = messages[messages.length - 1]?.content || "";
       if (lastUserMsg.length > 10) {
-        await supabase.from("memory_episodes").insert({
-          user_id: userId,
-          episode_type: "interaction",
-          content: `User asked: "${lastUserMsg.slice(0, 150)}"`,
-          relevance_score: 1,
-        });
+        await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 150)}"`, relevance_score: 1 });
       }
     }
 
-    const response = await callAI(LOVABLE_API_KEY, [
-      { role: "system", content: systemPrompt },
-      ...messages,
-    ], true);
-
+    const response = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true);
     if (!response.ok) return handleError(response);
-
-    return new Response(response.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-    });
+    return new Response(response.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
   } catch (e) {
     console.error("emma-chat error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
@@ -322,19 +227,9 @@ serve(async (req) => {
 });
 
 async function handleError(response: Response) {
-  if (response.status === 429) {
-    return new Response(JSON.stringify({ error: "Rate limited. Please wait a moment." }), {
-      status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  if (response.status === 402) {
-    return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
-      status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  if (response.status === 429) return new Response(JSON.stringify({ error: "Rate limited. Please wait a moment." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (response.status === 402) return new Response(JSON.stringify({ error: "AI credits exhausted." }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const t = await response.text();
   console.error("emma-chat error:", response.status, t);
-  return new Response(JSON.stringify({ error: "AI gateway error" }), {
-    status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify({ error: "AI gateway error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }

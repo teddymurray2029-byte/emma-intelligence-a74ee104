@@ -8,6 +8,8 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
+const OLLAMA_MODEL = "qwen3.5:9b";
 
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -19,11 +21,11 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   } catch { return null; }
 }
 
-async function callAI(apiKey: string, messages: any[], model = "google/gemini-2.5-pro"): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function callAI(messages: any[]): Promise<string> {
+  const resp = await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: OLLAMA_MODEL, messages }),
   });
   if (!resp.ok) return "";
   const data = await resp.json();
@@ -43,16 +45,12 @@ serve(async (req) => {
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // Verify admin role
     const { data: roles } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", userId)
       .eq("role", "admin");
     if (!roles?.length) return json({ error: "Admin access required" }, 403);
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
     const { action } = await req.json();
 
@@ -90,7 +88,6 @@ serve(async (req) => {
     }
 
     if (action === "aggregate_data") {
-      // Aggregate cross-user data
       const [
         { data: memoryData },
         { data: benchData },
@@ -103,7 +100,6 @@ serve(async (req) => {
         supabase.from("goals").select("goal_type, description, status, priority").limit(200),
       ]);
 
-      // Compute aggregate statistics
       const episodeTypes: Record<string, number> = {};
       (memoryData || []).forEach((m: any) => { episodeTypes[m.episode_type] = (episodeTypes[m.episode_type] || 0) + 1; });
 
@@ -124,7 +120,6 @@ serve(async (req) => {
         sampleInteractions: (memoryData || []).filter((m: any) => m.episode_type === "interaction").slice(0, 20).map((m: any) => m.content.slice(0, 200)),
       };
 
-      // Save as insight
       await supabase.from("admin_insights").insert({
         insight_type: "aggregation",
         category: "system_wide",
@@ -136,7 +131,6 @@ serve(async (req) => {
     }
 
     if (action === "extract_patterns") {
-      // Get recent aggregation
       const { data: recentInsight } = await supabase
         .from("admin_insights")
         .select("data")
@@ -147,7 +141,7 @@ serve(async (req) => {
 
       if (!recentInsight) return json({ error: "Run aggregate_data first" }, 400);
 
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI([
         {
           role: "system",
           content: `You are an AI system analyst. Given aggregated user data, extract learning patterns.
@@ -160,7 +154,6 @@ Return JSON array:
       let patterns: any[] = [];
       try { patterns = parseJSON(raw); } catch { patterns = []; }
 
-      // Save patterns
       for (const p of patterns) {
         await supabase.from("learning_patterns").insert({
           pattern_type: p.pattern_type || "common_question",
@@ -187,7 +180,7 @@ Return JSON array:
         .limit(1)
         .single();
 
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI([
         {
           role: "system",
           content: `You are a system prompt optimizer. Based on learned patterns and current prompt, generate an improved system prompt.
@@ -211,10 +204,8 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
       const { prompt_text, source_pattern_ids } = await req.json().catch(() => ({ prompt_text: null, source_pattern_ids: [] }));
       if (!prompt_text) return json({ error: "prompt_text required" }, 400);
 
-      // Deactivate current active prompt
       await supabase.from("prompt_evolutions").update({ active: false }).eq("active", true);
 
-      // Get next version
       const { data: latest } = await supabase
         .from("prompt_evolutions")
         .select("version")
@@ -231,7 +222,6 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
         active: true,
       });
 
-      // Mark patterns as applied
       if (source_pattern_ids?.length) {
         for (const id of source_pattern_ids) {
           await supabase.from("learning_patterns").update({ applied_to_prompt_version: nextVersion }).eq("id", id);
@@ -242,8 +232,6 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
     }
 
     if (action === "mass_improve") {
-      // Full pipeline: aggregate → extract → generate
-      // Step 1: Aggregate
       const { data: memoryData } = await supabase.from("memory_episodes").select("episode_type, content, relevance_score").order("created_at", { ascending: false }).limit(300);
       const { data: benchData } = await supabase.from("benchmark_runs").select("total_score, category_scores").order("created_at", { ascending: false }).limit(50);
       const { data: improvData } = await supabase.from("improvement_logs").select("improvement_type, description, delta, accepted").order("created_at", { ascending: false }).limit(50);
@@ -255,8 +243,7 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
         sampleContent: (memoryData || []).slice(0, 15).map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`),
       };
 
-      // Step 2: AI analysis
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI([
         {
           role: "system",
           content: `You are an AI meta-learning system. Analyze all user interaction data and generate:
@@ -283,7 +270,6 @@ Return JSON:
         result = { patterns: [], weaknesses: [], improved_prompt: "", pipeline_changes: [], expected_score_delta: 0, confidence: 0 };
       }
 
-      // Save patterns
       for (const p of (result.patterns || [])) {
         await supabase.from("learning_patterns").insert({
           pattern_type: p.type || "user_behavior",
@@ -293,7 +279,6 @@ Return JSON:
         });
       }
 
-      // Save insight
       await supabase.from("admin_insights").insert({
         insight_type: "mass_improvement",
         category: "system_wide",

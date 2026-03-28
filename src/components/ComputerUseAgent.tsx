@@ -106,19 +106,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       return;
     }
 
-    // Desktop init + readiness polling — separate try/catch so errors aren't blamed on start_session
-    const initStepId = addStep({ action: "init_desktop", reasoning: "Initializing display server...", status: "executing" });
-    try {
-      await cuApi("init_desktop", { sessionId: sid, envdAccessToken: token }, getToken);
-      updateStep(initStepId, { status: "done", reasoning: "Desktop services started" });
-    } catch (e: any) {
-      updateStep(initStepId, { status: "error", reasoning: `Init failed: ${e.message}` });
-      setIsRunning(false);
-      setStatus("error");
-      toast.error(e.message || "Desktop init failed");
-      return;
-    }
-
+    // Skip heavy init — the E2B "desktop" template self-initializes.
+    // Just poll for screenshot readiness directly.
     setStatus("running");
     setIsRunning(true);
 

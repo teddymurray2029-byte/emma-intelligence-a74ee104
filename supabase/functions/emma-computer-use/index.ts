@@ -62,20 +62,31 @@ async function e2bApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) throw new Error("E2B_API_KEY not configured");
 
-  const response = await fetch(`${E2B_API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "X-API-Key": apiKey,
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
+  console.log(`[e2b-api] ${init.method || "GET"} ${path}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25_000);
 
-  if (!response.ok) {
-    throw new Error(`E2B API ${path} failed [${response.status}]: ${await response.text()}`);
+  try {
+    const response = await fetch(`${E2B_API_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "X-API-Key": apiKey,
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(init.headers ?? {}),
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[e2b-api] ${path} failed [${response.status}]: ${text}`);
+      throw new Error(`E2B API ${path} failed [${response.status}]: ${text}`);
+    }
+
+    return await response.json() as T;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return await response.json() as T;
 }
 
 async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
@@ -496,11 +507,14 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const { action } = body;
+    console.log(`[emma-cu] action=${action}`);
 
     switch (action) {
       // Create a new desktop sandbox
       case "start_session": {
+        console.log("[emma-cu] Creating sandbox...");
         const sandbox = await createSandbox(userId, body.task);
+        console.log(`[emma-cu] Sandbox created: ${sandbox.sandboxId}`);
 
         return json({
           sessionId: sandbox.sandboxId,

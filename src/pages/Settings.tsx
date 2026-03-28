@@ -4,10 +4,10 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 
 const INTEGRATIONS = [
-  { name: "E2B Code Execution", desc: "Sandboxed code execution environment", key: "E2B_API_KEY", icon: Zap, configured: false },
-  { name: "Web Search (Perplexity)", desc: "Real-time web search and citations", key: "PERPLEXITY_API_KEY", icon: Globe, configured: false },
-  { name: "GitHub", desc: "Repository management, PRs, issues", key: "GITHUB_TOKEN", icon: Shield, configured: false },
-  { name: "ElevenLabs TTS", desc: "High-quality text-to-speech voices", key: "ELEVENLABS_API_KEY", icon: Key, configured: false },
+  { name: "E2B Code Execution", desc: "Sandboxed code execution environment", key: "E2B_API_KEY", icon: Zap, configured: true },
+  { name: "Web Search (Perplexity)", desc: "Real-time web search and citations", key: "PERPLEXITY_API_KEY", icon: Globe, configured: true },
+  { name: "GitHub", desc: "Repository management, PRs, issues", key: "GITHUB_TOKEN", icon: Shield, configured: true },
+  { name: "ElevenLabs TTS", desc: "High-quality text-to-speech voices", key: "ELEVENLABS_API_KEY", icon: Key, configured: true },
 ];
 
 const SUBSYSTEMS = [

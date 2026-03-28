@@ -52,35 +52,48 @@ async function e2bApi(path: string, method = "GET", body?: any) {
 
 // Run a command inside the sandbox via envd Connect protocol
 async function runCommand(sandboxId: string, envdAccessToken: string, cmd: string, args: string[] = [], timeoutMs = 30000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const envdUrl = `https://49983-${sandboxId}.e2b.app/commands`;
+  const envdUrl = `https://49983-${sandboxId}.e2b.app/process.Process/Start`;
 
   const resp = await fetch(envdUrl, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/connect+json",
+      "Connect-Protocol-Version": "1",
+      "Connect-Timeout-Ms": String(timeoutMs),
       "X-Access-Token": envdAccessToken,
     },
     body: JSON.stringify({
-      cmd: args.length > 0 ? `${cmd} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}` : cmd,
-      timeout: Math.floor(timeoutMs / 1000),
-      envs: { DISPLAY: ":0" },
+      process: { cmd, args, envs: { DISPLAY: ":0" } },
     }),
   });
 
   if (!resp.ok) {
     const err = await resp.text();
-    console.error(`Command API error ${resp.status}:`, err);
     throw new Error(`Command failed ${resp.status}: ${err}`);
   }
 
-  const result = await resp.json();
-  console.log("Command result keys:", Object.keys(result), "exitCode:", result.exitCode, "stdout length:", result.stdout?.length);
+  const text = await resp.text();
+  let stdout = "";
+  let stderr = "";
+  let exitCode = 0;
 
-  return {
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-    exitCode: result.exitCode ?? 0,
-  };
+  for (const chunk of text.split("\n")) {
+    const line = chunk.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      const event = parsed.result ?? parsed;
+      const data = event.event?.data ?? event.data;
+      if (data?.stdout) stdout += atob(data.stdout);
+      if (data?.stderr) stderr += atob(data.stderr);
+      const end = event.event?.end ?? event.end;
+      if (typeof end?.exitCode === "number") exitCode = end.exitCode;
+    } catch {
+      // ignore malformed stream lines
+    }
+  }
+
+  return { stdout, stderr, exitCode };
 }
 
 // Download a file from the sandbox
@@ -93,33 +106,32 @@ async function downloadFile(sandboxId: string, envdAccessToken: string, filePath
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-// Take a screenshot, save to file, download via API
+// Take a screenshot, save to file, then download it from the sandbox
 async function captureScreenshot(sandboxId: string, envdAccessToken: string): Promise<string> {
-  const cmds = [
-    "DISPLAY=:0 import -window root /tmp/screenshot.png 2>&1",
-    "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite 2>&1",
-    "python3 -c \"import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')\" 2>&1",
+  const methods = [
+    { cmd: "bash", args: ["-lc", "DISPLAY=:0 import -window root /tmp/screenshot.png"] },
+    { cmd: "bash", args: ["-lc", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"] },
+    { cmd: "python3", args: ["-c", "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')"] },
   ];
 
   let lastError = "";
-  for (const cmd of cmds) {
+  for (const method of methods) {
     try {
-      const result = await runCommand(sandboxId, envdAccessToken, cmd);
-      console.log(`Screenshot cmd [${cmd.slice(0, 40)}...] exitCode=${result.exitCode} stderr=${result.stderr?.slice(0, 100)}`);
-      if (result.exitCode === 0) {
-        // Download the file
-        const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
-        let binary = "";
-        const chunkSize = 8192;
-        for (let i = 0; i < imageBytes.length; i += chunkSize) {
-          binary += String.fromCharCode(...imageBytes.slice(i, i + chunkSize));
-        }
-        return btoa(binary);
+      const result = await runCommand(sandboxId, envdAccessToken, method.cmd, method.args);
+      if (result.exitCode !== 0) {
+        lastError = result.stderr || result.stdout || `exit code ${result.exitCode}`;
+        continue;
       }
-      lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
+
+      const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
+      let binary = "";
+      const chunkSize = 8192;
+      for (let i = 0; i < imageBytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...imageBytes.slice(i, i + chunkSize));
+      }
+      return btoa(binary);
     } catch (e) {
       lastError = e instanceof Error ? e.message : "Unknown error";
-      console.error("Screenshot method failed:", lastError);
     }
   }
 
@@ -359,7 +371,7 @@ serve(async (req) => {
           }
           case "open_url": {
             const escaped = params.url.replace(/'/g, "\\'");
-            await runCommand(sessionId, token, `DISPLAY=:0 xdg-open '${escaped}' &`);
+            await runCommand(sessionId, token, "bash", ["-lc", `DISPLAY=:0 xdg-open '${escaped}' &`]);
             break;
           }
           case "wait": {
@@ -373,7 +385,7 @@ serve(async (req) => {
         }
 
         if (pyCode) {
-          const cmdResult = await runCommand(sessionId, token, `python3 -c "${pyCode.replace(/"/g, '\\"')}"`);
+          const cmdResult = await runCommand(sessionId, token, "python3", ["-c", pyCode]);
           if (cmdResult.exitCode !== 0) {
             result = { success: false, error: cmdResult.stderr || "Command failed" };
           }

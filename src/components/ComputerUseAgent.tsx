@@ -1,10 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw } from "lucide-react";
+import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { Progress } from "@/components/ui/progress";
+
+const BOOT_TIMEOUT_SECONDS = 90;
 
 const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;
 
@@ -126,14 +129,61 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [intervention, setIntervention] = useState("");
   const [currentScreenshot, setCurrentScreenshot] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
+  const [bootElapsed, setBootElapsed] = useState(0);
+  const [isBooting, setIsBooting] = useState(false);
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<{ sid: string; token: string } | null>(null);
+  const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [steps]);
+
+  // Cleanup sandbox on tab close / navigation
+  useEffect(() => {
+    const cleanup = () => {
+      const session = sessionRef.current;
+      if (session) {
+        const url = CU_URL;
+        const payload = JSON.stringify({ action: "stop_session", sessionId: session.sid, envdAccessToken: session.token });
+        // Use sendBeacon for reliability during unload
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: "application/json" });
+          navigator.sendBeacon(url, blob);
+        } else {
+          fetch(url, { method: "POST", body: payload, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
+        }
+        sessionRef.current = null;
+      }
+    };
+
+    window.addEventListener("beforeunload", cleanup);
+    return () => {
+      window.removeEventListener("beforeunload", cleanup);
+      cleanup(); // Also cleanup on component unmount
+    };
+  }, []);
+
+  // Boot countdown timer
+  useEffect(() => {
+    if (isBooting) {
+      setBootElapsed(0);
+      bootTimerRef.current = setInterval(() => {
+        setBootElapsed((prev) => Math.min(prev + 1, BOOT_TIMEOUT_SECONDS));
+      }, 1000);
+    } else {
+      if (bootTimerRef.current) {
+        clearInterval(bootTimerRef.current);
+        bootTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (bootTimerRef.current) clearInterval(bootTimerRef.current);
+    };
+  }, [isBooting]);
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
     const newStep: AgentStep = { ...step, id: ++stepIdRef.current, timestamp: new Date().toISOString() };
@@ -170,6 +220,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       setSessionId(sid);
       setStreamUrl(res.streamUrl);
       setEnvdToken(token);
+      sessionRef.current = { sid, token };
       updateStep(startStepId, { status: "done", reasoning: `Sandbox created (${sid.slice(0, 8)}...)` });
     } catch (e: any) {
       updateStep(startStepId, { status: "error", reasoning: e.message || "Failed to create sandbox" });
@@ -183,6 +234,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     // Phase 2: Wait for desktop to be ready (up to 90s on backend)
     setStatus("running");
     setIsRunning(true);
+    setIsBooting(true);
     const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + window manager)...", status: "executing" });
 
     try {
@@ -207,11 +259,13 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       const message = formatBootFailure(e);
       updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${message}` });
       setIsRunning(false);
+      setIsBooting(false);
       setStatus("error");
       toast.error(`Desktop boot failed: ${message}`);
       return;
     }
 
+    setIsBooting(false);
     if (abortRef.current) return;
 
     // Phase 3: Agent loop
@@ -300,6 +354,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSessionId(null);
     setStreamUrl(null);
     setEnvdToken(null);
+    sessionRef.current = null;
+    setIsBooting(false);
     setStatus("done");
     toast.success("Agent stopped");
   }, [sessionId, envdToken, getToken]);
@@ -314,7 +370,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
+    sessionRef.current = null;
   };
+
 
   const getStatusIcon = (s: AgentStep["status"]) => {
     switch (s) {
@@ -414,6 +472,15 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                         {status === "starting" ? "Creating sandbox..." : status === "running" && !currentScreenshot ? "Booting virtual desktop..." : "Desktop view will appear here"}
                       </p>
                       {(status === "starting" || (status === "running" && !currentScreenshot)) && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
+                      {isBooting && (
+                        <div className="w-48 mt-3 space-y-1.5">
+                          <Progress value={(bootElapsed / BOOT_TIMEOUT_SECONDS) * 100} className="h-1.5" />
+                          <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+                            <Timer className="h-3 w-3" />
+                            <span>{bootElapsed}s / {BOOT_TIMEOUT_SECONDS}s</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

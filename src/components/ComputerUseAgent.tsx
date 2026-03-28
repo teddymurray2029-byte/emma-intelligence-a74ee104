@@ -36,11 +36,11 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ action, ...params }),
   });
+  const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
+    throw new Error(data.error || `Error ${resp.status}`);
   }
-  return resp.json();
+  return data;
 }
 
 async function isMeaningfulScreenshot(base64: string): Promise<boolean> {

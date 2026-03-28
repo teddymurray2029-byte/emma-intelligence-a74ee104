@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Conversation } from "@/hooks/useConversations";
 
-interface AetherSidebarProps {
+interface EmmaSidebarProps {
   conversations: Conversation[];
   activeId: string | null;
   onSelect: (id: string) => void;
@@ -32,7 +32,7 @@ interface AetherSidebarProps {
   onSignOut: () => void;
 }
 
-export function AetherSidebar({
+export function EmmaSidebar({
   conversations,
   activeId,
   onSelect,
@@ -40,7 +40,7 @@ export function AetherSidebar({
   onDelete,
   onNavigate,
   onSignOut,
-}: AetherSidebarProps) {
+}: EmmaSidebarProps) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
 

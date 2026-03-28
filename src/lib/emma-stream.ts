@@ -1,6 +1,7 @@
-export type Message = { role: "user" | "assistant"; content: string };
+export type Message = { role: "user" | "assistant"; content: string; imageUrl?: string };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-chat`;
+const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-image-gen`;
 
 export async function streamChat({
   messages,
@@ -19,7 +20,7 @@ export async function streamChat({
       "Content-Type": "application/json",
       Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages: messages.map(m => ({ role: m.role, content: m.content })) }),
   });
 
   if (!resp.ok) {
@@ -86,4 +87,22 @@ export async function streamChat({
   }
 
   onDone();
+}
+
+export async function generateImage(prompt: string): Promise<{ imageUrl: string; text: string }> {
+  const resp = await fetch(IMAGE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify({ prompt }),
+  });
+
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({ error: "Image generation failed" }));
+    throw new Error(data.error || `Error ${resp.status}`);
+  }
+
+  return resp.json();
 }

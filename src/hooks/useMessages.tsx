@@ -11,19 +11,26 @@ export function useMessages(conversationId: string | null) {
     setLoading(true);
     const { data } = await supabase
       .from("messages")
-      .select("role, content")
+      .select("role, content, metadata")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
-    if (data) setMessages(data as Message[]);
+    if (data) {
+      setMessages(data.map((m: any) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        imageUrl: m.metadata?.imageUrl,
+      })));
+    }
     setLoading(false);
   }, [conversationId]);
 
-  const saveMessage = async (role: string, content: string) => {
+  const saveMessage = async (role: string, content: string, metadata?: Record<string, any>) => {
     if (!conversationId) return;
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       role,
       content,
+      metadata: metadata || {},
     });
   };
 
@@ -31,15 +38,15 @@ export function useMessages(conversationId: string | null) {
     setMessages((prev) => [...prev, msg]);
   };
 
-  const updateLastAssistant = (content: string) => {
+  const updateLastAssistant = (content: string, imageUrl?: string) => {
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === "assistant") {
         return prev.map((m, i) =>
-          i === prev.length - 1 ? { ...m, content } : m
+          i === prev.length - 1 ? { ...m, content, ...(imageUrl ? { imageUrl } : {}) } : m
         );
       }
-      return [...prev, { role: "assistant", content }];
+      return [...prev, { role: "assistant", content, ...(imageUrl ? { imageUrl } : {}) }];
     });
   };
 

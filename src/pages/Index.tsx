@@ -6,7 +6,7 @@ import { TypingIndicator } from "@/components/TypingIndicator";
 import { EmmaAvatar } from "@/components/EmmaAvatar";
 import { RightPanel } from "@/components/RightPanel";
 import { EmmaSidebar } from "@/components/EmmaSidebar";
-import { streamChat, type Message } from "@/lib/emma-stream";
+import { streamChat, generateImage, type Message } from "@/lib/emma-stream";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
@@ -21,7 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 const WELCOME_SUGGESTIONS = [
   "Build me a landing page",
   "Explain quantum computing",
-  "Analyze this dataset",
+  "/image A futuristic city at sunset",
   "Design a REST API",
 ];
 
@@ -54,20 +54,68 @@ export default function Index() {
     setActiveConvId(id);
   };
 
-  const send = async (input: string) => {
+  const ensureConversation = async (input: string) => {
     let convId = activeConvId;
-
     if (!convId) {
       const conv = await create(input.slice(0, 60));
-      if (!conv) { toast.error("Failed to create conversation"); return; }
+      if (!conv) { toast.error("Failed to create conversation"); return null; }
       convId = conv.id;
       setActiveConvId(conv.id);
-    } else {
-      if (messages.length === 0) {
-        await supabase.from("conversations").update({ title: input.slice(0, 60) }).eq("id", convId);
-      }
+    } else if (messages.length === 0) {
+      await supabase.from("conversations").update({ title: input.slice(0, 60) }).eq("id", convId);
+    }
+    return convId;
+  };
+
+  const handleBranch = useCallback(async (messageIndex: number) => {
+    const branchedMessages = messages.slice(0, messageIndex + 1);
+    const title = `Branch: ${branchedMessages[0]?.content.slice(0, 40) || "New branch"}`;
+    const conv = await create(title);
+    if (!conv) { toast.error("Failed to create branch"); return; }
+
+    // Save branched messages to new conversation
+    for (const msg of branchedMessages) {
+      await supabase.from("messages").insert({
+        conversation_id: conv.id,
+        role: msg.role,
+        content: msg.content,
+        metadata: msg.imageUrl ? { imageUrl: msg.imageUrl } : {},
+      });
     }
 
+    setActiveConvId(conv.id);
+    toast.success("Conversation branched!");
+  }, [messages, create]);
+
+  const send = async (input: string) => {
+    const convId = await ensureConversation(input);
+    if (!convId) return;
+
+    // Check for /image command
+    if (input.startsWith("/image ")) {
+      const prompt = input.slice(7).trim();
+      if (!prompt) { toast.error("Please provide an image prompt"); return; }
+
+      const userMsg: Message = { role: "user", content: input };
+      addLocal(userMsg);
+      await saveMessage("user", input);
+      setIsLoading(true);
+
+      try {
+        updateLastAssistant("🎨 Generating image...");
+        const { imageUrl, text } = await generateImage(prompt);
+        const content = text || `Generated image: "${prompt}"`;
+        updateLastAssistant(content, imageUrl);
+        await saveMessage("assistant", content, { imageUrl });
+      } catch (err: any) {
+        updateLastAssistant(`Failed to generate image: ${err.message}`);
+        await saveMessage("assistant", `Failed to generate image: ${err.message}`);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    // Normal chat
     const userMsg: Message = { role: "user", content: input };
     addLocal(userMsg);
     await saveMessage("user", input);
@@ -192,7 +240,12 @@ export default function Index() {
                           className="max-w-3xl mx-auto px-4 py-6 space-y-4"
                         >
                           {messages.map((m, i) => (
-                            <ChatMessage key={i} message={m} />
+                            <ChatMessage
+                              key={i}
+                              message={m}
+                              index={i}
+                              onBranch={handleBranch}
+                            />
                           ))}
                           {isLoading && messages[messages.length - 1]?.role === "user" && (
                             <div className="flex gap-3">
@@ -218,7 +271,7 @@ export default function Index() {
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel defaultSize={45} minSize={25}>
-                    <RightPanel />
+                    <RightPanel isProcessing={isLoading} />
                   </ResizablePanel>
                 </>
               )}

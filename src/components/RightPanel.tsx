@@ -1,11 +1,15 @@
 import { useState } from "react";
-import { Code2, Bot, BarChart3 } from "lucide-react";
+import { Code2, Bot } from "lucide-react";
 import { CodeEditor } from "./CodeEditor";
 import { AgentSwarm } from "./AgentSwarm";
 
-type Tab = "ide" | "agents" | "preview";
+type Tab = "ide" | "agents";
 
-export function RightPanel() {
+interface RightPanelProps {
+  isProcessing?: boolean;
+}
+
+export function RightPanel({ isProcessing = false }: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("ide");
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
@@ -15,7 +19,6 @@ export function RightPanel() {
 
   return (
     <div className="flex flex-col h-full bg-background border-l border-border">
-      {/* Tab bar */}
       <div className="flex items-center border-b border-border bg-card">
         {tabs.map((t) => (
           <button
@@ -29,14 +32,16 @@ export function RightPanel() {
           >
             <t.icon className="h-3.5 w-3.5" />
             {t.label}
+            {t.id === "agents" && isProcessing && (
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+            )}
           </button>
         ))}
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-hidden">
         {tab === "ide" && <CodeEditor />}
-        {tab === "agents" && <AgentSwarm />}
+        {tab === "agents" && <AgentSwarm isProcessing={isProcessing} />}
       </div>
     </div>
   );

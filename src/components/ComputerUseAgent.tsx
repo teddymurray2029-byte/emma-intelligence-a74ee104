@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer } from "lucide-react";
+import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,60 +17,49 @@ interface AgentStep {
   status: "pending" | "executing" | "done" | "error";
 }
 
-interface DesktopReadyResponse {
-  ready: boolean;
-  screenshot?: string;
-  waitedMs: number;
-  message: string;
-  error?: string;
-}
-
 interface ComputerUseAgentProps {
   getToken: () => Promise<string | null>;
 }
 
-async function cuApi(action: string, params: Record<string, any>, getToken: () => Promise<string | null>) {
+async function cuApi(action: string, params: Record<string, any>, getToken: () => Promise<string | null>, timeoutMs = 30_000) {
   const token = await getToken();
-  const resp = await fetch(CU_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ action, ...params }),
-  });
-  const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
-  if (!resp.ok) {
-    throw new Error(data.error || `Error ${resp.status}`);
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const resp = await fetch(CU_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ action, ...params }),
+      signal: controller.signal,
+    });
+    const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
+    if (!resp.ok) throw new Error(data.error || `Error ${resp.status}`);
+    return data;
+  } catch (e: any) {
+    if (e.name === "AbortError") throw new Error("Request timed out — the server took too long to respond");
+    throw e;
+  } finally {
+    clearTimeout(tid);
   }
-  return data;
 }
 
-async function isMeaningfulScreenshot(base64: string): Promise<boolean> {
-  return await new Promise((resolve) => {
+function isMeaningfulScreenshot(base64: string): Promise<boolean> {
+  return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      const sampleWidth = 64;
-      const sampleHeight = 48;
-      canvas.width = sampleWidth;
-      canvas.height = sampleHeight;
+      canvas.width = 64;
+      canvas.height = 48;
       const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(true);
-        return;
-      }
-
-      ctx.drawImage(img, 0, 0, sampleWidth, sampleHeight);
-      const { data } = ctx.getImageData(0, 0, sampleWidth, sampleHeight);
-      let nonDarkPixels = 0;
-      let brightPixels = 0;
-
+      if (!ctx) { resolve(true); return; }
+      ctx.drawImage(img, 0, 0, 64, 48);
+      const { data } = ctx.getImageData(0, 0, 64, 48);
+      let bright = 0;
       for (let i = 0; i < data.length; i += 4) {
-        const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        if (brightness > 20) nonDarkPixels += 1;
-        if (brightness > 60) brightPixels += 1;
+        if ((data[i] + data[i + 1] + data[i + 2]) / 3 > 40) bright++;
       }
-
-      const totalPixels = data.length / 4;
-      resolve(nonDarkPixels / totalPixels > 0.05 && brightPixels / totalPixels > 0.01);
+      resolve(bright / (data.length / 4) > 0.03);
     };
     img.onerror = () => resolve(false);
     img.src = `data:image/png;base64,${base64}`;
@@ -119,75 +108,68 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepIdRef.current = 0;
     abortRef.current = false;
 
-    const startStepId = addStep({ action: "start_session", reasoning: "Spinning up isolated OS environment...", status: "executing" });
+    // Phase 1: Create sandbox (should be fast, <5s)
+    const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
     let sid: string;
     let token: string;
 
     try {
-      const res = await cuApi("start_session", { task: task.trim() }, getToken);
+      const res = await cuApi("start_session", { task: task.trim() }, getToken, 20_000);
       sid = res.sessionId;
       token = res.envdAccessToken;
       setSessionId(sid);
       setStreamUrl(res.streamUrl);
       setEnvdToken(token);
-      updateStep(startStepId, { status: "done", reasoning: `Desktop sandbox ready (${sid.slice(0, 8)}...)` });
+      updateStep(startStepId, { status: "done", reasoning: `Sandbox created (${sid.slice(0, 8)}...)` });
     } catch (e: any) {
-      updateStep(startStepId, { status: "error", reasoning: `Failed: ${e.message || "Failed to start session"}` });
-      setIsRunning(false);
+      updateStep(startStepId, { status: "error", reasoning: e.message || "Failed to create sandbox" });
       setStatus("error");
       toast.error(e.message || "Failed to start session");
       return;
     }
 
-    // Use backend-driven readiness check instead of client-side polling
+    if (abortRef.current) return;
+
+    // Phase 2: Wait for desktop to be ready (up to 90s on backend)
     setStatus("running");
     setIsRunning(true);
-
-    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Starting virtual desktop...", status: "executing" });
+    const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + window manager)...", status: "executing" });
 
     try {
-      updateStep(waitStepId, { reasoning: "Waiting for display server..." });
-      const readiness: DesktopReadyResponse & { status?: string } = await cuApi(
-        "wait_until_ready",
-        { sessionId: sid, envdAccessToken: token },
-        getToken,
-      );
+      const readiness = await cuApi("wait_until_ready", { sessionId: sid, envdAccessToken: token }, getToken, 120_000);
 
       if (readiness.ready && readiness.screenshot) {
         const meaningful = await isMeaningfulScreenshot(readiness.screenshot);
-        if (meaningful) {
-          setCurrentScreenshot(readiness.screenshot);
-          updateStep(waitStepId, {
-            status: "done",
-            screenshot: readiness.screenshot,
-            reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)`,
-          });
-        } else {
-          setCurrentScreenshot(readiness.screenshot);
-          updateStep(waitStepId, {
-            status: "done",
-            screenshot: readiness.screenshot,
-            reasoning: `Desktop loaded but screen may still be initializing (${Math.ceil(readiness.waitedMs / 1000)}s)`,
-          });
-        }
+        setCurrentScreenshot(readiness.screenshot);
+        updateStep(waitStepId, {
+          status: "done",
+          screenshot: readiness.screenshot,
+          reasoning: meaningful
+            ? `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)`
+            : `Desktop loaded, display may still be initializing (${Math.ceil(readiness.waitedMs / 1000)}s)`,
+        });
       } else {
-        throw new Error(readiness.error || readiness.message || "Desktop did not become ready");
+        const reason = readiness.error || readiness.message || "Desktop did not become ready";
+        const stage = readiness.stage ? ` [${readiness.stage}]` : "";
+        throw new Error(`${reason}${stage}`);
       }
     } catch (e: any) {
-      updateStep(waitStepId, { status: "error", reasoning: `Desktop startup failed: ${e.message}` });
+      updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${e.message}` });
       setIsRunning(false);
       setStatus("error");
-      toast.error(`Desktop startup failed: ${e.message}`);
+      toast.error(`Desktop boot failed: ${e.message}`);
       return;
     }
 
-    // Start the agent loop
+    if (abortRef.current) return;
+
+    // Phase 3: Agent loop
     await runAgentLoop(sid, task.trim(), token);
   }, [task, getToken, addStep, updateStep]);
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
-    let actionHistory: { action: string; reasoning: string }[] = [];
+    const actionHistory: { action: string; reasoning: string }[] = [];
     const MAX_STEPS = 50;
 
     for (let i = 0; i < MAX_STEPS; i++) {
@@ -196,7 +178,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         break;
       }
 
-      // Think step — AI analyzes screenshot and decides next action
       const thinkStepId = addStep({ action: "thinking", reasoning: "Analyzing screen...", status: "executing" });
 
       try {
@@ -204,12 +185,10 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         if (pendingIntervention) setIntervention("");
 
         const decision = await cuApi("think", {
-          sessionId: sid,
-          task: taskDesc,
-          actionHistory,
+          sessionId: sid, task: taskDesc, actionHistory,
           userMessage: pendingIntervention || undefined,
           envdAccessToken: token,
-        }, getToken);
+        }, getToken, 60_000);
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
@@ -224,7 +203,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
 
-        // Check if done
         if (decision.done) {
           setSummary(decision.summary || "Task completed.");
           setStatus("done");
@@ -233,29 +211,23 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           break;
         }
 
-        // Execute the action
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
-
           try {
             await cuApi("execute", {
-              sessionId: sid,
-              actionType: decision.action,
-              params: decision.params,
-              envdAccessToken: token,
-            }, getToken);
+              sessionId: sid, actionType: decision.action,
+              params: decision.params, envdAccessToken: token,
+            }, getToken, 20_000);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
           } catch (e: any) {
             updateStep(execStepId, { status: "error", reasoning: `Action failed: ${e.message}` });
           }
         }
 
-        // Small delay between actions
         const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
         await new Promise((r) => setTimeout(r, waitTime));
       } catch (e: any) {
         updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
-        // Wait and retry
         await new Promise((r) => setTimeout(r, 3000));
       }
     }
@@ -271,9 +243,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     abortRef.current = true;
     setStatus("stopping");
     if (sessionId) {
-      try {
-        await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken);
-      } catch {}
+      try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
     }
     setIsRunning(false);
     setSessionId(null);
@@ -281,12 +251,18 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setEnvdToken(null);
     setStatus("done");
     toast.success("Agent stopped");
-  }, [sessionId, getToken]);
+  }, [sessionId, envdToken, getToken]);
 
   const handleIntervene = () => {
     if (!intervention.trim()) return;
     addStep({ action: "user_message", reasoning: `User: ${intervention.trim()}`, status: "done" });
-    // intervention will be picked up in the next think cycle
+  };
+
+  const resetToIdle = () => {
+    setStatus("idle");
+    setSteps([]);
+    setSummary(null);
+    setCurrentScreenshot(null);
   };
 
   const getStatusIcon = (s: AgentStep["status"]) => {
@@ -302,14 +278,14 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     if (action.includes("think")) return <Eye className="h-3 w-3" />;
     if (action.includes("click") || action.includes("mouse")) return <MousePointer className="h-3 w-3" />;
     if (action === "screenshot") return <Camera className="h-3 w-3" />;
-    if (action === "start_session") return <Monitor className="h-3 w-3" />;
+    if (action.includes("sandbox") || action.includes("boot")) return <Monitor className="h-3 w-3" />;
     return <div className="h-3 w-3" />;
   };
 
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Task Input Bar */}
-      {status === "idle" || status === "done" || status === "error" ? (
+      {(status === "idle" || status === "done" || status === "error") && (
         <div className="p-4 border-b border-border bg-card space-y-3">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -330,7 +306,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
               <Play className="h-3.5 w-3.5" /> Start
             </Button>
           </div>
-          {/* Example tasks */}
           <div className="flex flex-wrap gap-1.5">
             {[
               "Apply to 10 frontend jobs on Indeed",
@@ -348,56 +323,50 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             ))}
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* Main Content */}
       {status !== "idle" && (
         <div className="flex-1 overflow-hidden">
           <ResizablePanelGroup direction="horizontal">
-            {/* Desktop Stream / Screenshot View */}
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="flex flex-col h-full">
-                {/* Control Bar */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card">
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : status === "error" ? "bg-destructive" : "bg-muted-foreground"}`} />
                     <span className="text-xs font-mono text-foreground capitalize">{status}</span>
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}...</span>}
                   </div>
-                  {isRunning && (
-                    <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={stopSession}>
-                      <Square className="h-3 w-3" /> Stop Emma
-                    </Button>
-                  )}
+                  <div className="flex gap-1">
+                    {status === "error" && (
+                      <Button variant="secondary" size="sm" className="h-7 gap-1 text-xs" onClick={startSession}>
+                        <RotateCcw className="h-3 w-3" /> Retry
+                      </Button>
+                    )}
+                    {isRunning && (
+                      <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={stopSession}>
+                        <Square className="h-3 w-3" /> Stop
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Desktop View */}
                 <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
                   {streamUrl ? (
-                    <iframe
-                      src={streamUrl}
-                      className="w-full h-full border-0"
-                      title="Emma Desktop"
-                      sandbox="allow-same-origin allow-scripts"
-                    />
+                    <iframe src={streamUrl} className="w-full h-full border-0" title="Emma Desktop" sandbox="allow-same-origin allow-scripts" />
                   ) : currentScreenshot ? (
-                    <img
-                      src={`data:image/png;base64,${currentScreenshot}`}
-                      alt="Desktop screenshot"
-                      className="max-w-full max-h-full object-contain"
-                    />
+                    <img src={`data:image/png;base64,${currentScreenshot}`} alt="Desktop screenshot" className="max-w-full max-h-full object-contain" />
                   ) : (
                     <div className="text-center space-y-3">
                       <Monitor className="h-12 w-12 text-muted-foreground mx-auto" />
                       <p className="text-xs text-muted-foreground">
-                        {status === "starting" ? "Starting virtual desktop..." : "Desktop view will appear here"}
+                        {status === "starting" ? "Creating sandbox..." : status === "running" && !currentScreenshot ? "Booting virtual desktop..." : "Desktop view will appear here"}
                       </p>
-                      {status === "starting" && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
+                      {(status === "starting" || (status === "running" && !currentScreenshot)) && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
                     </div>
                   )}
                 </div>
 
-                {/* Intervention Chat */}
                 {isRunning && (
                   <div className="px-3 py-2 border-t border-border bg-card">
                     <div className="flex gap-2">
@@ -419,7 +388,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
             <ResizableHandle withHandle />
 
-            {/* Action Log Panel */}
             <ResizablePanel defaultSize={40} minSize={20}>
               <div className="flex flex-col h-full bg-card">
                 <div className="px-3 py-2 border-b border-border">
@@ -459,7 +427,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   </div>
                 </ScrollArea>
 
-                {/* Summary */}
                 {summary && (
                   <div className="p-3 border-t border-border bg-primary/5">
                     <div className="flex items-start gap-2">
@@ -469,7 +436,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                         <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{summary}</p>
                       </div>
                     </div>
-                    <Button variant="secondary" size="sm" className="w-full mt-2 text-xs" onClick={() => { setStatus("idle"); setSteps([]); setSummary(null); }}>
+                    <Button variant="secondary" size="sm" className="w-full mt-2 text-xs" onClick={resetToIdle}>
                       New Task
                     </Button>
                   </div>

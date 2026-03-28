@@ -47,6 +47,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [task, setTask] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [envdToken, setEnvdToken] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [steps, setSteps] = useState<AgentStep[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
@@ -90,13 +91,14 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       const res = await cuApi("start_session", { task: task.trim() }, getToken);
       setSessionId(res.sessionId);
       setStreamUrl(res.streamUrl);
+      setEnvdToken(res.envdAccessToken);
       updateStep(startStepId, { status: "done", reasoning: `Desktop sandbox ready (${res.sessionId.slice(0, 8)}...)` });
 
       setStatus("running");
       setIsRunning(true);
 
       const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop initialization signal...", status: "executing" });
-      const readiness = await cuApi("wait_until_ready", { sessionId: res.sessionId }, getToken) as DesktopReadyResponse;
+      const readiness = await cuApi("wait_until_ready", { sessionId: res.sessionId, envdAccessToken: res.envdAccessToken }, getToken) as DesktopReadyResponse;
 
       if (readiness.screenshot) {
         setCurrentScreenshot(readiness.screenshot);
@@ -109,7 +111,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       });
 
       // Start the agent loop
-      await runAgentLoop(res.sessionId, task.trim());
+      await runAgentLoop(res.sessionId, task.trim(), res.envdAccessToken);
     } catch (e: any) {
       const errorMessage = e.message || "Failed to start session";
 
@@ -128,7 +130,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     }
   }, [task, getToken, addStep, updateStep]);
 
-  const runAgentLoop = async (sid: string, taskDesc: string) => {
+  const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
     let actionHistory: { action: string; reasoning: string }[] = [];
     const MAX_STEPS = 50;
 
@@ -150,6 +152,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           task: taskDesc,
           actionHistory,
           userMessage: pendingIntervention || undefined,
+          envdAccessToken: token,
         }, getToken);
 
         if (decision.screenshot) {
@@ -183,6 +186,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
               sessionId: sid,
               actionType: decision.action,
               params: decision.params,
+              envdAccessToken: token,
             }, getToken);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
           } catch (e: any) {
@@ -212,12 +216,13 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setStatus("stopping");
     if (sessionId) {
       try {
-        await cuApi("stop_session", { sessionId }, getToken);
+        await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken);
       } catch {}
     }
     setIsRunning(false);
     setSessionId(null);
     setStreamUrl(null);
+    setEnvdToken(null);
     setStatus("done");
     toast.success("Agent stopped");
   }, [sessionId, getToken]);

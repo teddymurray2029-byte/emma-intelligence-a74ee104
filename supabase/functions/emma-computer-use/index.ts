@@ -82,7 +82,7 @@ async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
   if (cached) return cached;
 
   const candidates: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
-    { path: `/sandboxes/${sandboxId}/connect`, method: "POST" },
+    { path: `/sandboxes/${sandboxId}/connect`, method: "POST", body: { timeout: 300 } },
     { path: `/sandboxes/${sandboxId}/resume`, method: "POST", body: {} },
     { path: `/sandboxes/${sandboxId}`, method: "GET" },
   ];
@@ -106,7 +106,11 @@ async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
         return session;
       }
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Unable to connect to sandbox";
+      const message = error instanceof Error ? error.message : "Unable to connect to sandbox";
+      if (candidate.path.endsWith("/resume") && message.includes("already running")) {
+        continue;
+      }
+      lastError = message;
     }
   }
 

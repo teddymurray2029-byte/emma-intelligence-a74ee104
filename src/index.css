@@ -2,58 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
-    --background: 220 25% 6%;
-    --foreground: 200 20% 90%;
+    --background: 222 47% 6%;
+    --foreground: 210 20% 92%;
 
-    --card: 220 20% 10%;
-    --card-foreground: 200 20% 90%;
+    --card: 222 40% 9%;
+    --card-foreground: 210 20% 92%;
 
-    --popover: 220 20% 10%;
-    --popover-foreground: 200 20% 90%;
+    --popover: 222 40% 9%;
+    --popover-foreground: 210 20% 92%;
 
-    --primary: 175 80% 50%;
-    --primary-foreground: 220 25% 6%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 6%;
 
-    --secondary: 220 15% 15%;
-    --secondary-foreground: 200 20% 85%;
+    --secondary: 222 30% 14%;
+    --secondary-foreground: 210 20% 85%;
 
-    --muted: 220 15% 13%;
-    --muted-foreground: 215 15% 50%;
+    --muted: 222 25% 12%;
+    --muted-foreground: 215 15% 48%;
 
-    --accent: 260 60% 60%;
-    --accent-foreground: 200 20% 95%;
+    --accent: 35 90% 55%;
+    --accent-foreground: 222 47% 6%;
 
     --destructive: 0 70% 55%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 220 15% 18%;
-    --input: 220 15% 15%;
-    --ring: 175 80% 50%;
+    --border: 222 20% 16%;
+    --input: 222 25% 14%;
+    --ring: 217 91% 60%;
 
     --radius: 0.75rem;
 
-    --emma-glow: 175 80% 50%;
-    --emma-glow-dim: 175 60% 30%;
-    --emma-purple: 260 60% 60%;
-    --emma-surface: 220 20% 8%;
-    --emma-surface-elevated: 220 18% 12%;
-    --emma-gradient: linear-gradient(135deg, hsl(175 80% 50%), hsl(260 60% 60%));
-    --emma-text-gradient: linear-gradient(135deg, hsl(175 80% 60%), hsl(260 60% 70%));
-    --emma-border-glow: 0 0 15px hsl(175 80% 50% / 0.15);
-    --emma-shadow: 0 8px 32px hsl(175 80% 50% / 0.08);
+    --aether-blue: 217 91% 60%;
+    --aether-blue-dim: 217 70% 35%;
+    --aether-amber: 35 90% 55%;
+    --aether-purple: 260 60% 60%;
+    --aether-surface: 222 40% 7%;
+    --aether-surface-elevated: 222 35% 11%;
+    --aether-gradient: linear-gradient(135deg, hsl(217 91% 60%), hsl(260 60% 60%));
+    --aether-text-gradient: linear-gradient(135deg, hsl(217 91% 65%), hsl(260 60% 70%));
+    --aether-amber-gradient: linear-gradient(135deg, hsl(35 90% 55%), hsl(25 85% 50%));
+    --aether-border-glow: 0 0 15px hsl(217 91% 60% / 0.12);
+    --aether-shadow: 0 8px 32px hsl(217 91% 60% / 0.06);
 
-    --sidebar-background: 220 20% 8%;
-    --sidebar-foreground: 200 20% 85%;
-    --sidebar-primary: 175 80% 50%;
-    --sidebar-primary-foreground: 220 25% 6%;
-    --sidebar-accent: 220 15% 15%;
-    --sidebar-accent-foreground: 200 20% 85%;
-    --sidebar-border: 220 15% 18%;
-    --sidebar-ring: 175 80% 50%;
+    --sidebar-background: 222 40% 7%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 222 25% 14%;
+    --sidebar-accent-foreground: 210 20% 85%;
+    --sidebar-border: 222 20% 14%;
+    --sidebar-ring: 217 91% 60%;
   }
 }
 
@@ -68,56 +70,45 @@
 }
 
 @layer utilities {
-  .emma-glow-text {
-    background: var(--emma-text-gradient);
+  .aether-glow-text {
+    background: var(--aether-text-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
-  .emma-glow-border {
-    border: 1px solid hsl(var(--emma-glow) / 0.2);
-    box-shadow: var(--emma-border-glow);
+  .aether-glow-border {
+    border: 1px solid hsl(var(--aether-blue) / 0.15);
+    box-shadow: var(--aether-border-glow);
   }
 
-  .emma-surface {
-    background: hsl(var(--emma-surface));
+  .aether-surface {
+    background: hsl(var(--aether-surface));
   }
 
-  .emma-surface-elevated {
-    background: hsl(var(--emma-surface-elevated));
+  .aether-surface-elevated {
+    background: hsl(var(--aether-surface-elevated));
   }
 
-  .emma-gradient-bg {
-    background: var(--emma-gradient);
+  .aether-gradient-bg {
+    background: var(--aether-gradient);
   }
 
-  .emma-pulse {
-    animation: emmaPulse 3s ease-in-out infinite;
+  .aether-pulse {
+    animation: aetherPulse 3s ease-in-out infinite;
   }
 
-  .emma-typing-dot {
-    animation: emmaTypingDot 1.4s ease-in-out infinite;
-  }
-
-  .emma-scanline {
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      hsl(var(--emma-glow) / 0.02) 2px,
-      hsl(var(--emma-glow) / 0.02) 4px
-    );
-    pointer-events: none;
+  .aether-typing-dot {
+    animation: aetherTypingDot 1.4s ease-in-out infinite;
   }
 }
 
-@keyframes emmaPulse {
+@keyframes aetherPulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
 
-@keyframes emmaTypingDot {
+@keyframes aetherTypingDot {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
   30% { transform: translateY(-6px); opacity: 1; }
 }
@@ -127,7 +118,7 @@
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(var(--emma-surface));
+  background: hsl(var(--aether-surface));
 }
 ::-webkit-scrollbar-thumb {
   background: hsl(var(--border));

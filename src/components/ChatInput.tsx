@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send } from "lucide-react";
+import { Send, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ChatInputProps {
@@ -26,7 +26,15 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <div className="emma-glow-border rounded-2xl emma-surface-elevated p-2 flex items-end gap-2">
+    <div className="aether-glow-border rounded-2xl aether-surface-elevated p-2 flex items-end gap-2">
+      <Button
+        size="icon"
+        variant="ghost"
+        className="text-muted-foreground hover:text-foreground rounded-xl flex-shrink-0 h-9 w-9"
+        disabled={disabled}
+      >
+        <Paperclip className="h-4 w-4" />
+      </Button>
       <textarea
         ref={textareaRef}
         value={input}
@@ -37,17 +45,16 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             handleSubmit();
           }
         }}
-        placeholder="Ask Emma anything..."
+        placeholder="Message Aether..."
         disabled={disabled}
         rows={1}
-        className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground text-sm resize-none outline-none px-3 py-2 max-h-40 font-sans"
+        className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground text-sm resize-none outline-none px-2 py-2 max-h-40 font-sans"
       />
       <Button
         onClick={handleSubmit}
         disabled={disabled || !input.trim()}
         size="icon"
-        variant="ghost"
-        className="text-primary hover:bg-primary/10 rounded-xl flex-shrink-0 h-9 w-9"
+        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl flex-shrink-0 h-9 w-9"
       >
         <Send className="h-4 w-4" />
       </Button>

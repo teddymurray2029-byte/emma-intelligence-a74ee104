@@ -14,7 +14,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Space Grotesk", "system-ui", "sans-serif"],
+        sans: ["Inter", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
       colors: {
@@ -51,12 +51,13 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        emma: {
-          glow: "hsl(var(--emma-glow))",
-          "glow-dim": "hsl(var(--emma-glow-dim))",
-          purple: "hsl(var(--emma-purple))",
-          surface: "hsl(var(--emma-surface))",
-          "surface-elevated": "hsl(var(--emma-surface-elevated))",
+        aether: {
+          blue: "hsl(var(--aether-blue))",
+          "blue-dim": "hsl(var(--aether-blue-dim))",
+          amber: "hsl(var(--aether-amber))",
+          purple: "hsl(var(--aether-purple))",
+          surface: "hsl(var(--aether-surface))",
+          "surface-elevated": "hsl(var(--aether-surface-elevated))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",

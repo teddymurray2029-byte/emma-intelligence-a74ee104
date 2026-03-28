@@ -24,7 +24,12 @@ serve(async (req) => {
 
   try {
     const userId = await getClerkUserId(req);
-    if (!userId) {
+    const body = await req.json();
+    const { action } = body;
+
+    // Allow anonymous access for usage tracking actions
+    const anonAllowed = ["check_usage", "track_usage"];
+    if (!userId && !anonAllowed.includes(action)) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -125,6 +130,54 @@ serve(async (req) => {
           await supabase.from("profiles").insert({ id: userId, display_name, avatar_url });
         }
         return json({ success: true });
+      }
+
+      case "check_usage": {
+        const { fingerprint } = body;
+        if (!fingerprint) return json({ error: "Missing fingerprint" }, 400);
+        const { data } = await supabase.from("usage_tracking").select("*").eq("fingerprint", fingerprint).single();
+        if (!data) return json({ data: { messages_used: 0, is_paid: false } });
+        return json({ data });
+      }
+
+      case "track_usage": {
+        const { fingerprint, ip_address } = body;
+        if (!fingerprint) return json({ error: "Missing fingerprint" }, 400);
+        const { data: existing } = await supabase.from("usage_tracking").select("*").eq("fingerprint", fingerprint).single();
+        if (existing) {
+          const ips = existing.ip_addresses || [];
+          if (ip_address && !ips.includes(ip_address)) ips.push(ip_address);
+          await supabase.from("usage_tracking").update({
+            messages_used: existing.messages_used + 1,
+            user_id: userId || existing.user_id,
+            ip_addresses: ips,
+            updated_at: new Date().toISOString(),
+          }).eq("fingerprint", fingerprint);
+          // Check for IP-based fingerprint linking (anti-abuse)
+          if (ip_address) {
+            const { data: sameIp } = await supabase.from("usage_tracking")
+              .select("fingerprint").neq("fingerprint", fingerprint)
+              .contains("ip_addresses", [ip_address]);
+            if (sameIp?.length) {
+              for (const other of sameIp) {
+                await supabase.from("fingerprint_links").upsert({
+                  primary_fingerprint: fingerprint,
+                  linked_fingerprint: other.fingerprint,
+                  link_type: "ip_match",
+                }, { onConflict: "primary_fingerprint,linked_fingerprint" });
+              }
+            }
+          }
+          return json({ data: { messages_used: existing.messages_used + 1, is_paid: existing.is_paid } });
+        } else {
+          await supabase.from("usage_tracking").insert({
+            fingerprint,
+            user_id: userId || null,
+            messages_used: 1,
+            ip_addresses: ip_address ? [ip_address] : [],
+          });
+          return json({ data: { messages_used: 1, is_paid: false } });
+        }
       }
 
       default:

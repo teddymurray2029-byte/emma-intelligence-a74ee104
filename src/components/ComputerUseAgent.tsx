@@ -17,6 +17,14 @@ interface AgentStep {
   status: "pending" | "executing" | "done" | "error";
 }
 
+interface DesktopReadyResponse {
+  ready: boolean;
+  screenshot?: string;
+  waitedMs: number;
+  message: string;
+  error?: string;
+}
+
 interface ComputerUseAgentProps {
   getToken: () => Promise<string | null>;
 }
@@ -87,16 +95,36 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       setStatus("running");
       setIsRunning(true);
 
-      // Wait for desktop to boot
-      addStep({ action: "wait", reasoning: "Waiting for desktop to initialize...", status: "executing" });
-      await new Promise((r) => setTimeout(r, 5000));
+      const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop initialization signal...", status: "executing" });
+      const readiness = await cuApi("wait_until_ready", { sessionId: res.sessionId }, getToken) as DesktopReadyResponse;
+
+      if (readiness.screenshot) {
+        setCurrentScreenshot(readiness.screenshot);
+      }
+
+      updateStep(waitStepId, {
+        status: "done",
+        screenshot: readiness.screenshot,
+        reasoning: `${readiness.message} (${Math.ceil(readiness.waitedMs / 1000)}s)`,
+      });
 
       // Start the agent loop
       await runAgentLoop(res.sessionId, task.trim());
     } catch (e: any) {
-      updateStep(startStepId, { status: "error", reasoning: `Failed: ${e.message}` });
+      const errorMessage = e.message || "Failed to start session";
+
+      if (errorMessage.includes("Desktop did not finish initializing")) {
+        addStep({
+          action: "wait_for_desktop",
+          reasoning: errorMessage,
+          status: "error",
+        });
+      }
+
+      updateStep(startStepId, { status: "error", reasoning: `Failed: ${errorMessage}` });
+      setIsRunning(false);
       setStatus("error");
-      toast.error(e.message);
+      toast.error(errorMessage);
     }
   }, [task, getToken, addStep, updateStep]);
 

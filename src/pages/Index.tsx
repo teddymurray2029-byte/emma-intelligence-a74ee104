@@ -252,7 +252,7 @@ export default function Index() {
                 </div>
               )}
               <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-primary emma-pulse" /><span className="text-xs font-mono text-primary">ONLINE</span></div>
-              {!isProjectsMode && (
+              {!isFullscreenMode && (
                 <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
                   {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                 </Button>
@@ -264,6 +264,8 @@ export default function Index() {
           <div className="flex-1 overflow-hidden">
             {isProjectsMode ? (
               <ProjectIDE getToken={getToken} />
+            ) : isAgentMode ? (
+              <ComputerUseAgent getToken={getToken} />
             ) : (
               <ResizablePanelGroup direction="horizontal">
                 <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Brain, Code2, Palette, Search, Shield, Cpu } from "lucide-react";
+import { Hammer, ShieldAlert, HelpCircle, Lightbulb, Cpu } from "lucide-react";
 
 interface Agent {
   name: string;
@@ -11,21 +11,17 @@ interface Agent {
 }
 
 const BASE_AGENTS: Omit<Agent, "status" | "task">[] = [
-  { name: "Director", role: "Orchestration", icon: Cpu },
-  { name: "Researcher", role: "Knowledge", icon: Search },
-  { name: "Coder", role: "Engineering", icon: Code2 },
-  { name: "Designer", role: "UX/UI", icon: Palette },
-  { name: "Analyst", role: "Data", icon: Brain },
-  { name: "QA", role: "Testing", icon: Shield },
+  { name: "Builder", role: "Constructive Reasoning", icon: Hammer },
+  { name: "Critic", role: "Adversarial Analysis", icon: ShieldAlert },
+  { name: "Skeptic", role: "Uncertainty Detection", icon: HelpCircle },
+  { name: "Inventor", role: "Lateral Thinking", icon: Lightbulb },
 ];
 
 const TASKS: Record<string, string[]> = {
-  Director: ["Coordinating sub-agents", "Planning execution", "Reviewing outputs"],
-  Researcher: ["Searching knowledge base", "Analyzing context", "Gathering references"],
-  Coder: ["Generating code", "Refactoring solution", "Running analysis"],
-  Designer: ["Evaluating layout", "Checking accessibility", "Optimizing UX"],
-  Analyst: ["Processing data", "Building models", "Generating insights"],
-  QA: ["Validating output", "Testing edge cases", "Quality check"],
+  Builder: ["Constructing solution", "Optimizing approach", "Building framework", "Assembling answer"],
+  Critic: ["Attacking assumptions", "Finding logical flaws", "Stress-testing claims", "Challenging reasoning"],
+  Skeptic: ["Identifying unknowns", "Questioning evidence", "Flagging uncertainty", "Checking falsifiability"],
+  Inventor: ["Exploring alternatives", "Lateral reframing", "Novel abstraction", "Divergent synthesis"],
 };
 
 const statusColors: Record<string, string> = {
@@ -33,6 +29,13 @@ const statusColors: Record<string, string> = {
   thinking: "bg-accent animate-pulse",
   active: "bg-primary emma-pulse",
   done: "bg-green-500",
+};
+
+const agentColors: Record<string, string> = {
+  Builder: "text-blue-400",
+  Critic: "text-red-400",
+  Skeptic: "text-amber-400",
+  Inventor: "text-emerald-400",
 };
 
 interface AgentSwarmProps {
@@ -43,53 +46,59 @@ export function AgentSwarm({ isProcessing = false }: AgentSwarmProps) {
   const [agents, setAgents] = useState<Agent[]>(
     BASE_AGENTS.map((a) => ({ ...a, status: "idle" as const }))
   );
-  const [logs, setLogs] = useState<string[]>(["Director initialized", "Awaiting task assignment..."]);
+  const [logs, setLogs] = useState<string[]>(["Cognitive loop initialized", "Awaiting complex query..."]);
+  const [phase, setPhase] = useState<string>("IDLE");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const PHASES = ["REFRAME", "FIRST PRINCIPLES", "AGENT DEBATE", "SYNTHESIS", "STRESS TEST", "REFINEMENT"];
 
   useEffect(() => {
     if (isProcessing) {
-      // Activate Director immediately
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.name === "Director"
-            ? { ...a, status: "active", task: "Coordinating sub-agents" }
-            : a
-        )
-      );
-      setLogs(["Director activated", "Dispatching to sub-agents..."]);
+      setPhase(PHASES[0]);
+      setLogs(["Cognitive pipeline activated", "Phase: REFRAME"]);
 
       let tick = 0;
       intervalRef.current = setInterval(() => {
         tick++;
+        const phaseIdx = Math.min(Math.floor(tick / 3), PHASES.length - 1);
+        setPhase(PHASES[phaseIdx]);
+
         setAgents((prev) =>
-          prev.map((a) => {
-            if (a.name === "Director") return { ...a, status: "active", task: TASKS.Director[tick % TASKS.Director.length] };
-            // Cycle agents through states
-            const agentIdx = BASE_AGENTS.findIndex((b) => b.name === a.name);
-            const activateAt = agentIdx; // stagger by index
-            const doneAt = activateAt + 3;
+          prev.map((a, i) => {
+            // Stagger activation: each agent activates in sequence
+            const activateAt = i * 2;
+            const doneAt = activateAt + 5;
             if (tick >= activateAt && tick < doneAt) {
               const tasks = TASKS[a.name] || ["Processing..."];
               return { ...a, status: "active", task: tasks[(tick - activateAt) % tasks.length] };
-            } else if (tick >= doneAt) {
+            } else if (tick >= doneAt && phaseIdx >= PHASES.length - 1) {
               return { ...a, status: "done", task: "Complete" };
+            } else if (tick >= doneAt) {
+              // Re-activate for next phase
+              const reactivateAt = doneAt + i * 2;
+              if (tick >= reactivateAt && tick < reactivateAt + 4) {
+                const tasks = TASKS[a.name] || ["Processing..."];
+                return { ...a, status: "active", task: tasks[(tick - reactivateAt) % tasks.length] };
+              }
+              return { ...a, status: "thinking", task: "Awaiting phase..." };
             }
             return a;
           })
         );
+
         setLogs((prev) => {
-          const agentName = BASE_AGENTS[tick % BASE_AGENTS.length]?.name;
-          const tasks = TASKS[agentName] || ["Processing"];
-          const newLog = `${agentName}: ${tasks[tick % tasks.length]}`;
-          return [...prev.slice(-8), newLog];
+          const agent = BASE_AGENTS[tick % BASE_AGENTS.length];
+          const tasks = TASKS[agent.name] || ["Processing"];
+          const newLog = `[${PHASES[phaseIdx]}] ${agent.name}: ${tasks[tick % tasks.length]}`;
+          return [...prev.slice(-10), newLog];
         });
-      }, 800);
+      }, 700);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      // Reset to idle after a delay
       const timeout = setTimeout(() => {
         setAgents(BASE_AGENTS.map((a) => ({ ...a, status: "idle" as const })));
-        setLogs((prev) => [...prev.slice(-8), "Task complete. Awaiting next assignment..."]);
+        setPhase("IDLE");
+        setLogs((prev) => [...prev.slice(-10), "Reasoning complete. Awaiting next query..."]);
       }, 500);
       return () => clearTimeout(timeout);
     }
@@ -101,13 +110,20 @@ export function AgentSwarm({ isProcessing = false }: AgentSwarmProps) {
 
   return (
     <div className="h-full flex flex-col bg-background p-4 overflow-auto">
-      <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+      <h3 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
         <Cpu className="h-4 w-4 text-primary" />
-        Agent Swarm
+        Cognitive Agents
         {isProcessing && (
-          <span className="text-[10px] font-mono text-accent ml-auto animate-pulse">● ACTIVE</span>
+          <span className="text-[10px] font-mono text-accent ml-auto animate-pulse">● REASONING</span>
         )}
       </h3>
+      {isProcessing && (
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+            PHASE: {phase}
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         {agents.map((agent, i) => (
@@ -119,7 +135,7 @@ export function AgentSwarm({ isProcessing = false }: AgentSwarmProps) {
             className="emma-surface-elevated emma-glow-border rounded-xl p-3 space-y-2"
           >
             <div className="flex items-center gap-2">
-              <agent.icon className="h-4 w-4 text-primary" />
+              <agent.icon className={`h-4 w-4 ${agentColors[agent.name] || "text-primary"}`} />
               <span className="text-xs font-medium text-foreground">{agent.name}</span>
               <div className={`ml-auto w-2 h-2 rounded-full ${statusColors[agent.status]}`} />
             </div>
@@ -131,8 +147,8 @@ export function AgentSwarm({ isProcessing = false }: AgentSwarmProps) {
         ))}
       </div>
 
-      <div className="mt-6 p-3 emma-surface-elevated rounded-xl border border-border flex-1 min-h-0">
-        <p className="text-xs text-muted-foreground mb-2 font-mono">SWARM LOG</p>
+      <div className="mt-4 p-3 emma-surface-elevated rounded-xl border border-border flex-1 min-h-0">
+        <p className="text-xs text-muted-foreground mb-2 font-mono">REASONING LOG</p>
         <div className="space-y-1 text-[11px] font-mono text-muted-foreground overflow-auto max-h-40">
           {logs.map((log, i) => (
             <p key={i}>

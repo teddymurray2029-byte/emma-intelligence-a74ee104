@@ -1,118 +1,67 @@
 
+Goal: fix the computer-use boot flow so the desktop actually starts, the UI stops looping on misleading “still booting” states, and the agent never begins reasoning until a real display is available.
 
-# Plan: Admin Unlimited Messages + Project Management IDE with Source Control
+1. Fix the actual backend boot bug
+- Update `supabase/functions/emma-computer-use/index.ts` so `kickstartDesktop()` uses a valid shell script instead of the current `... &; ...` sequence.
+- The logs already show the root cause: the bash command has a syntax error, so `Xvfb` never starts and every screenshot attempt fails with `Can't open X display [:0]`.
+- I’ll rewrite that startup script as a multiline `bash -lc` script with explicit steps:
+  - start `Xvfb` if missing
+  - wait for `/tmp/.X11-unix/X0`
+  - start XFCE only after X is ready
+  - return a clear nonzero error if the display socket never appears
 
-## Summary
+2. Make readiness detection backend-driven
+- Stop relying on the frontend’s raw screenshot loop as the source of truth.
+- Use the existing `wait_until_ready` action as the primary boot gate, since it already retries screenshot capture and can re-kickstart the desktop when display startup fails.
+- Keep screenshot capture as a separate action only after readiness succeeds.
 
-Three deliverables: (1) Admin bypasses message limits, (2) Full project management with filesystem/IDE/GitHub integration, (3) ZIP upload extraction and project export.
+3. Tighten API error semantics
+- Change the backend so failed screenshot/readiness states return explicit error statuses/messages instead of soft-success payloads like `{ screenshot: null, error: ... }`.
+- This lets the client distinguish:
+  - “still booting”
+  - “desktop startup failed”
+  - “screenshot capture failed”
+- Result: no more silent loops where the frontend keeps waiting without surfacing the real cause.
 
-## Part 1: Admin Unlimited Messages
+4. Correct the frontend boot flow
+- Update `src/components/ComputerUseAgent.tsx` to:
+  - call `start_session`
+  - then call `wait_until_ready`
+  - only enter `runAgentLoop()` after readiness returns a valid screenshot
+- If readiness fails, show the real backend message in the `wait_for_desktop` step and stop cleanly.
+- Remove duplicate/competing readiness logic so the UI has one clear boot state instead of “loaded but black / thinking but not ready”.
 
-**`src/pages/Index.tsx`** — Update `checkUsageAndSend`:
-- After getting user, check admin status via `dbProxy("check_admin")` (cache result in state)
-- If admin, skip all usage tracking and paywall — call `send()` directly
+5. Improve user-facing status handling
+- Make the right-panel log show more accurate messages, for example:
+  - “Starting virtual desktop”
+  - “Waiting for display server”
+  - “Window manager starting”
+  - “Desktop ready”
+  - “Desktop startup failed: X socket not ready”
+- Keep the latest failing reason visible in the error state instead of the generic timeout-only message.
 
-**`src/hooks/useAuth.tsx`** — Add `isAdmin` state:
-- On user load, call `dbProxy("check_admin")` and expose `isAdmin` boolean
-- Used by Index.tsx to bypass limits
+6. Prevent false reasoning on blank screens
+- Preserve the meaningful-screenshot check, but use it only as a final validation after backend readiness succeeds.
+- The agent should not enter `think` while the display is unavailable or black.
 
-## Part 2: Project Management System
+Technical details
+- Files to update:
+  - `supabase/functions/emma-computer-use/index.ts`
+  - `src/components/ComputerUseAgent.tsx`
+- Root cause from logs:
+  - `kickstartDesktop` bash script is malformed
+  - because desktop init never runs, `scrot` always fails on `DISPLAY=:0`
+  - frontend currently masks that by polling too optimistically
 
-### New database table: `projects`
-- `id` (uuid), `user_id` (text), `name` (text), `description` (text), `files` (jsonb — `{path: string, content: string}[]`), `github_repo` (text, nullable), `github_token` (text, nullable), `created_at`, `updated_at`
+Validation
+- Start a session and confirm the log progresses from start → ready before any `think` step appears.
+- Confirm the first successful ready state includes a visible screenshot, not a black frame.
+- Confirm failure mode now surfaces the exact backend reason instead of repeating “still booting”.
+- Confirm the agent no longer loops on `wait`/black-screen reasoning.
 
-### New db-proxy actions
-Add to `emma-db-proxy/index.ts`:
-- `create_project`, `list_projects`, `get_project`, `update_project`, `delete_project` — CRUD on projects table
-- `update_project_files` — update the `files` jsonb column
-
-### New edge function: `supabase/functions/emma-github/index.ts`
-- Actions: `push`, `pull`, `commit`, `list_repos`, `get_status`
-- Uses `GITHUB_TOKEN` secret (already configured)
-- Interacts with GitHub API to push/pull files, create commits
-- Clerk JWT verification for auth
-
-### New components
-
-**`src/components/ProjectManager.tsx`** — Project list/create UI:
-- Create new project (name, description)
-- List user's projects with select/delete
-- Current active project indicator
-
-**`src/components/FileExplorer.tsx`** — Filesystem tree:
-- Tree view of project files (from `files` jsonb)
-- Create/rename/delete files and folders
-- Click to open in CodeEditor
-- Context menu for file operations
-
-**`src/components/GitPanel.tsx`** — Source control panel:
-- Connect GitHub repo (repo URL input)
-- Push/Pull/Commit buttons with commit message input
-- Status display (modified files, ahead/behind)
-- Diff viewer for changed files
-
-### Updated components
-
-**`src/components/CodeEditor.tsx`** — Enhanced:
-- Accept `projectFiles` prop and `onFilesChange` callback
-- File tabs now driven by project filesystem
-- Save propagates back to project state
-
-**`src/components/RightPanel.tsx`** — Not currently used on Index but the IDE/project tabs will be integrated into the right panel via a new "Projects" mode
-
-**`src/components/ModeSwitcher.tsx`** — Add "Projects" mode:
-- New mode `"projects"` with `FolderKanban` icon
-
-**`src/lib/emma-stream.ts`** — Add `"projects"` to `EmmaMode` type
-
-**`src/pages/Index.tsx`** — Right panel for `"projects"` mode:
-- Renders a layout with FileExplorer (left), CodeEditor (center), GitPanel (bottom)
-- Project selector in header
-- Active project state management
-
-## Part 3: ZIP Handling
-
-### ZIP extraction on upload
-
-**`src/components/FileUpload.tsx`**:
-- Accept `.zip` files in the file input
-- Use `JSZip` library to extract zip contents client-side
-- When a zip is uploaded: extract all files, create a new project (or add to current), populate the filesystem
-- For non-zip files, keep existing upload behavior
-
-### ZIP export (download current project)
-
-**`src/components/ProjectManager.tsx`**:
-- "Export as ZIP" button on active project
-- Use `JSZip` to bundle all project files into a downloadable zip
-- Trigger browser download
-
-## Updated File Summary
-
-| File | Action |
-|------|--------|
-| `src/hooks/useAuth.tsx` | Add `isAdmin` state with cached check |
-| `src/pages/Index.tsx` | Admin bypass, projects mode, project state |
-| `src/lib/emma-stream.ts` | Add `"projects"` to EmmaMode |
-| `src/components/ModeSwitcher.tsx` | Add Projects mode tab |
-| `src/components/ProjectManager.tsx` | New — project CRUD + ZIP export |
-| `src/components/FileExplorer.tsx` | New — filesystem tree view |
-| `src/components/GitPanel.tsx` | New — GitHub push/pull/commit UI |
-| `src/components/ProjectIDE.tsx` | New — combined IDE layout (explorer + editor + git) |
-| `src/components/CodeEditor.tsx` | Accept project files prop |
-| `src/components/FileUpload.tsx` | ZIP extraction support |
-| `src/components/ChatInput.tsx` | Accept .zip in attachment |
-| `supabase/functions/emma-db-proxy/index.ts` | Project CRUD actions |
-| `supabase/functions/emma-github/index.ts` | New — GitHub API integration |
-| Database migration | Create `projects` table |
-
-## Dependencies
-- `jszip` — for ZIP creation and extraction (client-side)
-
-## Technical Details
-
-- Projects store files as JSONB to avoid needing a separate file storage system — suitable for code projects up to ~5MB
-- GitHub integration uses the REST API v3 with the existing `GITHUB_TOKEN` secret
-- Admin check is cached per session to avoid repeated API calls
-- ZIP extraction runs entirely client-side for speed
-
+<lov-actions>
+<lov-suggestion message="Test the computer-use agent end-to-end again and confirm the desktop reaches a visible ready state before any reasoning starts">Verify that it works</lov-suggestion>
+<lov-suggestion message="Implement the backend-driven wait_until_ready flow and remove the duplicate frontend screenshot polling loop">Use backend readiness flow</lov-suggestion>
+<lov-suggestion message="Add a retry button that restarts the desktop boot sequence without making the user retype the task">Add retry without retyping</lov-suggestion>
+<lov-suggestion message="Show a detailed boot status timeline in the agent panel so users can see exactly which startup stage is failing">Add boot status timeline</lov-suggestion>
+</lov-actions>

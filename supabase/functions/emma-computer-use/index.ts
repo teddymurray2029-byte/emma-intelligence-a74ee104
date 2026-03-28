@@ -8,8 +8,8 @@ const corsHeaders = {
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const DESKTOP_BOOT_TIMEOUT_MS = 45_000;
-const DESKTOP_BOOT_POLL_MS = 2_000;
+const DESKTOP_BOOT_TIMEOUT_MS = 90_000;
+const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";
 const ENVD_PORT = 49983;
 const CONNECT_PROTOCOL_VERSION = "1";
@@ -34,7 +34,6 @@ function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// Store sandbox session tokens keyed by sandbox ID
 const sandboxCache = new Map<string, SandboxSession>();
 
 function getEnvdBaseUrl(sandboxId: string) {
@@ -152,36 +151,56 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
   return session;
 }
 
-// Start Xvfb + WM, wait for X socket to appear (typically 2-3s), then return
+// Launch Xvfb + WM in fully detached mode. Each command is short and non-blocking.
 async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized) return;
 
-  // Start Xvfb in background, wait for X socket, then start WM
-  // Use newline-joined script to avoid &; syntax errors
-  const script = `
-pgrep -x Xvfb >/dev/null || Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log &
-for i in $(seq 1 20); do
-  test -S /tmp/.X11-unix/X0 && break
-  sleep 0.5
-done
-if ! test -S /tmp/.X11-unix/X0; then
-  echo 'X socket not ready'
-  exit 1
-fi
-if command -v startxfce4 >/dev/null 2>&1; then
-  pgrep -f xfce4-session >/dev/null || DISPLAY=:0 startxfce4 &>/tmp/xfce.log &
-fi
-echo 'desktop-ready'
-`.trim();
-
-  const result = await runCommand(sandbox, "bash", ["-lc", script], 15, {});
-
-  console.log(`[kickstart] exit=${result.exitCode} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`);
-
-  if (result.exitCode === 0) {
-    sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
+  // Step 1: Start Xvfb if not running (nohup, fully detached)
+  console.log(`[kickstart] step1: start Xvfb for ${sandbox.sandboxId}`);
+  try {
+    const xvfbResult = await runCommand(
+      sandbox, "bash",
+      ["-c", "pgrep -x Xvfb >/dev/null && echo 'already-running' || (nohup Xvfb :0 -screen 0 1024x768x24 -ac </dev/null >/tmp/xvfb.log 2>&1 & disown; echo 'started')"],
+      10, {},
+    );
+    console.log(`[kickstart] xvfb: exit=${xvfbResult.exitCode} out=${xvfbResult.stdout.trim()}`);
+  } catch (e) {
+    console.error(`[kickstart] xvfb launch error: ${e}`);
   }
+
+  // Step 2: Brief poll for X socket (up to 5s)
+  console.log(`[kickstart] step2: poll for X socket`);
+  try {
+    const pollResult = await runCommand(
+      sandbox, "bash",
+      ["-c", "for i in 1 2 3 4 5 6 7 8 9 10; do test -S /tmp/.X11-unix/X0 && echo 'socket-ready' && exit 0; sleep 0.5; done; echo 'socket-timeout'; exit 1"],
+      8, {},
+    );
+    console.log(`[kickstart] socket poll: exit=${pollResult.exitCode} out=${pollResult.stdout.trim()}`);
+    if (pollResult.exitCode !== 0) {
+      console.warn(`[kickstart] X socket not ready after 5s`);
+      return; // Don't mark as initialized
+    }
+  } catch (e) {
+    console.error(`[kickstart] socket poll error: ${e}`);
+    return;
+  }
+
+  // Step 3: Start window manager if not running (fully detached)
+  console.log(`[kickstart] step3: start WM`);
+  try {
+    const wmResult = await runCommand(
+      sandbox, "bash",
+      ["-c", "pgrep -f xfce4-session >/dev/null && echo 'wm-already-running' || (nohup bash -c 'DISPLAY=:0 startxfce4' </dev/null >/tmp/xfce.log 2>&1 & disown; echo 'wm-started')"],
+      10, {},
+    );
+    console.log(`[kickstart] wm: exit=${wmResult.exitCode} out=${wmResult.stdout.trim()}`);
+  } catch (e) {
+    console.error(`[kickstart] wm launch error: ${e}`);
+  }
+
+  sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: true });
 }
 
 function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
@@ -215,8 +234,8 @@ function collectProcessOutput(value: unknown, state: { stdout: string; stderr: s
 function buildConnectEnvelope(message: Record<string, unknown>): Uint8Array {
   const payload = new TextEncoder().encode(JSON.stringify(message));
   const envelope = new Uint8Array(5 + payload.length);
-  envelope[0] = 0; // flags: no compression
-  new DataView(envelope.buffer).setUint32(1, payload.length, false); // big-endian length
+  envelope[0] = 0;
+  new DataView(envelope.buffer).setUint32(1, payload.length, false);
   envelope.set(payload, 5);
   return envelope;
 }
@@ -233,9 +252,7 @@ function parseConnectStream(raw: Uint8Array): Array<Record<string, unknown>> {
     offset += length;
     try {
       results.push(JSON.parse(chunk));
-    } catch {
-      // skip unparseable chunks
-    }
+    } catch {}
   }
   return results;
 }
@@ -247,67 +264,60 @@ async function runCommand(
   timeout = 15,
   envs: Record<string, string> = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/process.Process/Start`, {
-    method: "POST",
-    headers: {
-      "X-Access-Token": sandbox.envdAccessToken,
-      "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
-      "Content-Type": "application/connect+json",
-    },
-    body: buildConnectEnvelope({
-      process: {
-        cmd,
-        args,
-        envs,
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), (timeout + 5) * 1000);
+
+  try {
+    const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/process.Process/Start`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "X-Access-Token": sandbox.envdAccessToken,
+        "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
+        "Content-Type": "application/connect+json",
       },
-      stdin: false,
-      timeout,
-    }),
-  });
+      body: buildConnectEnvelope({
+        process: { cmd, args, envs },
+        stdin: false,
+        timeout,
+      }),
+    });
 
-  if (!response.ok) {
-    throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
-  }
-
-  const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
-
-  const rawBytes = new Uint8Array(await response.arrayBuffer());
-  const messages = parseConnectStream(rawBytes);
-  messages.forEach((msg) => collectProcessOutput(msg, state));
-
-  // Parse exit status from "end" event
-  for (const msg of messages) {
-    const event = (msg as any)?.event;
-    if (event?.end) {
-      const statusStr: string = event.end.status || "";
-      const match = statusStr.match(/exit status (\d+)/);
-      if (match) state.exitCode = parseInt(match[1], 10);
-      else if (event.end.exited) state.exitCode = 0;
+    if (!response.ok) {
+      throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
     }
-  }
 
-  return {
-    stdout: state.stdout,
-    stderr: state.stderr,
-    exitCode: state.exitCode ?? 0,
-  };
+    const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
+    const rawBytes = new Uint8Array(await response.arrayBuffer());
+    const messages = parseConnectStream(rawBytes);
+    messages.forEach((msg) => collectProcessOutput(msg, state));
+
+    for (const msg of messages) {
+      const event = (msg as any)?.event;
+      if (event?.end) {
+        const statusStr: string = event.end.status || "";
+        const match = statusStr.match(/exit status (\d+)/);
+        if (match) state.exitCode = parseInt(match[1], 10);
+        else if (event.end.exited) state.exitCode = 0;
+      }
+    }
+
+    return { stdout: state.stdout, stderr: state.stderr, exitCode: state.exitCode ?? 0 };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<Uint8Array> {
   const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`, {
-    headers: {
-      "X-Access-Token": sandbox.envdAccessToken,
-    },
+    headers: { "X-Access-Token": sandbox.envdAccessToken },
   });
-
   if (!response.ok) {
     throw new Error(`E2B file download failed [${response.status}]: ${await response.text()}`);
   }
-
   return new Uint8Array(await response.arrayBuffer());
 }
 
-// Helper to get or reconnect to a sandbox
 async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {
   if (envdAccessToken) {
     const cached = sandboxCache.get(sandboxId);
@@ -323,33 +333,39 @@ async function getSandbox(sandboxId: string, envdAccessToken?: string | null): P
   return await connectSandbox(sandboxId);
 }
 
-// Take a screenshot using the sandbox's command execution
 async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
-  // Try multiple screenshot methods — scrot first (known installed), then pyautogui
-  // Note: `import` (ImageMagick) is NOT installed in the desktop template
   const methods: Array<{ label: string; cmd: string; args: string[]; envs?: Record<string, string> }> = [
     { label: "scrot", cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
-    { label: "scrot-bash", cmd: "bash", args: ["-lc", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"], envs: {} },
-    { label: "xdpyinfo+scrot", cmd: "bash", args: ["-lc", "export DISPLAY=:0; xdpyinfo >/dev/null 2>&1 && scrot /tmp/screenshot.png --overwrite"], envs: {} },
+    { label: "scrot-bash", cmd: "bash", args: ["-c", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"], envs: {} },
   ];
 
   let lastError = "";
   for (const method of methods) {
     try {
-      console.log(`[screenshot] trying ${method.label}...`);
-      const result = await runCommand(sandbox, method.cmd, method.args, 15, method.envs ?? {});
-      console.log(`[screenshot] ${method.label}: exit=${result.exitCode} stdout=${result.stdout.slice(0,100)} stderr=${result.stderr.slice(0,200)}`);
+      const result = await runCommand(sandbox, method.cmd, method.args, 10, method.envs ?? {});
       if (result.exitCode === 0) {
         return toBase64(await readSandboxFile(sandbox, "/tmp/screenshot.png"));
       }
       lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
     } catch (e) {
       lastError = e instanceof Error ? e.message : "Unknown error";
-      console.log(`[screenshot] ${method.label} threw: ${lastError}`);
     }
   }
 
-  throw new Error(`All screenshot methods failed. Last: ${lastError}`);
+  throw new Error(`Screenshot failed: ${lastError}`);
+}
+
+async function getDesktopStage(sandbox: SandboxSession): Promise<string> {
+  try {
+    const r = await runCommand(sandbox, "bash", ["-c",
+      "echo -n 'xvfb='; pgrep -x Xvfb >/dev/null && echo yes || echo no; " +
+      "echo -n 'socket='; test -S /tmp/.X11-unix/X0 && echo yes || echo no; " +
+      "echo -n 'wm='; pgrep -f xfce4-session >/dev/null && echo yes || echo no"
+    ], 5, {});
+    return r.stdout.trim();
+  } catch {
+    return "unknown";
+  }
 }
 
 async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
@@ -357,45 +373,58 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   screenshot?: string;
   waitedMs: number;
   message: string;
+  stage?: string;
   error?: string;
 }> {
   const startedAt = Date.now();
   let lastError = "Desktop is still starting";
+  let lastStage = "";
 
   while (Date.now() - startedAt < DESKTOP_BOOT_TIMEOUT_MS) {
+    // Check current boot stage
+    lastStage = await getDesktopStage(sandbox);
+    console.log(`[wait_ready] stage: ${lastStage} elapsed=${Date.now() - startedAt}ms`);
+
+    // Re-kickstart if display not up
+    if (lastStage.includes("xvfb=no") || lastStage.includes("socket=no")) {
+      console.log(`[wait_ready] display not ready, re-kickstarting...`);
+      sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
+      try {
+        await kickstartDesktop({ ...sandbox, desktopInitialized: false });
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : "Kickstart failed";
+      }
+      await new Promise((r) => setTimeout(r, DESKTOP_BOOT_POLL_MS));
+      continue;
+    }
+
+    // Display is up — try screenshot
     try {
       const screenshot = await captureScreenshot(sandbox);
       return {
         ready: true,
         screenshot,
         waitedMs: Date.now() - startedAt,
-        message: "Desktop initialized and screenshot capture is available",
+        message: "Desktop ready",
+        stage: lastStage,
       };
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Desktop is still starting";
-
-      if (lastError.includes("Can't connect to display") || lastError.includes("/tmp/.X11-unix/X0")) {
-        sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
-        try {
-          await kickstartDesktop({ ...sandbox, desktopInitialized: false });
-        } catch (reinitError) {
-          lastError = reinitError instanceof Error ? reinitError.message : lastError;
-        }
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, DESKTOP_BOOT_POLL_MS));
+      lastError = error instanceof Error ? error.message : "Screenshot capture failed";
+      console.log(`[wait_ready] screenshot failed: ${lastError}`);
     }
+
+    await new Promise((r) => setTimeout(r, DESKTOP_BOOT_POLL_MS));
   }
 
   return {
     ready: false,
     waitedMs: Date.now() - startedAt,
-    message: "Desktop did not finish initializing before timeout",
+    message: "Desktop boot timed out",
+    stage: lastStage,
     error: lastError,
   };
 }
 
-// Call AI vision model to reason about screenshot and decide next action
 async function aiReason(
   screenshotBase64: string,
   task: string,
@@ -473,7 +502,6 @@ Rules:
   const data = await resp.json();
   const content = data.choices?.[0]?.message?.content || "";
 
-  // Parse JSON from response (handle potential markdown wrapping)
   let jsonStr = content.trim();
   if (jsonStr.startsWith("```")) {
     jsonStr = jsonStr.replace(/^```json?\n?/, "").replace(/\n?```$/, "");
@@ -497,94 +525,40 @@ serve(async (req) => {
     const { action } = body;
     console.log(`[emma-cu] action=${action}`);
 
-    // Temporary debug action — no auth required
-    if (action === "debug_sandbox") {
-      const sandbox = await createSandbox("debug-user", "diagnostics");
-      const results: Record<string, any> = { sandboxId: sandbox.sandboxId };
-
-      // Check what's installed
-      const which = await runCommand(sandbox, "bash", ["-lc", "which Xvfb xdpyinfo scrot import python3 2>&1; echo '---'; dpkg -l | grep -iE 'xvfb|xfce|scrot|imagemagick' 2>&1 | head -20; echo '---'; ls -la /tmp/.X11-unix/ 2>&1; echo '---'; ps aux 2>&1 | head -30"], 15, {});
-      results.installed = { stdout: which.stdout, stderr: which.stderr, exitCode: which.exitCode };
-
-      // Check DISPLAY env
-      const displayCheck = await runCommand(sandbox, "bash", ["-lc", "echo DISPLAY=$DISPLAY; env | sort | head -30"], 5, {});
-      results.env = { stdout: displayCheck.stdout, stderr: displayCheck.stderr };
-
-      // Try starting Xvfb
-      const xvfb = await runCommand(sandbox, "bash", ["-lc", "Xvfb :0 -screen 0 1024x768x24 -ac &>/tmp/xvfb.log & sleep 3; cat /tmp/xvfb.log 2>&1; echo '---'; ls -la /tmp/.X11-unix/ 2>&1; echo '---'; ps aux | grep -i '[Xx]vfb'"], 10, {});
-      results.xvfb = { stdout: xvfb.stdout, stderr: xvfb.stderr, exitCode: xvfb.exitCode };
-
-      // Try scrot screenshot (after Xvfb is running)
-      const shot = await runCommand(sandbox, "bash", ["-lc", "DISPLAY=:0 scrot /tmp/test.png --overwrite 2>&1 && echo 'screenshot-ok' && ls -la /tmp/test.png || echo 'screenshot-failed'"], 10, {});
-      results.screenshot_scrot = { stdout: shot.stdout, stderr: shot.stderr, exitCode: shot.exitCode };
-
-      // Try scrot via envs parameter
-      const shot2 = await runCommand(sandbox, "scrot", ["/tmp/test2.png", "--overwrite"], 10, { DISPLAY: ":0" });
-      results.screenshot_scrot_envs = { stdout: shot2.stdout, stderr: shot2.stderr, exitCode: shot2.exitCode };
-
-      // Check if file was created
-      const fileCheck = await runCommand(sandbox, "bash", ["-lc", "ls -la /tmp/test*.png 2>&1"], 5, {});
-      results.files = { stdout: fileCheck.stdout };
-
-      // Cleanup
-      try {
-        await fetch(`${E2B_API_BASE}/sandboxes/${sandbox.sandboxId}`, {
-          method: "DELETE",
-          headers: { "X-API-Key": apiKey },
-        });
-      } catch {}
-
-      return json(results);
-    }
-
     const userId = await getClerkUserId(req);
     if (!userId) return json({ error: "Unauthorized — sign in required" }, 401);
 
     switch (action) {
-      // Create a new desktop sandbox
       case "start_session": {
         console.log("[emma-cu] Creating sandbox...");
         const sandbox = await createSandbox(userId, body.task);
         console.log(`[emma-cu] Sandbox created: ${sandbox.sandboxId}`);
 
-        // Fire-and-forget desktop kickstart (returns in <1s)
-        await kickstartDesktop(sandbox);
-        console.log(`[emma-cu] Desktop kickstarted for ${sandbox.sandboxId}`);
+        // Fire-and-forget: start desktop in background, don't await
+        kickstartDesktop(sandbox).catch((e) =>
+          console.error(`[emma-cu] Background kickstart failed: ${e}`)
+        );
 
         return json({
           sessionId: sandbox.sandboxId,
           streamUrl: null,
           envdAccessToken: sandbox.envdAccessToken,
-          status: "running",
+          status: "created",
         });
       }
 
-      // Take a screenshot of the sandbox
       case "screenshot": {
         const { sessionId, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
           const sandbox = await getSandbox(sessionId, envdAccessToken);
-          await kickstartDesktop(sandbox);
           const screenshot = await captureScreenshot(sandbox);
           return json({ screenshot });
         } catch (error) {
           const msg = error instanceof Error ? error.message : "Screenshot unavailable";
-          return json({ screenshot: null, error: msg, status: "screenshot_failed" }, 503);
+          return json({ error: msg, status: "screenshot_failed" }, 503);
         }
-      }
-
-      // Initialize desktop services (Xvfb, window manager) — fast, no polling
-      case "init_desktop": {
-        const { sessionId, envdAccessToken } = body;
-        if (!sessionId) return json({ error: "Missing sessionId" }, 400);
-
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
-        console.log(`[emma-cu] init_desktop for ${sessionId}`);
-        await kickstartDesktop(sandbox);
-        console.log(`[emma-cu] init_desktop done for ${sessionId}`);
-        return json({ success: true, message: "Desktop services started" });
       }
 
       case "wait_until_ready": {
@@ -592,13 +566,15 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
+        console.log(`[emma-cu] wait_until_ready for ${sessionId}`);
         const readiness = await waitForDesktopReady(sandbox);
+        console.log(`[emma-cu] readiness: ready=${readiness.ready} stage=${readiness.stage} waited=${readiness.waitedMs}ms`);
+
         return readiness.ready
           ? json({ ...readiness, status: "ready" })
           : json({ ...readiness, status: "boot_failed" }, 408);
       }
 
-      // Execute an action on the sandbox (mouse/keyboard)
       case "execute": {
         const { sessionId, actionType, params, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
@@ -643,9 +619,8 @@ serve(async (req) => {
           }
           case "open_url": {
             await runCommand(
-              sandbox,
-              "bash",
-              ["-lc", `DISPLAY=:0 xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
+              sandbox, "bash",
+              ["-c", `DISPLAY=:0 xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
               10,
             );
             break;
@@ -662,13 +637,7 @@ serve(async (req) => {
 
         if (pyCode) {
           try {
-            const cmdResult = await runCommand(
-              sandbox,
-              "python3",
-              ["-c", pyCode],
-              15,
-              { DISPLAY: ":0" },
-            );
+            const cmdResult = await runCommand(sandbox, "python3", ["-c", pyCode], 15, { DISPLAY: ":0" });
             if (cmdResult.exitCode !== 0) {
               result = { success: false, error: cmdResult.stderr || "Command failed" };
             }
@@ -680,7 +649,6 @@ serve(async (req) => {
         return json(result);
       }
 
-      // AI reasoning step: take screenshot, send to AI, get next action
       case "think": {
         const { sessionId, task, actionHistory, userMessage, envdAccessToken } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
@@ -690,9 +658,7 @@ serve(async (req) => {
 
         try {
           screenshotBase64 = await captureScreenshot(sandbox);
-        } catch {
-          // If screenshot fails, use a blank description
-        }
+        } catch {}
 
         if (!screenshotBase64) {
           return json({
@@ -707,7 +673,6 @@ serve(async (req) => {
         return json({ ...decision, screenshot: screenshotBase64 });
       }
 
-      // Destroy the sandbox
       case "stop_session": {
         const { sessionId } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
@@ -717,13 +682,9 @@ serve(async (req) => {
           try {
             await fetch(`${E2B_API_BASE}/sandboxes/${sessionId}`, {
               method: "DELETE",
-              headers: {
-                "X-API-Key": apiKey,
-              },
+              headers: { "X-API-Key": apiKey },
             });
-          } catch {
-            // Sandbox may already be destroyed
-          } finally {
+          } catch {} finally {
             sandboxCache.delete(sessionId);
           }
         }

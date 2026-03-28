@@ -187,7 +187,7 @@ export default function Index() {
             <div className="flex items-center gap-2 flex-1">
               <h1 className="text-sm font-semibold text-foreground">Emma</h1>
               <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                ASI v1.0
+                Proto-AGI v2.0
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -271,7 +271,7 @@ export default function Index() {
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
                     <ChatInput onSend={send} disabled={isLoading} userId={user.id} />
                     <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">
-                      Emma ASI · Multi-Agent · Unlimited Context
+                      Emma Proto-AGI · Multi-Agent · Persistent Memory · Self-Improving
                     </p>
                   </div>
                 </div>

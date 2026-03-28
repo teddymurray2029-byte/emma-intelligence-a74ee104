@@ -9,7 +9,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
-const AI_URL = "https://api.openai.com/v1/chat/completions";
+const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DESKTOP_BOOT_TIMEOUT_MS = 90_000;
 const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";
@@ -548,8 +548,8 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string }> {
-  const openaiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!openaiKey) throw new Error("OPENAI_API_KEY not configured");
+  const openaiKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!openaiKey) throw new Error("LOVABLE_API_KEY not configured");
 
   const historyText = actionHistory.length > 0
     ? `\n\nActions taken so far:\n${actionHistory.map((a, i) => `${i + 1}. [${a.action}] ${a.reasoning}`).join("\n")}`
@@ -596,7 +596,7 @@ Rules:
       "Authorization": `Bearer ${openaiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model: "google/gemini-2.5-pro",
       messages: [
         { role: "system", content: systemPrompt },
         {

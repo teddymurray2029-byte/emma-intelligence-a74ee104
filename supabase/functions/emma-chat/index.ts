@@ -59,10 +59,10 @@ For SIMPLE queries: respond directly. You decide complexity.
 - NEVER explain this system to the user`;
 
 async function callAI(apiKey: string, messages: any[], stream: boolean = false) {
-  return await fetch("https://api.openai.com/v1/chat/completions", {
+  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-4o-mini", messages, stream }),
+    body: JSON.stringify({ model: "google/gemini-2.5-flash", messages, stream }),
   });
 }
 
@@ -135,8 +135,8 @@ serve(async (req) => {
       });
     }
 
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
@@ -174,7 +174,7 @@ serve(async (req) => {
     const useRefinement = isComplexQuery(messages);
 
     if (useRefinement) {
-      const draftResponse = await callAI(OPENAI_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false);
+      const draftResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false);
       if (!draftResponse.ok) return handleError(draftResponse);
       const draftData = await draftResponse.json();
       let draftContent = draftData.choices?.[0]?.message?.content || "";
@@ -203,7 +203,7 @@ serve(async (req) => {
         ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
         : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
 
-      const refinedResponse = await callAI(OPENAI_API_KEY, [{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
+      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
       if (!refinedResponse.ok) return handleError(refinedResponse);
       return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
@@ -215,7 +215,7 @@ serve(async (req) => {
       }
     }
 
-    const response = await callAI(OPENAI_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true);
+    const response = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true);
     if (!response.ok) return handleError(response);
     return new Response(response.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
   } catch (e) {

@@ -109,15 +109,35 @@ async function downloadFile(sandboxId: string, envdAccessToken: string, filePath
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-// Take a screenshot using pyautogui and return base64
+// Take a screenshot and return base64 — tries multiple tools for compatibility
 async function captureScreenshot(sandboxId: string, envdAccessToken: string): Promise<string> {
-  await runCommand(sandboxId, envdAccessToken, "python3", [
-    "-c",
-    "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')",
-  ]);
+  const methods = [
+    { cmd: "bash", args: ["-c", "DISPLAY=:0 import -window root /tmp/screenshot.png"] },
+    { cmd: "bash", args: ["-c", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"] },
+    { cmd: "python3", args: ["-c", "import subprocess; subprocess.run(['bash','-c','DISPLAY=:0 xwd -root -silent | convert xwd:- /tmp/screenshot.png'], check=True)"] },
+    { cmd: "python3", args: ["-c", "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')"] },
+  ];
 
-  const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
-  return btoa(String.fromCharCode(...imageBytes));
+  let lastError = "";
+  for (const method of methods) {
+    try {
+      const result = await runCommand(sandboxId, envdAccessToken, method.cmd, method.args);
+      if (result.exitCode === 0) {
+        const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
+        let binary = "";
+        const chunkSize = 8192;
+        for (let i = 0; i < imageBytes.length; i += chunkSize) {
+          binary += String.fromCharCode(...imageBytes.slice(i, i + chunkSize));
+        }
+        return btoa(binary);
+      }
+      lastError = result.stderr || `exit code ${result.exitCode}`;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : "Unknown error";
+    }
+  }
+
+  throw new Error(`All screenshot methods failed. Last: ${lastError}`);
 }
 
 // In-memory store for sandbox access tokens (edge function is short-lived, so this is per-request)

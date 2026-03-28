@@ -177,6 +177,62 @@ serve(async (req) => {
         }
       }
 
+      case "list_projects": {
+        const { data } = await supabase
+          .from("projects")
+          .select("id, name, description, files, github_repo, created_at, updated_at")
+          .eq("user_id", userId)
+          .order("updated_at", { ascending: false });
+        return json({ data: data || [] });
+      }
+
+      case "create_project": {
+        const { name, description } = body;
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({ user_id: userId, name: name || "Untitled Project", description: description || "" })
+          .select("id, name, description, files, github_repo, created_at, updated_at")
+          .single();
+        if (error) return json({ error: error.message }, 400);
+        return json({ data });
+      }
+
+      case "get_project": {
+        const { id } = body;
+        const { data } = await supabase.from("projects").select("*").eq("id", id).eq("user_id", userId).single();
+        if (!data) return json({ error: "Not found" }, 404);
+        return json({ data });
+      }
+
+      case "update_project": {
+        const { id, updates } = body;
+        const { data: proj } = await supabase.from("projects").select("user_id").eq("id", id).single();
+        if (!proj || proj.user_id !== userId) return json({ error: "Not found" }, 404);
+        const allowed: Record<string, any> = {};
+        if (updates.name) allowed.name = updates.name;
+        if (updates.description !== undefined) allowed.description = updates.description;
+        if (updates.github_repo !== undefined) allowed.github_repo = updates.github_repo;
+        allowed.updated_at = new Date().toISOString();
+        await supabase.from("projects").update(allowed).eq("id", id);
+        return json({ success: true });
+      }
+
+      case "update_project_files": {
+        const { id, files } = body;
+        const { data: proj } = await supabase.from("projects").select("user_id").eq("id", id).single();
+        if (!proj || proj.user_id !== userId) return json({ error: "Not found" }, 404);
+        await supabase.from("projects").update({ files, updated_at: new Date().toISOString() }).eq("id", id);
+        return json({ success: true });
+      }
+
+      case "delete_project": {
+        const { id } = body;
+        const { data: proj } = await supabase.from("projects").select("user_id").eq("id", id).single();
+        if (!proj || proj.user_id !== userId) return json({ error: "Not found" }, 404);
+        await supabase.from("projects").delete().eq("id", id);
+        return json({ success: true });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

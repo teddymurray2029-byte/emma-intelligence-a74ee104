@@ -15,6 +15,7 @@ import { DataAnalysisPanel } from "@/components/DataAnalysisPanel";
 import { MemoryControlPanel } from "@/components/MemoryControlPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { PaywallModal } from "@/components/PaywallModal";
+import { ProjectIDE } from "@/components/ProjectIDE";
 import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,7 +38,7 @@ const WELCOME_SUGGESTIONS = [
 ];
 
 export default function Index() {
-  const { user, loading: authLoading, signOut, getToken } = useAuth();
+  const { user, loading: authLoading, signOut, getToken, isAdmin } = useAuth();
   const navigate = useNavigate();
   const userId = user?.id;
   const { conversations, create, remove, rename, update } = useConversations(userId, getToken);
@@ -115,6 +116,12 @@ export default function Index() {
   const handleDeleteArtifact = useCallback((id: string) => { setArtifacts(prev => prev.filter(a => a.id !== id)); }, []);
 
   const checkUsageAndSend = async (input: string) => {
+    // Admin bypass — unlimited messages
+    if (isAdmin) {
+      await send(input);
+      return;
+    }
+
     // Check if user needs to pay
     const usage = getLocalUsage();
     if (!usage.isPaid && isOverLimit()) {
@@ -204,6 +211,7 @@ export default function Index() {
 
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";
+  const isProjectsMode = mode === "projects";
 
   const renderRightPanel = () => {
     switch (mode) {
@@ -229,6 +237,7 @@ export default function Index() {
               <div className="flex items-center gap-2 flex-1">
                 <h1 className="text-sm font-semibold text-foreground">Emma</h1>
                 <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">AI Workspace</span>
+                {isAdmin && <span className="text-[10px] font-mono text-accent bg-accent/10 px-2 py-0.5 rounded-full">ADMIN</span>}
               </div>
               {isChatMode && (
                 <div className="flex items-center gap-0.5 mr-2">
@@ -240,63 +249,71 @@ export default function Index() {
                 </div>
               )}
               <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-primary emma-pulse" /><span className="text-xs font-mono text-primary">ONLINE</span></div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
-                {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-              </Button>
+              {!isProjectsMode && (
+                <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
+                  {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+                </Button>
+              )}
             </div>
             <div className="px-3 pb-2 overflow-x-auto"><ModeSwitcher mode={mode} onChange={setMode} compact /></div>
           </header>
 
           <div className="flex-1 overflow-hidden">
-            <ResizablePanelGroup direction="horizontal">
-              <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>
-                <div className="flex flex-col h-full">
-                  <div ref={scrollRef} className="flex-1 overflow-y-auto">
-                    <AnimatePresence mode="wait">
-                      {showWelcome ? (
-                        <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8">
-                          <EmmaAvatar size="lg" />
-                          <div className="text-center space-y-3 max-w-lg">
-                            <h2 className="text-2xl font-bold emma-glow-text">Hello, I'm Emma</h2>
-                            <p className="text-sm text-muted-foreground leading-relaxed">Your AI operating system — research, create, analyze, and build with autonomous agents, persistent memory, and source-grounded answers.</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 max-w-md w-full">
-                            {WELCOME_SUGGESTIONS.map((s) => (
-                              <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
-                                <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
-                                <p>{s.text}</p>
-                              </button>
+            {isProjectsMode ? (
+              <ProjectIDE getToken={getToken} />
+            ) : (
+              <ResizablePanelGroup direction="horizontal">
+                <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>
+                  <div className="flex flex-col h-full">
+                    <div ref={scrollRef} className="flex-1 overflow-y-auto">
+                      <AnimatePresence mode="wait">
+                        {showWelcome ? (
+                          <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8">
+                            <EmmaAvatar size="lg" />
+                            <div className="text-center space-y-3 max-w-lg">
+                              <h2 className="text-2xl font-bold emma-glow-text">Hello, I'm Emma</h2>
+                              <p className="text-sm text-muted-foreground leading-relaxed">Your AI operating system — research, create, analyze, and build with autonomous agents, persistent memory, and source-grounded answers.</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 max-w-md w-full">
+                              {WELCOME_SUGGESTIONS.map((s) => (
+                                <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
+                                  <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
+                                  <p>{s.text}</p>
+                                </button>
+                              ))}
+                            </div>
+                          </motion.div>
+                        ) : (
+                          <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+                            {messages.map((m, i) => (
+                              <ChatMessage key={i} message={m} index={i} conversationId={activeConvId} onBranch={handleBranch} onOpenInEditor={(code, lang) => handleCreateArtifact(`Code Snippet (${lang})`, code, "code")} />
                             ))}
-                          </div>
-                        </motion.div>
-                      ) : (
-                        <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-                          {messages.map((m, i) => (
-                            <ChatMessage key={i} message={m} index={i} conversationId={activeConvId} onBranch={handleBranch} onOpenInEditor={(code, lang) => handleCreateArtifact(`Code Snippet (${lang})`, code, "code")} />
-                          ))}
-                          {isLoading && messages[messages.length - 1]?.role === "user" && (
-                            <div className="flex gap-3"><EmmaAvatar size="sm" /><TypingIndicator /></div>
-                          )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <div className="max-w-3xl mx-auto w-full px-4 py-3">
-                    <ChatInput onSend={checkUsageAndSend} disabled={isLoading} userId={user?.id || "anonymous"} />
-                    <div className="flex items-center justify-center gap-2 mt-2">
-                      <p className="text-[10px] text-muted-foreground font-mono">Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle}</p>
-                      {!getLocalUsage().isPaid && (
-                        <span className="text-[10px] font-mono text-primary">{remainingFreeMessages()} free messages left</span>
-                      )}
-                      {!user && (
-                        <button onClick={() => navigate("/sign-in")} className="text-[10px] font-mono text-primary hover:underline">Sign in</button>
-                      )}
+                            {isLoading && messages[messages.length - 1]?.role === "user" && (
+                              <div className="flex gap-3"><EmmaAvatar size="sm" /><TypingIndicator /></div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <div className="max-w-3xl mx-auto w-full px-4 py-3">
+                      <ChatInput onSend={checkUsageAndSend} disabled={isLoading} userId={user?.id || "anonymous"} />
+                      <div className="flex items-center justify-center gap-2 mt-2">
+                        <p className="text-[10px] text-muted-foreground font-mono">Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle}</p>
+                        {isAdmin ? (
+                          <span className="text-[10px] font-mono text-accent">∞ Unlimited</span>
+                        ) : !getLocalUsage().isPaid ? (
+                          <span className="text-[10px] font-mono text-primary">{remainingFreeMessages()} free messages left</span>
+                        ) : null}
+                        {!user && (
+                          <button onClick={() => navigate("/sign-in")} className="text-[10px] font-mono text-primary hover:underline">Sign in</button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </ResizablePanel>
-              {showRight && (<><ResizableHandle withHandle /><ResizablePanel defaultSize={45} minSize={25}>{renderRightPanel()}</ResizablePanel></>)}
-            </ResizablePanelGroup>
+                </ResizablePanel>
+                {showRight && (<><ResizableHandle withHandle /><ResizablePanel defaultSize={45} minSize={25}>{renderRightPanel()}</ResizablePanel></>)}
+              </ResizablePanelGroup>
+            )}
           </div>
         </div>
         <PaywallModal

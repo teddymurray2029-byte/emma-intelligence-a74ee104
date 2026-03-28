@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
-import { Sandbox } from "npm:e2b@2.4.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +10,15 @@ const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.d
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DESKTOP_BOOT_TIMEOUT_MS = 45_000;
 const DESKTOP_BOOT_POLL_MS = 2_000;
+const E2B_API_BASE = "https://api.e2b.app";
+const ENVD_PORT = 49983;
+const CONNECT_PROTOCOL_VERSION = "1";
+
+type SandboxSession = {
+  sandboxId: string;
+  envdAccessToken: string;
+  domain?: string;
+};
 
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -25,52 +33,219 @@ function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// Store sandbox references keyed by sandbox ID
-const sandboxCache = new Map<string, Sandbox>();
+// Store sandbox session tokens keyed by sandbox ID
+const sandboxCache = new Map<string, SandboxSession>();
 
-// Helper to get or reconnect to a sandbox
-async function getSandbox(sandboxId: string): Promise<Sandbox> {
-  const cached = sandboxCache.get(sandboxId);
-  if (cached) return cached;
+function getEnvdBaseUrl(sandboxId: string) {
+  return `https://${ENVD_PORT}-${sandboxId}.e2b.app`;
+}
 
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function decodeMaybeBase64(value: string): string {
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+  } catch {
+    return value;
+  }
+}
+
+async function e2bApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) throw new Error("E2B_API_KEY not configured");
 
-  const sandbox = await Sandbox.connect(sandboxId, { apiKey });
-  sandboxCache.set(sandboxId, sandbox);
-  return sandbox;
+  const response = await fetch(`${E2B_API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "X-API-Key": apiKey,
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`E2B API ${path} failed [${response.status}]: ${await response.text()}`);
+  }
+
+  return await response.json() as T;
+}
+
+async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
+  const cached = sandboxCache.get(sandboxId);
+  if (cached) return cached;
+
+  const candidates: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
+    { path: `/sandboxes/${sandboxId}/connect`, method: "POST" },
+    { path: `/sandboxes/${sandboxId}/resume`, method: "POST", body: {} },
+    { path: `/sandboxes/${sandboxId}`, method: "GET" },
+  ];
+
+  let lastError = "Unable to connect to sandbox";
+
+  for (const candidate of candidates) {
+    try {
+      const data = await e2bApi<{ sandboxID?: string; envdAccessToken?: string; domain?: string }>(candidate.path, {
+        method: candidate.method,
+        ...(candidate.body ? { body: JSON.stringify(candidate.body) } : {}),
+      });
+
+      if (data.sandboxID && data.envdAccessToken) {
+        const session = {
+          sandboxId: data.sandboxID,
+          envdAccessToken: data.envdAccessToken,
+          domain: data.domain,
+        };
+        sandboxCache.set(session.sandboxId, session);
+        return session;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Unable to connect to sandbox";
+    }
+  }
+
+  throw new Error(lastError);
+}
+
+async function createSandbox(userId: string, task?: string): Promise<SandboxSession> {
+  const data = await e2bApi<{ sandboxID: string; envdAccessToken: string; domain?: string }>("/sandboxes", {
+    method: "POST",
+    body: JSON.stringify({
+      templateID: "desktop",
+      timeout: 300,
+      autoPause: false,
+      allow_internet_access: true,
+      metadata: { userId, task: task || "general" },
+    }),
+  });
+
+  const session = {
+    sandboxId: data.sandboxID,
+    envdAccessToken: data.envdAccessToken,
+    domain: data.domain,
+  };
+
+  sandboxCache.set(session.sandboxId, session);
+  return session;
+}
+
+function collectProcessOutput(value: unknown, state: { stdout: string; stderr: string; exitCode?: number }) {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectProcessOutput(item, state));
+    return;
+  }
+  if (typeof value !== "object") return;
+
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase();
+    if (typeof entry === "number" && normalizedKey === "exitcode") {
+      state.exitCode = entry;
+      continue;
+    }
+    if (typeof entry === "string" && normalizedKey === "stdout") {
+      state.stdout += decodeMaybeBase64(entry);
+      continue;
+    }
+    if (typeof entry === "string" && normalizedKey === "stderr") {
+      state.stderr += decodeMaybeBase64(entry);
+      continue;
+    }
+    if (typeof entry === "object") {
+      collectProcessOutput(entry, state);
+    }
+  }
+}
+
+async function runCommand(
+  sandbox: SandboxSession,
+  cmd: string,
+  args: string[] = [],
+  timeout = 15,
+  envs: Record<string, string> = {},
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/process.Process/Start`, {
+    method: "POST",
+    headers: {
+      "X-Access-Token": sandbox.envdAccessToken,
+      "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
+      "Content-Type": "application/connect+json",
+    },
+    body: JSON.stringify({
+      process: {
+        cmd,
+        args,
+        envs,
+      },
+      stdin: false,
+      timeout,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
+  }
+
+  const raw = await response.text();
+  const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      collectProcessOutput(JSON.parse(trimmed), state);
+    } catch {
+      state.stderr += `${trimmed}\n`;
+    }
+  }
+
+  return {
+    stdout: state.stdout,
+    stderr: state.stderr,
+    exitCode: state.exitCode ?? 0,
+  };
+}
+
+async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<Uint8Array> {
+  const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`, {
+    headers: {
+      "X-Access-Token": sandbox.envdAccessToken,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`E2B file download failed [${response.status}]: ${await response.text()}`);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+// Helper to get or reconnect to a sandbox
+async function getSandbox(sandboxId: string): Promise<SandboxSession> {
+  return await connectSandbox(sandboxId);
 }
 
 // Take a screenshot using the sandbox's command execution
-async function captureScreenshot(sandbox: Sandbox): Promise<string> {
+async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
   // Try multiple screenshot methods
-  const methods = [
-    "DISPLAY=:0 import -window root /tmp/screenshot.png",
-    "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite",
-    "python3 -c \"import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')\"",
+  const methods: Array<{ cmd: string; args: string[]; envs?: Record<string, string> }> = [
+    { cmd: "import", args: ["-window", "root", "/tmp/screenshot.png"], envs: { DISPLAY: ":0" } },
+    { cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
+    { cmd: "python3", args: ["-c", "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')"], envs: { DISPLAY: ":0" } },
   ];
 
   let lastError = "";
-  for (const cmd of methods) {
+  for (const method of methods) {
     try {
-      const result = await sandbox.commands.run(cmd, { timeout: 15 });
+      const result = await runCommand(sandbox, method.cmd, method.args, 15, method.envs ?? {});
       if (result.exitCode === 0) {
-        // Read the screenshot file
-        const fileContent = await sandbox.files.read("/tmp/screenshot.png");
-        // fileContent is a Uint8Array or string; convert to base64
-        if (typeof fileContent === "string") {
-          // Already a string, encode to base64
-          return btoa(fileContent);
-        } else {
-          // Uint8Array — convert to base64
-          let binary = "";
-          const bytes = new Uint8Array(fileContent);
-          const chunkSize = 8192;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
-          }
-          return btoa(binary);
-        }
+        return toBase64(await readSandboxFile(sandbox, "/tmp/screenshot.png"));
       }
       lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
     } catch (e) {
@@ -81,7 +256,7 @@ async function captureScreenshot(sandbox: Sandbox): Promise<string> {
   throw new Error(`All screenshot methods failed. Last: ${lastError}`);
 }
 
-async function waitForDesktopReady(sandbox: Sandbox): Promise<{
+async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   ready: boolean;
   screenshot?: string;
   waitedMs: number;
@@ -221,18 +396,12 @@ serve(async (req) => {
     switch (action) {
       // Create a new desktop sandbox
       case "start_session": {
-        const sandbox = await Sandbox.create("desktop", {
-          apiKey,
-          timeoutMs: 300_000,
-          metadata: { userId, task: body.task || "general" },
-        });
-
-        sandboxCache.set(sandbox.sandboxId, sandbox);
+        const sandbox = await createSandbox(userId, body.task);
 
         return json({
           sessionId: sandbox.sandboxId,
           streamUrl: null,
-          envdAccessToken: "sdk-managed",
+          envdAccessToken: "server-managed",
           status: "running",
         });
       }
@@ -304,8 +473,12 @@ serve(async (req) => {
             break;
           }
           case "open_url": {
-            const escaped = params.url.replace(/'/g, "\\'");
-            await sandbox.commands.run(`DISPLAY=:0 xdg-open '${escaped}' &`, { timeout: 10 });
+            await runCommand(
+              sandbox,
+              "bash",
+              ["-lc", `DISPLAY=:0 xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
+              10,
+            );
             break;
           }
           case "wait": {
@@ -320,7 +493,13 @@ serve(async (req) => {
 
         if (pyCode) {
           try {
-            const cmdResult = await sandbox.commands.run(`DISPLAY=:0 python3 -c "${pyCode.replace(/"/g, '\\"')}"`, { timeout: 15 });
+            const cmdResult = await runCommand(
+              sandbox,
+              "python3",
+              ["-c", pyCode],
+              15,
+              { DISPLAY: ":0" },
+            );
             if (cmdResult.exitCode !== 0) {
               result = { success: false, error: cmdResult.stderr || "Command failed" };
             }
@@ -367,11 +546,17 @@ serve(async (req) => {
         const sandbox = sandboxCache.get(sessionId);
         if (sandbox) {
           try {
-            await sandbox.kill();
+            await fetch(`${E2B_API_BASE}/sandboxes/${sessionId}`, {
+              method: "DELETE",
+              headers: {
+                "X-API-Key": apiKey,
+              },
+            });
           } catch {
             // Sandbox may already be destroyed
+          } finally {
+            sandboxCache.delete(sessionId);
           }
-          sandboxCache.delete(sessionId);
         }
         return json({ success: true, status: "destroyed" });
       }

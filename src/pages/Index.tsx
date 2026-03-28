@@ -213,6 +213,8 @@ export default function Index() {
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";
   const isProjectsMode = mode === "projects";
+  const isAgentMode = mode === "agent";
+  const isFullscreenMode = isProjectsMode || isAgentMode;
 
   const renderRightPanel = () => {
     switch (mode) {

@@ -36,11 +36,11 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ action, ...params }),
   });
+  const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
+    throw new Error(data.error || `Error ${resp.status}`);
   }
-  return resp.json();
+  return data;
 }
 
 async function isMeaningfulScreenshot(base64: string): Promise<boolean> {
@@ -140,53 +140,45 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       return;
     }
 
-    // Skip heavy init — the E2B "desktop" template self-initializes.
-    // Just poll for screenshot readiness directly.
+    // Use backend-driven readiness check instead of client-side polling
     setStatus("running");
     setIsRunning(true);
 
-    // Poll for screenshot readiness (client-side loop, short server calls)
-    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop UI to render...", status: "executing" });
-    const pollStart = Date.now();
-    const POLL_TIMEOUT = 90_000;
-    let ready = false;
-    let lastWaitReason = "Desktop is still booting";
+    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Starting virtual desktop...", status: "executing" });
 
-    while (Date.now() - pollStart < POLL_TIMEOUT && !abortRef.current) {
-      try {
-        const result = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken);
-        if (result.screenshot) {
-          setCurrentScreenshot(result.screenshot);
+    try {
+      updateStep(waitStepId, { reasoning: "Waiting for display server..." });
+      const readiness: DesktopReadyResponse & { status?: string } = await cuApi(
+        "wait_until_ready",
+        { sessionId: sid, envdAccessToken: token },
+        getToken,
+      );
 
-          const meaningful = await isMeaningfulScreenshot(result.screenshot);
-          if (meaningful) {
-            updateStep(waitStepId, {
-              status: "done",
-              screenshot: result.screenshot,
-              reasoning: `Desktop UI ready (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
-            });
-            ready = true;
-            break;
-          }
-
-          lastWaitReason = "Desktop screenshot is still blank/black";
+      if (readiness.ready && readiness.screenshot) {
+        const meaningful = await isMeaningfulScreenshot(readiness.screenshot);
+        if (meaningful) {
+          setCurrentScreenshot(readiness.screenshot);
           updateStep(waitStepId, {
-            status: "executing",
-            screenshot: result.screenshot,
-            reasoning: `${lastWaitReason} (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
+            status: "done",
+            screenshot: readiness.screenshot,
+            reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)`,
+          });
+        } else {
+          setCurrentScreenshot(readiness.screenshot);
+          updateStep(waitStepId, {
+            status: "done",
+            screenshot: readiness.screenshot,
+            reasoning: `Desktop loaded but screen may still be initializing (${Math.ceil(readiness.waitedMs / 1000)}s)`,
           });
         }
-      } catch (error: any) {
-        lastWaitReason = error?.message || "Screenshot not ready yet";
+      } else {
+        throw new Error(readiness.error || readiness.message || "Desktop did not become ready");
       }
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-
-    if (!ready) {
-      updateStep(waitStepId, { status: "error", reasoning: `${lastWaitReason}. Desktop did not become ready in time` });
+    } catch (e: any) {
+      updateStep(waitStepId, { status: "error", reasoning: `Desktop startup failed: ${e.message}` });
       setIsRunning(false);
       setStatus("error");
-      toast.error("Desktop did not become ready in time");
+      toast.error(`Desktop startup failed: ${e.message}`);
       return;
     }
 

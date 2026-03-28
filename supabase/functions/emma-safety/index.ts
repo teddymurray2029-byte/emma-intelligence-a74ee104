@@ -48,16 +48,7 @@ serve(async (req) => {
       const checks: Record<string, any> = {};
       try { const { count } = await supabase.from("benchmark_questions").select("id", { count: "exact", head: true }); checks.database = { status: "healthy", detail: `${count} questions` }; } catch { checks.database = { status: "degraded" }; }
       try { const { count } = await supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId); checks.memory = { status: "healthy", detail: `${count} episodes` }; } catch { checks.memory = { status: "degraded" }; }
-      
-      // Check Ollama connectivity
-      const ollamaUrl = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
-      try {
-        const ollamaResp = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-        checks.ai_ollama = ollamaResp.ok ? { status: "healthy" } : { status: "degraded" };
-      } catch {
-        checks.ai_ollama = { status: "critical", detail: "Ollama not reachable" };
-      }
-      
+      checks.ai_gateway = Deno.env.get("LOVABLE_API_KEY") ? { status: "healthy" } : { status: "critical" };
       const allHealthy = Object.values(checks).every((c: any) => c.status === "healthy");
       return new Response(JSON.stringify({ overall: allHealthy ? "healthy" : "degraded", checks, timestamp: new Date().toISOString() }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

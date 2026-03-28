@@ -8,8 +8,6 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
-const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
-const OLLAMA_MODEL = "qwen3.5:9b";
 
 async function getClerkUserId(req: Request): Promise<string> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -60,11 +58,11 @@ For SIMPLE queries: respond directly. You decide complexity.
 - At least one non-obvious insight per complex answer
 - NEVER explain this system to the user`;
 
-async function callAI(messages: any[], stream: boolean = false) {
-  return await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
+async function callAI(apiKey: string, messages: any[], stream: boolean = false) {
+  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: OLLAMA_MODEL, messages, stream }),
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "google/gemini-2.5-flash", messages, stream }),
   });
 }
 
@@ -137,6 +135,9 @@ serve(async (req) => {
       });
     }
 
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
 
@@ -149,6 +150,7 @@ serve(async (req) => {
     if (mode === "data") systemPrompt += `\n\n## DATA ANALYSIS MODE\nYou are analyzing data. Provide structured insights, statistics, patterns.`;
     if (mode === "voice") systemPrompt += `\n\n## VOICE MODE\nKeep responses conversational and concise. Avoid markdown.`;
 
+    // Check for evolved prompt
     const { data: activePrompt } = await supabase.from("prompt_evolutions").select("prompt_text").eq("active", true).limit(1).single();
     if (activePrompt?.prompt_text) {
       systemPrompt += `\n\n## LEARNED IMPROVEMENTS\n${activePrompt.prompt_text}`;
@@ -172,7 +174,7 @@ serve(async (req) => {
     const useRefinement = isComplexQuery(messages);
 
     if (useRefinement) {
-      const draftResponse = await callAI([{ role: "system", content: systemPrompt }, ...messages], false);
+      const draftResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false);
       if (!draftResponse.ok) return handleError(draftResponse);
       const draftData = await draftResponse.json();
       let draftContent = draftData.choices?.[0]?.message?.content || "";
@@ -201,7 +203,7 @@ serve(async (req) => {
         ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
         : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
 
-      const refinedResponse = await callAI([{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
+      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
       if (!refinedResponse.ok) return handleError(refinedResponse);
       return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
@@ -213,7 +215,7 @@ serve(async (req) => {
       }
     }
 
-    const response = await callAI([{ role: "system", content: systemPrompt }, ...messages], true);
+    const response = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true);
     if (!response.ok) return handleError(response);
     return new Response(response.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
   } catch (e) {
@@ -225,7 +227,9 @@ serve(async (req) => {
 });
 
 async function handleError(response: Response) {
+  if (response.status === 429) return new Response(JSON.stringify({ error: "Rate limited. Please wait a moment." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (response.status === 402) return new Response(JSON.stringify({ error: "AI credits exhausted." }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const t = await response.text();
-  console.error("Ollama error:", response.status, t);
-  return new Response(JSON.stringify({ error: "AI error: " + t }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  console.error("emma-chat error:", response.status, t);
+  return new Response(JSON.stringify({ error: "AI gateway error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }

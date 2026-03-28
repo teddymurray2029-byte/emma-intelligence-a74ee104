@@ -9,9 +9,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
-const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
-const AI_URL = `${OLLAMA_URL}/v1/chat/completions`;
-const OLLAMA_MODEL = "qwen3.5:9b";
+const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DESKTOP_BOOT_TIMEOUT_MS = 90_000;
 const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";
@@ -550,7 +548,8 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string }> {
-  // Ollama doesn't need an API key
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
   const historyText = actionHistory.length > 0
     ? `\n\nActions taken so far:\n${actionHistory.map((a, i) => `${i + 1}. [${a.action}] ${a.reasoning}`).join("\n")}`
@@ -594,9 +593,10 @@ Rules:
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Authorization": `Bearer ${lovableKey}`,
     },
     body: JSON.stringify({
-      model: OLLAMA_MODEL,
+      model: "google/gemini-2.5-pro",
       messages: [
         { role: "system", content: systemPrompt },
         {

@@ -6,8 +6,7 @@ export type Artifact = { id: string; title: string; type: "text" | "markdown" | 
 export type ResearchReport = { id: string; objective: string; status: "planning" | "searching" | "analyzing" | "synthesizing" | "complete" | "error"; plan: string[]; currentStep: number; sources: Citation[]; summary: string; fullReport: string; openQuestions: string[]; confidence: number; createdAt: string };
 export type AgentTask = { id: string; description: string; status: "pending" | "planning" | "executing" | "paused" | "complete" | "failed"; plan: string[]; currentStep: number; logs: string[]; output: string; artifacts: string[]; createdAt: string };
 
-const OLLAMA_URL = "http://localhost:11434/v1/chat/completions";
-const OLLAMA_MODEL = "qwen3.5:9b";
+const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-chat`;
 const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-image-gen`;
 const RESEARCH_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-research`;
 
@@ -23,10 +22,11 @@ async function getAuthHeader(): Promise<Record<string, string>> {
 }
 
 export async function streamChat({ messages, feedback, mode, answerStyle, onDelta, onDone, onError }: { messages: Message[]; feedback?: { type: string; summary: string }[]; mode?: EmmaMode; answerStyle?: AnswerStyle; onDelta: (deltaText: string) => void; onDone: () => void; onError: (error: string) => void }) {
-  const resp = await fetch(OLLAMA_URL, {
+  const auth = await getAuthHeader();
+  const resp = await fetch(CHAT_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: OLLAMA_MODEL, messages: messages.map(m => ({ role: m.role, content: m.content })), stream: true }),
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify({ messages: messages.map(m => ({ role: m.role, content: m.content })), feedback, mode: mode || "chat", answerStyle: answerStyle || "standard" }),
   });
 
   if (!resp.ok) { const data = await resp.json().catch(() => ({ error: "Connection failed" })); onError(data.error || `Error ${resp.status}`); return; }

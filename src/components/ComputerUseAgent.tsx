@@ -489,7 +489,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   </div>
                 </div>
 
-                <div className="flex-1 min-h-0 bg-black relative flex items-center justify-center overflow-hidden">
+                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
                   {renderDesktopView()}
                 </div>
 
@@ -515,7 +515,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             <ResizableHandle withHandle />
 
             <ResizablePanel defaultSize={40} minSize={20}>
-              <div className="flex flex-col h-full overflow-hidden bg-card">
+              <div className="flex flex-col h-full bg-card">
                 <div className="px-3 py-2 border-b border-border">
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
                   <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>

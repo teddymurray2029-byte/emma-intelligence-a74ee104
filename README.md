@@ -160,7 +160,7 @@ User Task
 │         AGENT LOOP (max 50 steps)    │
 │                                      │
 │  1. Screenshot current desktop       │
-│  2. Send to AI Vision (via Lovable AI) │
+│  2. Send to Gemini 2.5 Pro (vision)  │
 │  3. AI reasons about what it sees    │
 │  4. AI decides next action:          │
 │     click / type / scroll / hotkey   │

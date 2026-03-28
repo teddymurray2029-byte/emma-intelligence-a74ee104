@@ -5,9 +5,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
-const OLLAMA_MODEL = "qwen3.5:9b";
-
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -21,16 +18,24 @@ serve(async (req) => {
       });
     }
 
-    // Note: Ollama qwen3.5:9b is a text model, not an image generation model.
-    // This will return a text description instead of an actual image.
-    const response = await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model: "google/gemini-3.1-flash-image-preview",
         messages: [
-          { role: "user", content: `Describe in detail what an image of "${prompt}" would look like. Be vivid and specific.` },
+          {
+            role: "user",
+            content: `Generate an image: ${prompt}`,
+          },
         ],
+        modalities: ["image", "text"],
       }),
     });
 
@@ -44,9 +49,17 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
+    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    const text = data.choices?.[0]?.message?.content || "";
 
-    return new Response(JSON.stringify({ imageUrl: "", text: content }), {
+    if (!imageUrl) {
+      return new Response(JSON.stringify({ error: "No image generated", text }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ imageUrl, text }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

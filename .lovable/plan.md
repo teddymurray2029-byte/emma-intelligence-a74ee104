@@ -1,195 +1,96 @@
 
 
-# Emma ASI/AGI Feature Audit & Plan to 100%
+# Plan: Clerk-Supabase Integration + Admin Aggregate Learning System
 
-## Current Completion by Feature Category
+## Summary
 
-### 1. Core Chat Interface — 85%
-**Done:** Streaming AI chat, markdown rendering, dark mode, split-pane layout, sidebar, welcome screen, suggestion cards, auto-scroll
-**Missing:**
-- File attachment button exists but does nothing (no upload logic)
-- No syntax highlighting in code blocks (rehype-highlight not wired)
-- No "Open in Editor" button on code blocks to send code to Monaco panel
-- No conversation rename UI (hook exists but no inline editing)
+Two major deliverables: (1) Bridge Clerk auth with Supabase so database operations work, and (2) Build an admin dashboard that aggregates all user data to improve Emma's intelligence through learned patterns.
 
-### 2. Authentication & Persistence — 90%
-**Done:** Email/password login + signup, session management, RLS on conversations/messages, profiles table with trigger, persistent message history
-**Missing:**
-- No email verification flow guidance
-- No password reset page
-- No OAuth providers (Google, GitHub)
+## Part 1: Clerk-Supabase JWT Bridge
 
-### 3. IDE / Code Editor — 40%
-**Done:** Monaco editor with tabs, multi-file support, syntax highlighting, vs-dark theme
-**Missing:**
-- No connection between chat code blocks → editor ("Open in Editor" button)
-- No sandboxed code execution (needs E2B API)
-- No terminal output panel
-- No live preview iframe
-- No "Fix this error" loop
-- No file persistence (files lost on refresh)
+Since Clerk manages auth but Supabase RLS expects `auth.uid()`, edge functions need to verify Clerk JWTs and use the service role for DB operations on behalf of users.
 
-### 4. Agent Swarm — 35%
-**Done:** 6 agent cards with status indicators, animated cycling during processing, swarm log
-**Missing:**
-- Purely cosmetic — no real agent routing or specialized system prompts
-- No Director → sub-agent task delegation logic
-- No self-improvement / post-task review
-- No autonomous long-running workflows
-- No real task planning with approval checkpoints
+### Changes
 
-### 5. Image Generation — 75%
-**Done:** Edge function using Gemini image model, `/image` command detection, inline display, download button
-**Missing:**
-- No image editing/variation capabilities
-- No image understanding (upload image → describe)
-- No gallery/history of generated images
+**New edge function: `supabase/functions/clerk-auth-bridge/index.ts`**
+- Accepts Clerk session token, verifies it using `CLERK_SECRET_KEY`
+- Returns a Supabase-compatible user context
+- Used by other edge functions to resolve Clerk user ID
 
-### 6. Video Generation — 0%
-**Missing:** Everything. Needs external API (Kling/Runway/Luma), edge function, scene stitching, upload/edit flow
+**Update all edge functions** (`emma-chat`, `emma-orchestrator`, `emma-benchmark`, `emma-self-improve`, `emma-causal-engine`, `emma-multi-agent`, `emma-safety`, `emma-research`, `emma-web-search`, `emma-code-exec`, `emma-image-gen`)
+- Replace `supabase.auth.getUser(token)` with Clerk JWT verification via the JWKS endpoint (`https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json`)
+- Use `jose` library to verify JWT and extract `sub` (Clerk user ID)  
+- Use service role client for DB operations, passing Clerk user ID as `user_id`
 
-### 7. Audio / Voice — 25%
-**Done:** Speech-to-text input via Web Speech API, mic toggle button
-**Missing:**
-- No text-to-speech output (needs ElevenLabs or browser TTS)
-- No voice cloning
-- No music generation (needs Suno API)
-- No speaker button on messages
+**Update `src/lib/agi-api.ts`**
+- Pass Clerk session token (from `useSession`) instead of Supabase access token
 
-### 8. File & GitHub Integration — 5%
-**Done:** Paperclip button exists in UI (non-functional)
-**Missing:**
-- No file upload to storage
-- No file understanding / RAG
-- No GitHub integration (clone, PR, issues, search)
-- No drag-and-drop
+**Update `src/hooks/useAuth.tsx`**
+- Export session token getter using `useSession` from Clerk
 
-### 9. Search & Memory — 10%
-**Done:** Conversations and messages persist in DB
-**Missing:**
-- No vector embeddings / semantic search
-- No web search (needs Perplexity)
-- No knowledge graph visualization
-- No RAG pipeline
-- No cross-conversation memory
+**Update `src/hooks/useConversations.tsx` and `src/hooks/useMessages.tsx`**
+- Route DB operations through edge functions instead of direct Supabase client calls (since RLS won't recognize Clerk users)
+- OR: Create a new edge function `emma-db-proxy` that handles CRUD for conversations/messages with Clerk auth
 
-### 10. Dashboard & Analytics — 45%
-**Done:** Dashboard page with conversation/message counts, mock token usage chart, agent list, capabilities list
-**Missing:**
-- Real token usage tracking (not mock data)
-- No predictive analytics
-- No Jupyter-style notebooks
-- No project velocity tracking
-- No cost curves
+**Database migration**
+- The `user_id` columns currently expect Supabase UUIDs. Clerk IDs are strings like `user_2x...`. Need to alter `user_id` columns from `uuid` to `text` across all tables: `conversations`, `messages` (via conversations), `memory_episodes`, `goals`, `benchmark_runs`, `improvement_logs`, `api_keys`, `profiles`, `user_roles`
+- Update RLS policies to remove `auth.uid()` references (they won't work with Clerk) and instead use service-role-only access with edge function gatekeeping
+- Drop the `handle_new_user` trigger (it fires on Supabase auth signup, not Clerk)
 
-### 11. Conversation Branching — 80%
-**Done:** Branch button on messages, creates new conversation with copied messages, visual toast feedback
-**Missing:**
-- No visual branch indicator in sidebar (tree view)
-- No merge capability
+## Part 2: Admin Aggregate Learning Dashboard
 
-### 12. Multi-User / RBAC — 0%
-**Missing:** No organizations table, no role system, no shared workspaces
+### New database tables
 
-### 13. Integrations (Notion, Slack, Linear, SQL) — 0%
-**Missing:** Everything
+**`admin_insights` table**
+- `id`, `insight_type` (pattern/weakness/improvement/trend), `category`, `description`, `data` (jsonb), `applied`, `created_at`
+- No user_id — these are system-wide aggregations
 
-### 14. Computer Use / Desktop Control — 0%
-**Missing:** Everything (needs Browserbase/Anthropic API)
+**`learning_patterns` table**  
+- `id`, `pattern_type` (common_question/failure_mode/success_pattern/user_behavior), `pattern_data` (jsonb), `frequency`, `confidence_score`, `applied_to_prompt_version`, `created_at`
 
-### 15. Custom Tool Builder — 0%
-**Missing:** Everything
+**`prompt_evolutions` table**
+- `id`, `version`, `prompt_text`, `source_insights` (jsonb array of insight IDs), `performance_delta`, `active`, `created_at`
 
-### 16. Sidebar "Agents" Link — BUG (404)
-The sidebar links to `/agents` but no route exists. Needs to either remove the link or add a route.
+### New edge function: `supabase/functions/emma-admin-learn/index.ts`
 
----
+Actions:
+- **`aggregate_data`**: Query across ALL users' memory_episodes, benchmark_runs, improvement_logs, conversations, and goals. Produce aggregate statistics: common question categories, average quality scores, frequent failure modes, most effective improvement types
+- **`extract_patterns`**: Use AI (gemini-2.5-pro) to analyze aggregated data and extract learning patterns — what types of queries Emma handles poorly, what reasoning approaches work best, common user needs
+- **`generate_improvement`**: Based on patterns, use AI to generate improved system prompts, new benchmark questions, and reasoning pipeline adjustments
+- **`apply_improvement`**: Write new prompt version to `prompt_evolutions`, update the active system prompt version used by `emma-chat` and `emma-self-improve`
+- **`get_dashboard`**: Return full admin analytics: user count, total conversations, aggregate scores, pattern list, improvement history, trend charts data
 
-## Summary Table
+All actions require admin role verification.
 
-| Feature | Current | Achievable in Lovable |
-|---|---|---|
-| Core Chat | 85% | 100% |
-| Auth & Persistence | 90% | 95% (no OAuth without connector) |
-| IDE / Code Editor | 40% | 70% (no execution without E2B) |
-| Agent Swarm | 35% | 65% (UI + prompt routing, no true autonomy) |
-| Image Generation | 75% | 90% |
-| Video Generation | 0% | 10% (UI scaffold only) |
-| Audio / Voice | 25% | 50% (browser TTS, no cloning/music) |
-| File & GitHub | 5% | 40% (upload + storage, GitHub needs API key) |
-| Search & Memory | 10% | 30% (basic search, no vector DB) |
-| Dashboard | 45% | 75% (real stats, charts, no notebooks) |
-| Conversation Branching | 80% | 95% |
-| Multi-User / RBAC | 0% | 60% (DB + RLS, no full workspace UI) |
-| Integrations | 0% | 10% (scaffolding) |
-| Computer Use | 0% | 0% (external API only) |
-| Tool Builder | 0% | 30% (UI scaffold) |
+### New page: `src/pages/AdminLearning.tsx`
 
----
+Tabs:
+1. **Aggregate Analytics** — Total users, conversations, messages, memory episodes. Charts showing quality score trends, category breakdowns, usage patterns over time
+2. **Learned Patterns** — Table of extracted patterns with type, frequency, confidence. Ability to mark patterns as "applied" or "dismissed"
+3. **Prompt Evolution** — History of system prompt versions with performance deltas. Side-by-side diff view. "Generate New Version" button that triggers AI analysis
+4. **Mass Improvement** — One-click "Analyze All Data & Improve" button that runs the full pipeline: aggregate → extract patterns → generate improvement → preview → apply
+5. **User Insights** — Anonymized breakdown of user behavior patterns, common queries, satisfaction trends
 
-## Plan to Maximize All Categories
+### Route and navigation
+- Add `/admin` route in `App.tsx`, protected + admin-role-gated
+- Add admin link in sidebar/settings for admin users
 
-### Step 1: Fix 404 Bug + Quick Wins (Chat → 100%, Branching → 95%)
-- Remove `/agents` sidebar link OR add `/agents` route that renders agent swarm full-page
-- Add `rehype-highlight` to ChatMessage for syntax-highlighted code blocks
-- Add "Open in Editor" button on code blocks that sends content to CodeEditor
-- Add inline conversation rename in sidebar (double-click title)
-- Add branch indicator icon on branched conversations in sidebar
+### Admin role check
+- Create edge function logic to verify admin role: check `user_roles` table for the Clerk user ID with `role = 'admin'`
+- Frontend: query admin status on load, conditionally show admin UI
 
-### Step 2: File Upload & Understanding (File → 40%)
-- Create Supabase storage bucket `chat-uploads`
-- Wire Paperclip button → file picker → upload to storage → send URL to AI with prompt "Analyze this file"
-- Support drag-and-drop on chat area
-- Display uploaded files inline in chat
+## File Changes Summary
 
-### Step 3: Enhanced IDE Panel (IDE → 70%)
-- Bidirectional code block ↔ editor integration
-- Add terminal-style output panel (display-only, shows AI responses about code)
-- Add "Run" button UI that shows "Code execution requires E2B API key" prompt
-- Persist editor files in localStorage
-
-### Step 4: Smart Agent Routing (Agents → 65%)
-- Create dedicated `/agents` page with full agent swarm view
-- Route different query types to different system prompts (code questions → Coder prompt, research → Researcher prompt)
-- Add agent selection dropdown in chat input
-- Post-task summary card showing which "agents" contributed
-
-### Step 5: Voice Output + Browser TTS (Voice → 50%)
-- Add browser-native `speechSynthesis` TTS on assistant messages (speaker button)
-- Voice mode toggle that auto-reads responses
-- No API key required for basic TTS
-
-### Step 6: Dashboard + Real Analytics (Dashboard → 75%)
-- Track actual token estimates per message (word count * 1.3)
-- Store token counts in message metadata
-- Replace mock data with real aggregated queries
-- Add message-per-day chart with real data
-- Add conversation length distribution
-
-### Step 7: Image Generation Polish (Image → 90%)
-- Add image understanding: upload image → AI describes/analyzes it
-- Add image variation: "Edit this image" with follow-up prompt
-- Gallery view of all generated images
-
-### Step 8: Database for RBAC Scaffold (RBAC → 30%)
-- Create `organizations` and `org_members` tables
-- Add `user_roles` table per Lovable guidelines
-- RLS policies for org-scoped data
-- UI: settings page showing org membership (no invite flow yet)
-
-### Step 9: API Scaffolding for External Services
-- Create edge function stubs for: E2B execution, web search, GitHub operations
-- Each returns clear "API key not configured" message
-- Settings page showing integration status and instructions
-- Ready to wire up when user adds API keys
-
-### Technical Details
-
-**Files to create/modify (~20 files):**
-- New: `src/pages/Agents.tsx`, `src/pages/Settings.tsx`, `src/components/FileUpload.tsx`, `src/components/CodeBlockActions.tsx`, `src/components/VoiceOutput.tsx`
-- New edge functions: `supabase/functions/emma-web-search/index.ts` (stub), `supabase/functions/emma-code-exec/index.ts` (stub)
-- Modified: `App.tsx` (add routes), `EmmaSidebar.tsx` (fix /agents, add rename), `ChatMessage.tsx` (code block actions, TTS button), `ChatInput.tsx` (file upload), `CodeEditor.tsx` (receive from chat), `RightPanel.tsx` (terminal tab), `Dashboard.tsx` (real data), `Index.tsx` (file upload handling)
-- Migration: `organizations`, `org_members`, `user_roles` tables, storage bucket
-
-**Dependencies:** `rehype-highlight`, `highlight.js` (for code block styling)
+| File | Action |
+|------|--------|
+| All 11 edge functions | Update auth from Supabase to Clerk JWT verification |
+| `src/lib/agi-api.ts` | Pass Clerk token |
+| `src/hooks/useAuth.tsx` | Add session token access |
+| `src/hooks/useConversations.tsx` | Route through edge function proxy |
+| `src/hooks/useMessages.tsx` | Route through edge function proxy |
+| `supabase/functions/emma-db-proxy/index.ts` | New — CRUD proxy with Clerk auth |
+| `supabase/functions/emma-admin-learn/index.ts` | New — aggregation + learning engine |
+| `src/pages/AdminLearning.tsx` | New — admin dashboard |
+| `src/App.tsx` | Add `/admin` route |
+| Database migration | Alter user_id columns uuid→text, update RLS, drop trigger |
 

@@ -82,7 +82,7 @@ export default function ASITransformationDashboard() {
   }, []);
 
   if (authLoading) return null;
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/sign-in" />;
 
   const tabs: { id: ASITab; label: string; icon: React.ElementType; phase: string }[] = [
     { id: "transform", label: "ASI Overview", icon: Sparkles, phase: "—" },

@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { Buffer } from "node:buffer";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
+import { PNG } from "npm:pngjs@7.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,6 +21,12 @@ type SandboxSession = {
   envdAccessToken: string;
   domain?: string;
   desktopInitialized?: boolean;
+};
+
+type ScreenshotAnalysis = {
+  meaningful: boolean;
+  averageBrightness: number;
+  nonDarkRatio: number;
 };
 
 async function getClerkUserId(req: Request): Promise<string | null> {
@@ -151,6 +159,34 @@ async function createSandbox(userId: string, task?: string): Promise<SandboxSess
   return session;
 }
 
+function analyzeScreenshot(bytes: Uint8Array): ScreenshotAnalysis {
+  try {
+    const png = PNG.sync.read(Buffer.from(bytes));
+    let brightPixels = 0;
+    let brightnessTotal = 0;
+
+    for (let i = 0; i < png.data.length; i += 4) {
+      const alpha = png.data[i + 3] / 255;
+      const brightness = (((png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3) * alpha);
+      brightnessTotal += brightness;
+      if (brightness > 40) brightPixels += 1;
+    }
+
+    const pixelCount = Math.max(1, png.width * png.height);
+    const averageBrightness = brightnessTotal / pixelCount;
+    const nonDarkRatio = brightPixels / pixelCount;
+
+    return {
+      meaningful: averageBrightness > 12 && nonDarkRatio > 0.03,
+      averageBrightness,
+      nonDarkRatio,
+    };
+  } catch (error) {
+    console.warn(`[screenshot] analysis failed, treating frame as meaningful: ${error instanceof Error ? error.message : String(error)}`);
+    return { meaningful: true, averageBrightness: 255, nonDarkRatio: 1 };
+  }
+}
+
 // Launch Xvfb + WM in fully detached mode. Each command is short and non-blocking.
 async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
@@ -192,7 +228,7 @@ async function kickstartDesktop(sandbox: SandboxSession): Promise<void> {
   try {
     const wmResult = await runCommand(
       sandbox, "bash",
-      ["-c", "pgrep -f xfce4-session >/dev/null && echo 'wm-already-running' || (nohup bash -c 'DISPLAY=:0 startxfce4' </dev/null >/tmp/xfce.log 2>&1 & disown; echo 'wm-started')"],
+      ["-c", "if pgrep -f xfce4-session >/dev/null || pgrep -x xfwm4 >/dev/null || pgrep -x xfdesktop >/dev/null; then echo 'wm-already-running'; else nohup bash -lc 'export DISPLAY=:0; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/runtime-root}; mkdir -p \"$XDG_RUNTIME_DIR\"; chmod 700 \"$XDG_RUNTIME_DIR\"; if command -v dbus-launch >/dev/null; then exec dbus-launch --exit-with-session startxfce4; else exec startxfce4; fi' </dev/null >/tmp/xfce.log 2>&1 & disown; echo 'wm-started'; fi"],
       10, {},
     );
     console.log(`[kickstart] wm: exit=${wmResult.exitCode} out=${wmResult.stdout.trim()}`);
@@ -334,6 +370,10 @@ async function getSandbox(sandboxId: string, envdAccessToken?: string | null): P
 }
 
 async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
+  return (await captureScreenshotData(sandbox)).base64;
+}
+
+async function captureScreenshotData(sandbox: SandboxSession): Promise<{ base64: string; analysis: ScreenshotAnalysis }> {
   const methods: Array<{ label: string; cmd: string; args: string[]; envs?: Record<string, string> }> = [
     { label: "scrot", cmd: "scrot", args: ["/tmp/screenshot.png", "--overwrite"], envs: { DISPLAY: ":0" } },
     { label: "scrot-bash", cmd: "bash", args: ["-c", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"], envs: {} },
@@ -344,7 +384,11 @@ async function captureScreenshot(sandbox: SandboxSession): Promise<string> {
     try {
       const result = await runCommand(sandbox, method.cmd, method.args, 10, method.envs ?? {});
       if (result.exitCode === 0) {
-        return toBase64(await readSandboxFile(sandbox, "/tmp/screenshot.png"));
+        const bytes = await readSandboxFile(sandbox, "/tmp/screenshot.png");
+        return {
+          base64: toBase64(bytes),
+          analysis: analyzeScreenshot(bytes),
+        };
       }
       lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
     } catch (e) {
@@ -360,7 +404,7 @@ async function getDesktopStage(sandbox: SandboxSession): Promise<string> {
     const r = await runCommand(sandbox, "bash", ["-c",
       "echo -n 'xvfb='; pgrep -x Xvfb >/dev/null && echo yes || echo no; " +
       "echo -n 'socket='; test -S /tmp/.X11-unix/X0 && echo yes || echo no; " +
-      "echo -n 'wm='; pgrep -f xfce4-session >/dev/null && echo yes || echo no"
+      "echo -n 'wm='; (pgrep -f xfce4-session >/dev/null || pgrep -x xfwm4 >/dev/null || pgrep -x xfdesktop >/dev/null) && echo yes || echo no"
     ], 5, {});
     return r.stdout.trim();
   } catch {
@@ -375,24 +419,32 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   message: string;
   stage?: string;
   error?: string;
+  errorCode?: string;
 }> {
   const startedAt = Date.now();
   let lastError = "Desktop is still starting";
   let lastStage = "";
+  let lastErrorCode = "boot_in_progress";
+  let blackFrameCount = 0;
 
   while (Date.now() - startedAt < DESKTOP_BOOT_TIMEOUT_MS) {
     // Check current boot stage
     lastStage = await getDesktopStage(sandbox);
     console.log(`[wait_ready] stage: ${lastStage} elapsed=${Date.now() - startedAt}ms`);
 
-    // Re-kickstart if display not up
-    if (lastStage.includes("xvfb=no") || lastStage.includes("socket=no")) {
-      console.log(`[wait_ready] display not ready, re-kickstarting...`);
+    // Re-kickstart if display/session is not ready
+    if (lastStage.includes("xvfb=no") || lastStage.includes("socket=no") || lastStage.includes("wm=no")) {
+      lastErrorCode = lastStage.includes("xvfb=no") || lastStage.includes("socket=no")
+        ? "display_not_ready"
+        : "window_manager_not_ready";
+      lastError = `Desktop boot is incomplete (${lastStage.replace(/\n/g, ", ")})`;
+      console.log(`[wait_ready] session not ready (${lastErrorCode}), re-kickstarting...`);
       sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
       try {
         await kickstartDesktop({ ...sandbox, desktopInitialized: false });
       } catch (e) {
         lastError = e instanceof Error ? e.message : "Kickstart failed";
+        lastErrorCode = "kickstart_failed";
       }
       await new Promise((r) => setTimeout(r, DESKTOP_BOOT_POLL_MS));
       continue;
@@ -400,16 +452,38 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
 
     // Display is up — try screenshot
     try {
-      const screenshot = await captureScreenshot(sandbox);
+      const { base64: screenshot, analysis } = await captureScreenshotData(sandbox);
+      if (!analysis.meaningful) {
+        blackFrameCount += 1;
+        lastErrorCode = "black_screen";
+        lastError = `Desktop is still rendering a black frame (brightness=${analysis.averageBrightness.toFixed(1)}, visible=${(analysis.nonDarkRatio * 100).toFixed(1)}%)`;
+        console.warn(`[wait_ready] black screenshot ${blackFrameCount}: ${lastError}`);
+
+        if (blackFrameCount >= 2) {
+          sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
+          try {
+            await kickstartDesktop({ ...sandbox, desktopInitialized: false });
+          } catch (e) {
+            lastError = e instanceof Error ? e.message : lastError;
+            lastErrorCode = "kickstart_failed";
+          }
+        }
+
+        await new Promise((r) => setTimeout(r, DESKTOP_BOOT_POLL_MS));
+        continue;
+      }
+
       return {
         ready: true,
         screenshot,
         waitedMs: Date.now() - startedAt,
         message: "Desktop ready",
         stage: lastStage,
+        errorCode: undefined,
       };
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Screenshot capture failed";
+       lastErrorCode = "screenshot_failed";
       console.log(`[wait_ready] screenshot failed: ${lastError}`);
     }
 
@@ -419,9 +493,10 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   return {
     ready: false,
     waitedMs: Date.now() - startedAt,
-    message: "Desktop boot timed out",
+    message: lastErrorCode === "black_screen" ? "Desktop stayed black during startup" : "Desktop boot timed out",
     stage: lastStage,
     error: lastError,
+    errorCode: lastErrorCode,
   };
 }
 
@@ -553,8 +628,8 @@ serve(async (req) => {
 
         try {
           const sandbox = await getSandbox(sessionId, envdAccessToken);
-          const screenshot = await captureScreenshot(sandbox);
-          return json({ screenshot });
+          const { base64: screenshot, analysis } = await captureScreenshotData(sandbox);
+          return json({ screenshot, analysis });
         } catch (error) {
           const msg = error instanceof Error ? error.message : "Screenshot unavailable";
           return json({ error: msg, status: "screenshot_failed" }, 503);
@@ -568,7 +643,7 @@ serve(async (req) => {
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         console.log(`[emma-cu] wait_until_ready for ${sessionId}`);
         const readiness = await waitForDesktopReady(sandbox);
-        console.log(`[emma-cu] readiness: ready=${readiness.ready} stage=${readiness.stage} waited=${readiness.waitedMs}ms`);
+        console.log(`[emma-cu] readiness: ready=${readiness.ready} code=${readiness.errorCode || "ok"} stage=${readiness.stage} waited=${readiness.waitedMs}ms`);
 
         return readiness.ready
           ? json({ ...readiness, status: "ready" })
@@ -657,7 +732,26 @@ serve(async (req) => {
         let screenshotBase64 = "";
 
         try {
-          screenshotBase64 = await captureScreenshot(sandbox);
+          const screenshot = await captureScreenshotData(sandbox);
+          screenshotBase64 = screenshot.base64;
+
+          if (!screenshot.analysis.meaningful) {
+            const stage = await getDesktopStage(sandbox);
+            sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
+            kickstartDesktop({ ...sandbox, desktopInitialized: false }).catch((e) =>
+              console.error(`[emma-cu] think black-screen recovery failed: ${e}`)
+            );
+
+            return json({
+              action: "wait",
+              params: { seconds: 3 },
+              reasoning: `Desktop is still rendering a black frame (${stage.replace(/\n/g, ", ")}). Waiting for a usable screenshot before taking action.`,
+              done: false,
+              screenshot: screenshotBase64,
+              stage,
+              status: "black_screen",
+            });
+          }
         } catch {}
 
         if (!screenshotBase64) {

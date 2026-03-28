@@ -187,7 +187,7 @@ Return JSON array:
         .limit(1)
         .single();
 
-      const raw = await callAI(OPENAI_API_KEY, [
+      const raw = await callAI(LOVABLE_API_KEY, [
         {
           role: "system",
           content: `You are a system prompt optimizer. Based on learned patterns and current prompt, generate an improved system prompt.
@@ -256,7 +256,7 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
       };
 
       // Step 2: AI analysis
-      const raw = await callAI(OPENAI_API_KEY, [
+      const raw = await callAI(LOVABLE_API_KEY, [
         {
           role: "system",
           content: `You are an AI meta-learning system. Analyze all user interaction data and generate:

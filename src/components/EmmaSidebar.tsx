@@ -8,6 +8,7 @@ import {
   Trash2,
   GitBranch,
   Brain,
+  Shield,
 } from "lucide-react";
 import {
   Sidebar,
@@ -171,6 +172,12 @@ export function EmmaSidebar({
                 <SidebarMenuButton onClick={() => onNavigate("/settings")}>
                   <Settings className="h-4 w-4" />
                   {!collapsed && <span>Settings</span>}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => onNavigate("/admin")}>
+                  <Shield className="h-4 w-4" />
+                  {!collapsed && <span>Admin Learning</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

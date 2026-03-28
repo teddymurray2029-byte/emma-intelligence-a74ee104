@@ -49,11 +49,11 @@ export function EmmaSidebar({
       <SidebarContent>
         {/* Brand */}
         <div className="px-4 py-4 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg aether-gradient-bg flex items-center justify-center flex-shrink-0">
-            <span className="font-mono font-bold text-xs text-primary-foreground">Æ</span>
+          <div className="w-8 h-8 rounded-lg emma-gradient-bg flex items-center justify-center flex-shrink-0">
+            <span className="font-mono font-bold text-xs text-primary-foreground">E</span>
           </div>
           {!collapsed && (
-            <span className="font-semibold text-foreground tracking-tight">Aether</span>
+            <span className="font-semibold text-foreground tracking-tight">Emma</span>
           )}
         </div>
 

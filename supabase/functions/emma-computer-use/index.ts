@@ -77,6 +77,25 @@ async function runCommand(sandboxId: string, envdAccessToken: string, cmd: strin
   let stderr = "";
   let exitCode = 0;
 
+  for (const chunk of text.split("\n")) {
+    const line = chunk.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      const event = parsed.result ?? parsed;
+      const data = event.event?.data ?? event.data;
+      if (data?.stdout) stdout += atob(data.stdout);
+      if (data?.stderr) stderr += atob(data.stderr);
+      const end = event.event?.end ?? event.end;
+      if (typeof end?.exitCode === "number") exitCode = end.exitCode;
+    } catch {
+      // ignore malformed stream lines
+    }
+  }
+
+  return { stdout, stderr, exitCode };
+}
+
 // Download a file from the sandbox
 async function downloadFile(sandboxId: string, envdAccessToken: string, filePath: string): Promise<Uint8Array> {
   const url = `https://49983-${sandboxId}.e2b.app/files?path=${encodeURIComponent(filePath)}`;

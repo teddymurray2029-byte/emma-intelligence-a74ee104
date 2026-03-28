@@ -14,6 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      benchmark_questions: {
+        Row: {
+          category: string
+          created_at: string
+          difficulty: number
+          expected_answer: string | null
+          id: string
+          question: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          difficulty?: number
+          expected_answer?: string | null
+          id?: string
+          question: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          difficulty?: number
+          expected_answer?: string | null
+          id?: string
+          question?: string
+        }
+        Relationships: []
+      }
+      benchmark_runs: {
+        Row: {
+          category_scores: Json
+          created_at: string
+          id: string
+          max_score: number
+          model_config: Json
+          system_prompt_version: number
+          total_score: number
+          user_id: string
+        }
+        Insert: {
+          category_scores?: Json
+          created_at?: string
+          id?: string
+          max_score?: number
+          model_config?: Json
+          system_prompt_version?: number
+          total_score?: number
+          user_id: string
+        }
+        Update: {
+          category_scores?: Json
+          created_at?: string
+          id?: string
+          max_score?: number
+          model_config?: Json
+          system_prompt_version?: number
+          total_score?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -48,6 +108,122 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      goals: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          description: string
+          goal_type: string
+          id: string
+          parent_goal_id: string | null
+          priority: number
+          progress: number | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          description: string
+          goal_type?: string
+          id?: string
+          parent_goal_id?: string | null
+          priority?: number
+          progress?: number | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          description?: string
+          goal_type?: string
+          id?: string
+          parent_goal_id?: string | null
+          priority?: number
+          progress?: number | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "goals_parent_goal_id_fkey"
+            columns: ["parent_goal_id"]
+            isOneToOne: false
+            referencedRelation: "goals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      improvement_logs: {
+        Row: {
+          accepted: boolean
+          after_score: number | null
+          before_score: number | null
+          created_at: string
+          delta: number | null
+          description: string
+          diff_content: string | null
+          id: string
+          improvement_type: string
+          user_id: string
+        }
+        Insert: {
+          accepted?: boolean
+          after_score?: number | null
+          before_score?: number | null
+          created_at?: string
+          delta?: number | null
+          description: string
+          diff_content?: string | null
+          id?: string
+          improvement_type: string
+          user_id: string
+        }
+        Update: {
+          accepted?: boolean
+          after_score?: number | null
+          before_score?: number | null
+          created_at?: string
+          delta?: number | null
+          description?: string
+          diff_content?: string | null
+          id?: string
+          improvement_type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      memory_episodes: {
+        Row: {
+          content: string
+          created_at: string
+          embedding_key: string | null
+          episode_type: string
+          id: string
+          relevance_score: number | null
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          embedding_key?: string | null
+          episode_type?: string
+          id?: string
+          relevance_score?: number | null
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          embedding_key?: string | null
+          episode_type?: string
+          id?: string
+          relevance_score?: number | null
+          user_id?: string
+        }
+        Relationships: []
       }
       messages: {
         Row: {

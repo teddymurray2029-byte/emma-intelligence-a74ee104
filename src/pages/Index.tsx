@@ -39,7 +39,8 @@ const WELCOME_SUGGESTIONS = [
 export default function Index() {
   const { user, loading: authLoading, signOut, getToken } = useAuth();
   const navigate = useNavigate();
-  const { conversations, create, remove, rename, update } = useConversations(user?.id, getToken);
+  const userId = user?.id;
+  const { conversations, create, remove, rename, update } = useConversations(userId, getToken);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId, getToken);
   const [isLoading, setIsLoading] = useState(false);
@@ -47,6 +48,7 @@ export default function Index() {
   const [mode, setMode] = useState<EmmaMode>("chat");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("standard");
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [showPaywall, setShowPaywall] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Set token getters for API modules

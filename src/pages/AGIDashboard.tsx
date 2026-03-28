@@ -134,6 +134,10 @@ export default function AGIDashboard() {
         <Brain className="h-4 w-4 text-primary" />
         <h1 className="text-sm font-semibold text-foreground">AGI Systems Dashboard</h1>
         <span className="text-[10px] font-mono text-accent bg-accent/10 px-2 py-0.5 rounded-full">PROTO-AGI v2.0</span>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 ml-2" onClick={() => navigate("/asi")}>
+          <Zap className="h-3 w-3" />
+          ASI Transformation
+        </Button>
         <div className="flex-1" />
         <Button variant="ghost" size="sm" onClick={loadStatus} className="h-7 text-xs gap-1">
           <RefreshCw className={`h-3 w-3 ${loadingStatus ? "animate-spin" : ""}`} />

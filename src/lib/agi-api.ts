@@ -67,3 +67,33 @@ export async function validateContent(content: string, contentType: "code" | "pr
 export async function getHealthCheck() {
   return agiCall("emma-safety", { action: "health" });
 }
+
+// Causal Engine (Phase 1A)
+export async function runCausalInference(input: string) {
+  return agiCall("emma-causal-engine", { action: "causal_inference", input });
+}
+
+export async function runArchitecturalAnalysis() {
+  return agiCall("emma-causal-engine", { action: "architectural_analysis" });
+}
+
+export async function runGroundedReasoning(input: string) {
+  return agiCall("emma-causal-engine", { action: "grounded_reasoning", input });
+}
+
+export async function runAlignmentCheck(input: string) {
+  return agiCall("emma-causal-engine", { action: "alignment_check", input });
+}
+
+export async function runSelfAwarenessProbe() {
+  return agiCall("emma-causal-engine", { action: "self_awareness" });
+}
+
+// Multi-Agent Swarm
+export async function runAgentSwarm(input: string, agents?: string[]) {
+  return agiCall("emma-multi-agent", { action: "swarm", input, agents });
+}
+
+export async function getAvailableAgents() {
+  return agiCall("emma-multi-agent", { action: "agents" });
+}

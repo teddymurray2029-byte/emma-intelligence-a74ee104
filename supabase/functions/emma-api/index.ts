@@ -54,7 +54,7 @@ function isComplexQuery(messages: any[]): boolean {
 }
 
 async function callAI(apiKey: string, body: Record<string, unknown>) {
-  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  return await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -112,8 +112,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
 
     // --- Inject memory context ---
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
@@ -129,7 +129,7 @@ serve(async (req) => {
     }
 
     // Determine backend model
-    const backendModel = "google/gemini-2.5-flash";
+    const backendModel = "gpt-4o-mini";
 
     // Build the AI payload
     const aiMessages = [{ role: "system", content: systemPrompt }, ...messages];
@@ -145,12 +145,12 @@ serve(async (req) => {
 
     if (useRefinement) {
       // Two-pass: draft → refine
-      const draftResp = await callAI(LOVABLE_API_KEY, { ...aiBody, stream: false });
+      const draftResp = await callAI(OPENAI_API_KEY, { ...aiBody, stream: false });
       if (!draftResp.ok) return proxyError(draftResp);
       const draftData = await draftResp.json();
       const draftContent = draftData.choices?.[0]?.message?.content || "";
 
-      const refineResp = await callAI(LOVABLE_API_KEY, {
+      const refineResp = await callAI(OPENAI_API_KEY, {
         model: backendModel,
         messages: [
           { role: "system", content: REFINEMENT_PROMPT },
@@ -193,7 +193,7 @@ serve(async (req) => {
     }
 
     // --- Streaming or simple non-streaming ---
-    const aiResp = await callAI(LOVABLE_API_KEY, aiBody);
+    const aiResp = await callAI(OPENAI_API_KEY, aiBody);
     if (!aiResp.ok) return proxyError(aiResp);
 
     if (stream) {

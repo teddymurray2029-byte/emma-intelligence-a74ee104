@@ -19,8 +19,8 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   } catch { return null; }
 }
 
-async function callAI(apiKey: string, messages: any[], model = "google/gemini-2.5-pro"): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function callAI(apiKey: string, messages: any[], model = "gpt-4o"): Promise<string> {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages }),
@@ -51,8 +51,8 @@ serve(async (req) => {
       .eq("role", "admin");
     if (!roles?.length) return json({ error: "Admin access required" }, 403);
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
 
     const { action } = await req.json();
 
@@ -147,7 +147,7 @@ serve(async (req) => {
 
       if (!recentInsight) return json({ error: "Run aggregate_data first" }, 400);
 
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI(OPENAI_API_KEY, [
         {
           role: "system",
           content: `You are an AI system analyst. Given aggregated user data, extract learning patterns.
@@ -187,7 +187,7 @@ Return JSON array:
         .limit(1)
         .single();
 
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI(OPENAI_API_KEY, [
         {
           role: "system",
           content: `You are a system prompt optimizer. Based on learned patterns and current prompt, generate an improved system prompt.
@@ -256,7 +256,7 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
       };
 
       // Step 2: AI analysis
-      const raw = await callAI(LOVABLE_API_KEY, [
+      const raw = await callAI(OPENAI_API_KEY, [
         {
           role: "system",
           content: `You are an AI meta-learning system. Analyze all user interaction data and generate:

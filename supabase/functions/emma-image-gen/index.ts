@@ -18,24 +18,21 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3.1-flash-image-preview",
-        messages: [
-          {
-            role: "user",
-            content: `Generate an image: ${prompt}`,
-          },
-        ],
-        modalities: ["image", "text"],
+        model: "dall-e-3",
+        prompt: prompt,
+        n: 1,
+        size: "1024x1024",
+        response_format: "url",
       }),
     });
 
@@ -49,17 +46,17 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-    const text = data.choices?.[0]?.message?.content || "";
+    const imageUrl = data.data?.[0]?.url;
+    const revisedPrompt = data.data?.[0]?.revised_prompt || "";
 
     if (!imageUrl) {
-      return new Response(JSON.stringify({ error: "No image generated", text }), {
+      return new Response(JSON.stringify({ error: "No image generated", text: revisedPrompt }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    return new Response(JSON.stringify({ imageUrl, text }), {
+    return new Response(JSON.stringify({ imageUrl, text: revisedPrompt }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

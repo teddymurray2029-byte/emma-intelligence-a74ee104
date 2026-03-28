@@ -7,6 +7,7 @@ import {
   LogOut,
   Trash2,
   GitBranch,
+  Brain,
 } from "lucide-react";
 import {
   Sidebar,
@@ -152,6 +153,12 @@ export function EmmaSidebar({
                 <SidebarMenuButton onClick={() => onNavigate("/agents")}>
                   <Bot className="h-4 w-4" />
                   {!collapsed && <span>Agents</span>}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => onNavigate("/agi")}>
+                  <Brain className="h-4 w-4" />
+                  {!collapsed && <span>AGI Systems</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

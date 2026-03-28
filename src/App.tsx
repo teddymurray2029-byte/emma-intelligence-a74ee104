@@ -14,6 +14,7 @@ import AGIDashboard from "./pages/AGIDashboard";
 import ASITransformation from "./pages/ASITransformation";
 import ApiKeys from "./pages/ApiKeys";
 import AdminLearning from "./pages/AdminLearning";
+import PaymentSuccess from "./pages/PaymentSuccess";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -41,7 +42,8 @@ const App = () => (
           <Routes>
             <Route path="/sign-in/*" element={<ClerkSignIn />} />
             <Route path="/sign-up/*" element={<ClerkSignUp />} />
-            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/" element={<Index />} />
+            <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

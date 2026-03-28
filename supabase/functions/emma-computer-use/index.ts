@@ -264,6 +264,7 @@ serve(async (req) => {
         const sandbox = await e2bApi("/sandboxes", "POST", {
           templateID: "desktop",
           timeout: 300,
+          secure: true,
           metadata: { userId, task: body.task || "general" },
         });
 

@@ -456,7 +456,7 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   stage?: string;
   error?: string;
   errorCode?: string;
-  streamUrl?: string;
+  
 }> {
   const startedAt = Date.now();
   let lastError = "Desktop is still starting";
@@ -707,7 +707,6 @@ serve(async (req) => {
 
         return json({
           sessionId: sandbox.sandboxId,
-          streamUrl: null, // Will be available after kickstart completes
           envdAccessToken: sandbox.envdAccessToken,
           status: "created",
         });

@@ -14,14 +14,16 @@ import { VoicePanel } from "@/components/VoicePanel";
 import { DataAnalysisPanel } from "@/components/DataAnalysisPanel";
 import { MemoryControlPanel } from "@/components/MemoryControlPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
+import { PaywallModal } from "@/components/PaywallModal";
 import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
+import { generateFingerprint, incrementLocalUsage, isOverLimit, remainingFreeMessages, getLocalUsage, markLocalPaid } from "@/lib/fingerprint";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { PanelRightClose, PanelRightOpen, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,7 +39,8 @@ const WELCOME_SUGGESTIONS = [
 export default function Index() {
   const { user, loading: authLoading, signOut, getToken } = useAuth();
   const navigate = useNavigate();
-  const { conversations, create, remove, rename, update } = useConversations(user?.id, getToken);
+  const userId = user?.id;
+  const { conversations, create, remove, rename, update } = useConversations(userId, getToken);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId, getToken);
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +48,7 @@ export default function Index() {
   const [mode, setMode] = useState<EmmaMode>("chat");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("standard");
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [showPaywall, setShowPaywall] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Set token getters for API modules
@@ -110,7 +114,43 @@ export default function Index() {
 
   const handleDeleteArtifact = useCallback((id: string) => { setArtifacts(prev => prev.filter(a => a.id !== id)); }, []);
 
+  const checkUsageAndSend = async (input: string) => {
+    // Check if user needs to pay
+    const usage = getLocalUsage();
+    if (!usage.isPaid && isOverLimit()) {
+      setShowPaywall(true);
+      return;
+    }
+
+    // For anonymous users, track usage via fingerprint
+    const fp = await generateFingerprint();
+    try {
+      const tokenGetter = getToken || (async () => null);
+      await dbProxy("track_usage", { fingerprint: fp }, tokenGetter);
+    } catch {}
+    incrementLocalUsage();
+
+    await send(input);
+  };
+
   const send = async (input: string) => {
+    // For anonymous users without conversation support, just do local chat
+    if (!user) {
+      const userMsg: Message = { role: "user", content: input, mode };
+      addLocal(userMsg);
+      setIsLoading(true);
+      let assistantSoFar = "";
+      try {
+        await streamChat({
+          messages: [...messages, userMsg], mode, answerStyle,
+          onDelta: (chunk) => { assistantSoFar += chunk; updateLastAssistant(assistantSoFar); },
+          onDone: async () => { setIsLoading(false); },
+          onError: (err) => { setIsLoading(false); toast.error(err); },
+        });
+      } catch { setIsLoading(false); toast.error("Failed to connect to Emma"); }
+      return;
+    }
+
     const convId = await ensureConversation(input);
     if (!convId) return;
 
@@ -161,7 +201,6 @@ export default function Index() {
   };
 
   if (authLoading) return <div className="h-screen flex items-center justify-center bg-background"><EmmaAvatar size="lg" /></div>;
-  if (!user) return <Navigate to="/sign-in" />;
 
   const showWelcome = messages.length === 0 && mode === "chat";
   const isChatMode = mode === "chat";
@@ -182,7 +221,7 @@ export default function Index() {
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
-        <EmmaSidebar conversations={conversations} activeId={activeConvId} onSelect={handleSelectConv} onCreate={handleNewChat} onDelete={remove} onRename={rename} onNavigate={navigate} onSignOut={signOut} />
+        <EmmaSidebar conversations={user ? conversations : []} activeId={activeConvId} onSelect={handleSelectConv} onCreate={handleNewChat} onDelete={remove} onRename={rename} onNavigate={navigate} onSignOut={user ? signOut : () => navigate("/sign-in")} />
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-auto flex flex-col border-b border-border bg-card">
             <div className="h-11 flex items-center px-3 gap-2">
@@ -223,7 +262,7 @@ export default function Index() {
                           </div>
                           <div className="grid grid-cols-2 gap-2 max-w-md w-full">
                             {WELCOME_SUGGESTIONS.map((s) => (
-                              <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") send(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
+                              <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
                                 <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
                                 <p>{s.text}</p>
                               </button>
@@ -243,8 +282,16 @@ export default function Index() {
                     </AnimatePresence>
                   </div>
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
-                    <ChatInput onSend={send} disabled={isLoading} userId={user.id} />
-                    <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle} · Multi-Agent · Memory-Aware</p>
+                    <ChatInput onSend={checkUsageAndSend} disabled={isLoading} userId={user?.id || "anonymous"} />
+                    <div className="flex items-center justify-center gap-2 mt-2">
+                      <p className="text-[10px] text-muted-foreground font-mono">Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle}</p>
+                      {!getLocalUsage().isPaid && (
+                        <span className="text-[10px] font-mono text-primary">{remainingFreeMessages()} free messages left</span>
+                      )}
+                      {!user && (
+                        <button onClick={() => navigate("/sign-in")} className="text-[10px] font-mono text-primary hover:underline">Sign in</button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </ResizablePanel>
@@ -252,6 +299,13 @@ export default function Index() {
             </ResizablePanelGroup>
           </div>
         </div>
+        <PaywallModal
+          open={showPaywall}
+          onClose={() => setShowPaywall(false)}
+          onPaid={() => { setShowPaywall(false); markLocalPaid(); }}
+          userEmail={user?.email}
+          getToken={getToken}
+        />
       </div>
     </SidebarProvider>
   );

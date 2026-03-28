@@ -172,6 +172,30 @@ export type Database = {
           },
         ]
       }
+      fingerprint_links: {
+        Row: {
+          created_at: string
+          id: string
+          link_type: string
+          linked_fingerprint: string
+          primary_fingerprint: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          link_type?: string
+          linked_fingerprint: string
+          primary_fingerprint: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          link_type?: string
+          linked_fingerprint?: string
+          primary_fingerprint?: string
+        }
+        Relationships: []
+      }
       goals: {
         Row: {
           completed_at: string | null
@@ -353,6 +377,45 @@ export type Database = {
           },
         ]
       }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string
+          currency: string
+          email: string | null
+          fingerprint: string | null
+          id: string
+          status: string
+          stripe_customer_id: string | null
+          stripe_session_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          currency?: string
+          email?: string | null
+          fingerprint?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_session_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          currency?: string
+          email?: string | null
+          fingerprint?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_session_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -404,6 +467,45 @@ export type Database = {
           prompt_text?: string
           source_insights?: Json
           version?: number
+        }
+        Relationships: []
+      }
+      usage_tracking: {
+        Row: {
+          created_at: string
+          fingerprint: string
+          id: string
+          ip_addresses: string[] | null
+          is_paid: boolean
+          messages_used: number
+          stripe_customer_id: string | null
+          tokens_used: number
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          fingerprint: string
+          id?: string
+          ip_addresses?: string[] | null
+          is_paid?: boolean
+          messages_used?: number
+          stripe_customer_id?: string | null
+          tokens_used?: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          fingerprint?: string
+          id?: string
+          ip_addresses?: string[] | null
+          is_paid?: boolean
+          messages_used?: number
+          stripe_customer_id?: string | null
+          tokens_used?: number
+          updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }

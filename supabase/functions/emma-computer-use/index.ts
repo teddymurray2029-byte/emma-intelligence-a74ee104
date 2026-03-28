@@ -474,9 +474,6 @@ Rules:
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const userId = await getClerkUserId(req);
-  if (!userId) return json({ error: "Unauthorized — sign in required" }, 401);
-
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
 

@@ -145,12 +145,39 @@ async function initDesktop(sandbox: SandboxSession): Promise<void> {
   const cached = sandboxCache.get(sandbox.sandboxId);
   if (cached?.desktopInitialized || sandbox.desktopInitialized) return;
 
-  // Start Xvfb display server
-  await runCommand(sandbox, "bash", ["-lc", "pgrep -f 'Xvfb :0' >/dev/null || (Xvfb :0 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &)"], 5, {});
-  // Give Xvfb a moment to start
-  await new Promise((r) => setTimeout(r, 2000));
-  // Start a lightweight window manager
-  await runCommand(sandbox, "bash", ["-lc", "pgrep -f startxfce4 >/dev/null || (DISPLAY=:0 startxfce4 >/tmp/startxfce4.log 2>&1 &)"], 5, {});
+  const xvfbStart = await runCommand(
+    sandbox,
+    "bash",
+    ["-lc", "pgrep -x Xvfb >/dev/null || nohup Xvfb :0 -screen 0 1024x768x24 -ac >/tmp/xvfb.log 2>&1 </dev/null &"],
+    5,
+    {},
+  );
+  if (xvfbStart.exitCode !== 0) {
+    throw new Error(`Failed to start Xvfb: ${xvfbStart.stderr || xvfbStart.stdout || "unknown error"}`);
+  }
+
+  const displayReady = await runCommand(
+    sandbox,
+    "bash",
+    ["-lc", "for i in $(seq 1 15); do test -S /tmp/.X11-unix/X0 && exit 0 || sleep 1; done; (cat /tmp/xvfb.log 2>/dev/null || true); exit 1"],
+    20,
+    {},
+  );
+  if (displayReady.exitCode !== 0) {
+    throw new Error(`X display :0 did not become ready: ${displayReady.stderr || displayReady.stdout || "socket missing"}`);
+  }
+
+  const wmStart = await runCommand(
+    sandbox,
+    "bash",
+    ["-lc", "if command -v startxfce4 >/dev/null; then pgrep -f 'xfce4-session|startxfce4' >/dev/null || nohup env DISPLAY=:0 startxfce4 >/tmp/startxfce4.log 2>&1 </dev/null &; fi"],
+    5,
+    {},
+  );
+  if (wmStart.exitCode !== 0) {
+    throw new Error(`Failed to start desktop session: ${wmStart.stderr || wmStart.stdout || "unknown error"}`);
+  }
+
   // Install screenshot tools if missing
   await runCommand(sandbox, "bash", ["-lc", "which scrot || apt-get install -y scrot 2>/dev/null"], 10, {});
   await runCommand(sandbox, "bash", ["-lc", "pip3 install pyautogui pillow 2>/dev/null || true"], 15, {});
@@ -285,7 +312,13 @@ async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<U
 // Helper to get or reconnect to a sandbox
 async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {
   if (envdAccessToken) {
-    const session = { sandboxId, envdAccessToken };
+    const cached = sandboxCache.get(sandboxId);
+    const session = {
+      sandboxId,
+      envdAccessToken,
+      domain: cached?.domain,
+      desktopInitialized: cached?.desktopInitialized,
+    };
     sandboxCache.set(sandboxId, session);
     return session;
   }
@@ -338,6 +371,16 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
       };
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Desktop is still starting";
+
+      if (lastError.includes("Can't connect to display") || lastError.includes("/tmp/.X11-unix/X0")) {
+        sandboxCache.set(sandbox.sandboxId, { ...sandbox, desktopInitialized: false });
+        try {
+          await initDesktop({ ...sandbox, desktopInitialized: false });
+        } catch (reinitError) {
+          lastError = reinitError instanceof Error ? reinitError.message : lastError;
+        }
+      }
+
       await new Promise((resolve) => setTimeout(resolve, DESKTOP_BOOT_POLL_MS));
     }
   }

@@ -109,29 +109,26 @@ async function downloadFile(sandboxId: string, envdAccessToken: string, filePath
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-// Take a screenshot and return base64 — tries multiple tools for compatibility
+// Take a screenshot and return base64 — stream image bytes through stdout to avoid sandbox file download races
 async function captureScreenshot(sandboxId: string, envdAccessToken: string): Promise<string> {
   const methods = [
-    { cmd: "bash", args: ["-c", "DISPLAY=:0 import -window root /tmp/screenshot.png"] },
-    { cmd: "bash", args: ["-c", "DISPLAY=:0 scrot /tmp/screenshot.png --overwrite"] },
-    { cmd: "python3", args: ["-c", "import subprocess; subprocess.run(['bash','-c','DISPLAY=:0 xwd -root -silent | convert xwd:- /tmp/screenshot.png'], check=True)"] },
-    { cmd: "python3", args: ["-c", "import pyautogui; pyautogui.screenshot('/tmp/screenshot.png')"] },
+    "DISPLAY=:0 import -window root png:- | base64 -w0",
+    "DISPLAY=:0 scrot -q 100 /dev/stdout | base64 -w0",
+    "DISPLAY=:0 xwd -root -silent | convert xwd:- png:- | base64 -w0",
+    "python -c \"import pyautogui, base64, io; img=pyautogui.screenshot(); buf=io.BytesIO(); img.save(buf, format='PNG'); print(base64.b64encode(buf.getvalue()).decode())\"",
   ];
 
   let lastError = "";
-  for (const method of methods) {
+  for (const command of methods) {
     try {
-      const result = await runCommand(sandboxId, envdAccessToken, method.cmd, method.args);
-      if (result.exitCode === 0) {
-        const imageBytes = await downloadFile(sandboxId, envdAccessToken, "/tmp/screenshot.png");
-        let binary = "";
-        const chunkSize = 8192;
-        for (let i = 0; i < imageBytes.length; i += chunkSize) {
-          binary += String.fromCharCode(...imageBytes.slice(i, i + chunkSize));
-        }
-        return btoa(binary);
+      const result = await runCommand(sandboxId, envdAccessToken, "bash", ["-lc", command], 30000);
+      const output = result.stdout.trim();
+
+      if (result.exitCode === 0 && output) {
+        return output;
       }
-      lastError = result.stderr || `exit code ${result.exitCode}`;
+
+      lastError = result.stderr || output || `exit code ${result.exitCode}`;
     } catch (e) {
       lastError = e instanceof Error ? e.message : "Unknown error";
     }

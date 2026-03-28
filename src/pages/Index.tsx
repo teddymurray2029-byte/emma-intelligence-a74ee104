@@ -4,9 +4,17 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { EmmaAvatar } from "@/components/EmmaAvatar";
-import { RightPanel } from "@/components/RightPanel";
 import { EmmaSidebar } from "@/components/EmmaSidebar";
-import { streamChat, generateImage, type Message } from "@/lib/emma-stream";
+import { ModeSwitcher } from "@/components/ModeSwitcher";
+import { ResearchPanel } from "@/components/ResearchPanel";
+import { ArtifactPanel } from "@/components/ArtifactPanel";
+import { ThinkPanel } from "@/components/ThinkPanel";
+import { BuilderPanel } from "@/components/BuilderPanel";
+import { VoicePanel } from "@/components/VoicePanel";
+import { DataAnalysisPanel } from "@/components/DataAnalysisPanel";
+import { MemoryControlPanel } from "@/components/MemoryControlPanel";
+import { InspectorPanel } from "@/components/InspectorPanel";
+import { streamChat, generateImage, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
@@ -14,16 +22,15 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { useNavigate, Navigate } from "react-router-dom";
 import { toast } from "sonner";
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Zap, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import type { CodeEditorHandle } from "@/components/CodeEditor";
 
 const WELCOME_SUGGESTIONS = [
-  "Build me a landing page",
-  "Explain quantum computing",
-  "/image A futuristic city at sunset",
-  "Design a REST API",
+  { text: "Research quantum computing breakthroughs in 2026", mode: "research" as EmmaMode },
+  { text: "Build me a landing page component", mode: "artifacts" as EmmaMode },
+  { text: "Explain how transformers work", mode: "chat" as EmmaMode },
+  { text: "Analyze my data file", mode: "data" as EmmaMode },
 ];
 
 export default function Index() {
@@ -34,8 +41,10 @@ export default function Index() {
   const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId);
   const [isLoading, setIsLoading] = useState(false);
   const [showRight, setShowRight] = useState(true);
+  const [mode, setMode] = useState<EmmaMode>("chat");
+  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("standard");
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<CodeEditorHandle | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -43,18 +52,14 @@ export default function Index() {
     }
   }, [messages, isLoading]);
 
-  useEffect(() => {
-    loadMessages();
-  }, [activeConvId, loadMessages]);
+  useEffect(() => { loadMessages(); }, [activeConvId, loadMessages]);
 
   const handleNewChat = useCallback(async () => {
     const conv = await create();
     if (conv) setActiveConvId(conv.id);
   }, [create]);
 
-  const handleSelectConv = (id: string) => {
-    setActiveConvId(id);
-  };
+  const handleSelectConv = (id: string) => setActiveConvId(id);
 
   const ensureConversation = async (input: string) => {
     let convId = activeConvId;
@@ -74,41 +79,64 @@ export default function Index() {
     const title = `Branch: ${branchedMessages[0]?.content.slice(0, 40) || "New branch"}`;
     const conv = await create(title);
     if (!conv) { toast.error("Failed to create branch"); return; }
-
     for (const msg of branchedMessages) {
       await supabase.from("messages").insert({
-        conversation_id: conv.id,
-        role: msg.role,
-        content: msg.content,
+        conversation_id: conv.id, role: msg.role, content: msg.content,
         metadata: msg.imageUrl ? { imageUrl: msg.imageUrl } : {},
       });
     }
-
-    // Update parent_id for branch tracking
     await supabase.from("conversations").update({ parent_id: activeConvId } as any).eq("id", conv.id);
-
     setActiveConvId(conv.id);
     toast.success("Conversation branched!");
   }, [messages, create, activeConvId]);
 
-  const handleOpenInEditor = useCallback((code: string, language: string) => {
-    editorRef.current?.openCode(code, language);
-    if (!showRight) setShowRight(true);
-  }, [showRight]);
+  const handleCreateArtifact = useCallback((title: string, content: string, type: string) => {
+    const artifact: Artifact = {
+      id: crypto.randomUUID(),
+      title,
+      type: type as Artifact["type"],
+      content,
+      version: 1,
+      versions: [{ content, timestamp: new Date().toISOString() }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setArtifacts(prev => [...prev, artifact]);
+    setMode("artifacts");
+    setShowRight(true);
+    toast.success(`Artifact created: ${title}`);
+  }, []);
+
+  const handleUpdateArtifact = useCallback((id: string, content: string) => {
+    setArtifacts(prev => prev.map(a =>
+      a.id === id ? {
+        ...a,
+        content,
+        version: a.version + 1,
+        versions: [...a.versions, { content, timestamp: new Date().toISOString() }],
+        updatedAt: new Date().toISOString(),
+      } : a
+    ));
+  }, []);
+
+  const handleDeleteArtifact = useCallback((id: string) => {
+    setArtifacts(prev => prev.filter(a => a.id !== id));
+  }, []);
 
   const send = async (input: string) => {
     const convId = await ensureConversation(input);
     if (!convId) return;
 
+    // Check for artifact creation pattern
+    const artifactMatch = input.match(/^(?:create|make|build|write)\s+(?:a\s+)?(?:new\s+)?(code|document|report|plan|html|react)\s*[:\-]?\s*(.+)/i);
+
     if (input.startsWith("/image ")) {
       const prompt = input.slice(7).trim();
       if (!prompt) { toast.error("Please provide an image prompt"); return; }
-
       const userMsg: Message = { role: "user", content: input };
       addLocal(userMsg);
       await saveMessage("user", input);
       setIsLoading(true);
-
       try {
         updateLastAssistant("🎨 Generating image...");
         const { imageUrl, text } = await generateImage(prompt);
@@ -123,7 +151,7 @@ export default function Index() {
       return;
     }
 
-    const userMsg: Message = { role: "user", content: input };
+    const userMsg: Message = { role: "user", content: input, mode };
     addLocal(userMsg);
     await saveMessage("user", input);
     setIsLoading(true);
@@ -134,6 +162,8 @@ export default function Index() {
     try {
       await streamChat({
         messages: allMessages,
+        mode,
+        answerStyle,
         onDelta: (chunk) => {
           assistantSoFar += chunk;
           updateLastAssistant(assistantSoFar);
@@ -142,6 +172,18 @@ export default function Index() {
           setIsLoading(false);
           if (assistantSoFar) {
             await saveMessage("assistant", assistantSoFar);
+
+            // Auto-detect artifacts in response
+            const codeBlocks = assistantSoFar.match(/```(\w+)?\n([\s\S]*?)```/g);
+            if (codeBlocks && codeBlocks.length > 0 && assistantSoFar.length > 500) {
+              // Suggest creating artifact if large code block
+              const firstBlock = codeBlocks[0];
+              const lang = firstBlock.match(/```(\w+)/)?.[1] || "text";
+              const code = firstBlock.replace(/```\w*\n/, "").replace(/```$/, "");
+              if (code.length > 200) {
+                handleCreateArtifact(`Generated ${lang}`, code, "code");
+              }
+            }
           }
         },
         onError: (err) => {
@@ -165,7 +207,37 @@ export default function Index() {
 
   if (!user) return <Navigate to="/login" />;
 
-  const showWelcome = messages.length === 0;
+  const showWelcome = messages.length === 0 && mode === "chat";
+  const isChatMode = mode === "chat";
+
+  // Determine what to show in the right panel based on mode
+  const renderRightPanel = () => {
+    switch (mode) {
+      case "research":
+        return <ResearchPanel onCreateArtifact={handleCreateArtifact} />;
+      case "artifacts":
+        return (
+          <ArtifactPanel
+            artifacts={artifacts}
+            onUpdate={handleUpdateArtifact}
+            onCreate={handleCreateArtifact}
+            onDelete={handleDeleteArtifact}
+          />
+        );
+      case "think":
+        return <ThinkPanel />;
+      case "builder":
+        return <BuilderPanel />;
+      case "voice":
+        return <VoicePanel />;
+      case "data":
+        return <DataAnalysisPanel />;
+      case "memory":
+        return <MemoryControlPanel />;
+      default:
+        return <InspectorPanel isProcessing={isLoading} />;
+    }
+  };
 
   return (
     <SidebarProvider>
@@ -182,31 +254,60 @@ export default function Index() {
         />
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-12 flex items-center border-b border-border bg-card px-3 gap-2">
-            <SidebarTrigger />
-            <div className="flex items-center gap-2 flex-1">
-              <h1 className="text-sm font-semibold text-foreground">Emma</h1>
-              <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                Proto-AGI v2.0
-              </span>
+          {/* Header */}
+          <header className="h-auto flex flex-col border-b border-border bg-card">
+            <div className="h-11 flex items-center px-3 gap-2">
+              <SidebarTrigger />
+              <div className="flex items-center gap-2 flex-1">
+                <h1 className="text-sm font-semibold text-foreground">Emma</h1>
+                <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                  AI Workspace
+                </span>
+              </div>
+
+              {/* Answer style toggle (chat mode only) */}
+              {isChatMode && (
+                <div className="flex items-center gap-0.5 mr-2">
+                  {(["concise", "standard", "deep", "direct"] as AnswerStyle[]).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setAnswerStyle(s)}
+                      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+                        answerStyle === s
+                          ? s === "direct" ? "bg-accent/20 text-accent" : "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {s === "direct" ? <span className="flex items-center gap-0.5"><Zap className="h-2 w-2" />{s}</span> : s}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-primary emma-pulse" />
+                <span className="text-xs font-mono text-primary">ONLINE</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 ml-1"
+                onClick={() => setShowRight(!showRight)}
+              >
+                {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+              </Button>
             </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-primary emma-pulse" />
-              <span className="text-xs font-mono text-primary">ONLINE</span>
+
+            {/* Mode Switcher */}
+            <div className="px-3 pb-2 overflow-x-auto">
+              <ModeSwitcher mode={mode} onChange={setMode} compact />
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 ml-2"
-              onClick={() => setShowRight(!showRight)}
-            >
-              {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-            </Button>
           </header>
 
           <div className="flex-1 overflow-hidden">
             <ResizablePanelGroup direction="horizontal">
-              <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={35}>
+              {/* Left: Chat (always visible, but sized based on mode) */}
+              <ResizablePanel defaultSize={showRight ? 55 : 100} minSize={25}>
                 <div className="flex flex-col h-full">
                   <div ref={scrollRef} className="flex-1 overflow-y-auto">
                     <AnimatePresence mode="wait">
@@ -224,18 +325,19 @@ export default function Index() {
                               Hello, I'm Emma
                             </h2>
                             <p className="text-sm text-muted-foreground leading-relaxed">
-                              Your personal AI Operating System — an entire team of researchers,
-                              engineers, designers and analysts working for you 24/7.
+                              Your AI operating system — research, create, analyze, and build with
+                              autonomous agents, persistent memory, and source-grounded answers.
                             </p>
                           </div>
                           <div className="grid grid-cols-2 gap-2 max-w-md w-full">
                             {WELCOME_SUGGESTIONS.map((s) => (
                               <button
-                                key={s}
-                                onClick={() => send(s)}
-                                className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left"
+                                key={s.text}
+                                onClick={() => { setMode(s.mode); if (s.mode === "chat") send(s.text); }}
+                                className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1"
                               >
-                                {s}
+                                <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
+                                <p>{s.text}</p>
                               </button>
                             ))}
                           </div>
@@ -254,7 +356,9 @@ export default function Index() {
                               index={i}
                               conversationId={activeConvId}
                               onBranch={handleBranch}
-                              onOpenInEditor={handleOpenInEditor}
+                              onOpenInEditor={(code, lang) => {
+                                handleCreateArtifact(`Code Snippet (${lang})`, code, "code");
+                              }}
                             />
                           ))}
                           {isLoading && messages[messages.length - 1]?.role === "user" && (
@@ -271,7 +375,7 @@ export default function Index() {
                   <div className="max-w-3xl mx-auto w-full px-4 py-3">
                     <ChatInput onSend={send} disabled={isLoading} userId={user.id} />
                     <p className="text-[10px] text-center text-muted-foreground mt-2 font-mono">
-                      Emma Proto-AGI · Multi-Agent · Persistent Memory · Self-Improving
+                      Emma · {mode.charAt(0).toUpperCase() + mode.slice(1)} Mode · {answerStyle} · Multi-Agent · Memory-Aware
                     </p>
                   </div>
                 </div>
@@ -281,7 +385,7 @@ export default function Index() {
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel defaultSize={45} minSize={25}>
-                    <RightPanel isProcessing={isLoading} editorRef={editorRef} />
+                    {renderRightPanel()}
                   </ResizablePanel>
                 </>
               )}

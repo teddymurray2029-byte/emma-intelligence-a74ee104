@@ -5,19 +5,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
+const OLLAMA_MODEL = "qwen3.5:9b";
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-  const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
-  if (!PERPLEXITY_API_KEY) {
-    return new Response(JSON.stringify({
-      error: "Web search not configured",
-      message: "PERPLEXITY_API_KEY is required. Add it in Settings → Integrations to enable web search.",
-    }), {
-      status: 501,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
 
   try {
     const { query } = await req.json();
@@ -28,15 +20,16 @@ serve(async (req) => {
       });
     }
 
-    const response = await fetch("https://api.perplexity.ai/chat/completions", {
+    // Use Ollama for web search simulation (no actual web access)
+    const response = await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama-3.1-sonar-small-128k-online",
-        messages: [{ role: "user", content: query }],
+        model: OLLAMA_MODEL,
+        messages: [
+          { role: "system", content: "You are a knowledgeable research assistant. Answer the query with detailed, factual information based on your training data. Structure your response clearly." },
+          { role: "user", content: query },
+        ],
       }),
     });
 
@@ -50,7 +43,7 @@ serve(async (req) => {
     const data = await response.json();
     return new Response(JSON.stringify({
       answer: data.choices?.[0]?.message?.content || "",
-      citations: data.citations || [],
+      citations: [],
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

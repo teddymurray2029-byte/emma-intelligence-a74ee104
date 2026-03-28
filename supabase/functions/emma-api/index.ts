@@ -6,6 +6,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const OLLAMA_URL = Deno.env.get("OLLAMA_URL") || "http://localhost:11434";
+const OLLAMA_MODEL = "qwen3.5:9b";
+
 const COGNITIVE_SYSTEM_PROMPT = `You are Emma — a multi-agent cognitive reasoning system. You demonstrate intelligence through reasoning depth, self-correction, and novel thinking.
 
 ## INTERNAL COGNITIVE AGENTS
@@ -53,11 +56,11 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
-async function callAI(apiKey: string, body: Record<string, unknown>) {
-  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function callAI(body: Record<string, unknown>) {
+  return await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, model: OLLAMA_MODEL }),
   });
 }
 
@@ -65,7 +68,6 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // --- Auth: extract API key from Bearer token ---
     const authHeader = req.headers.get("Authorization");
     const apiKey = authHeader?.replace(/^Bearer\s+/i, "").trim();
     if (!apiKey || apiKey.length < 20) {
@@ -78,7 +80,6 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Hash the key and look it up
     const encoder = new TextEncoder();
     const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(apiKey));
     const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -95,10 +96,8 @@ serve(async (req) => {
       });
     }
 
-    // Update last_used_at (fire and forget)
     supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id).then();
 
-    // --- Parse OpenAI-compatible request body ---
     const body = await req.json();
     const messages: any[] = body.messages || [];
     const stream: boolean = body.stream ?? false;
@@ -112,10 +111,6 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
-
-    // --- Inject memory context ---
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
     const { data: memories } = await supabase
       .from("memory_episodes")
@@ -128,13 +123,9 @@ serve(async (req) => {
       systemPrompt += `\n\n## RECALLED MEMORIES\n${memCtx}`;
     }
 
-    // Determine backend model
-    const backendModel = "google/gemini-2.5-flash";
-
-    // Build the AI payload
     const aiMessages = [{ role: "system", content: systemPrompt }, ...messages];
     const aiBody: Record<string, unknown> = {
-      model: backendModel,
+      model: OLLAMA_MODEL,
       messages: aiMessages,
       stream,
       temperature,
@@ -144,14 +135,13 @@ serve(async (req) => {
     const useRefinement = !stream && isComplexQuery(messages);
 
     if (useRefinement) {
-      // Two-pass: draft → refine
-      const draftResp = await callAI(LOVABLE_API_KEY, { ...aiBody, stream: false });
+      const draftResp = await callAI({ ...aiBody, stream: false });
       if (!draftResp.ok) return proxyError(draftResp);
       const draftData = await draftResp.json();
       const draftContent = draftData.choices?.[0]?.message?.content || "";
 
-      const refineResp = await callAI(LOVABLE_API_KEY, {
-        model: backendModel,
+      const refineResp = await callAI({
+        model: OLLAMA_MODEL,
         messages: [
           { role: "system", content: REFINEMENT_PROMPT },
           { role: "user", content: `Original query: ${messages[messages.length - 1].content}\n\nDraft response to refine:\n${draftContent}` },
@@ -163,7 +153,6 @@ serve(async (req) => {
       const refineData = await refineResp.json();
       const refinedContent = refineData.choices?.[0]?.message?.content || draftContent;
 
-      // Store memory
       const lastUserMsg = messages[messages.length - 1]?.content || "";
       if (lastUserMsg.length > 20) {
         await supabase.from("memory_episodes").insert({
@@ -174,7 +163,6 @@ serve(async (req) => {
         });
       }
 
-      // Return OpenAI-compatible non-streaming response
       const responseId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
       return new Response(JSON.stringify({
         id: responseId,
@@ -192,20 +180,16 @@ serve(async (req) => {
       });
     }
 
-    // --- Streaming or simple non-streaming ---
-    const aiResp = await callAI(LOVABLE_API_KEY, aiBody);
+    const aiResp = await callAI(aiBody);
     if (!aiResp.ok) return proxyError(aiResp);
 
     if (stream) {
-      // Proxy the SSE stream, rewriting model name
       return new Response(aiResp.body, {
         headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
       });
     }
 
-    // Non-streaming simple
     const data = await aiResp.json();
-    // Rewrite model name to "emma-1"
     data.model = model;
     data.id = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
     return new Response(JSON.stringify(data), {
@@ -223,19 +207,9 @@ serve(async (req) => {
 });
 
 async function proxyError(response: Response) {
-  if (response.status === 429) {
-    return new Response(JSON.stringify({ error: { message: "Rate limited. Please wait.", type: "rate_limit_error" } }), {
-      status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  if (response.status === 402) {
-    return new Response(JSON.stringify({ error: { message: "Credits exhausted.", type: "billing_error" } }), {
-      status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
   const t = await response.text().catch(() => "");
-  console.error("AI gateway error:", response.status, t);
-  return new Response(JSON.stringify({ error: { message: "AI gateway error", type: "server_error" } }), {
+  console.error("Ollama error:", response.status, t);
+  return new Response(JSON.stringify({ error: { message: "Ollama error: " + t, type: "server_error" } }), {
     status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }

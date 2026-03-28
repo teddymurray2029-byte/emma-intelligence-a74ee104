@@ -43,6 +43,40 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
   return resp.json();
 }
 
+async function isMeaningfulScreenshot(base64: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const sampleWidth = 64;
+      const sampleHeight = 48;
+      canvas.width = sampleWidth;
+      canvas.height = sampleHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(true);
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, sampleWidth, sampleHeight);
+      const { data } = ctx.getImageData(0, 0, sampleWidth, sampleHeight);
+      let nonDarkPixels = 0;
+      let brightPixels = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (brightness > 20) nonDarkPixels += 1;
+        if (brightness > 60) brightPixels += 1;
+      }
+
+      const totalPixels = data.length / 4;
+      resolve(nonDarkPixels / totalPixels > 0.05 && brightPixels / totalPixels > 0.01);
+    };
+    img.onerror = () => resolve(false);
+    img.src = `data:image/png;base64,${base64}`;
+  });
+}
+
 export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [task, setTask] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -112,32 +146,44 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setIsRunning(true);
 
     // Poll for screenshot readiness (client-side loop, short server calls)
-    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop to become ready...", status: "executing" });
+    const waitStepId = addStep({ action: "wait_for_desktop", reasoning: "Waiting for desktop UI to render...", status: "executing" });
     const pollStart = Date.now();
-    const POLL_TIMEOUT = 45_000;
+    const POLL_TIMEOUT = 90_000;
     let ready = false;
+    let lastWaitReason = "Desktop is still booting";
 
     while (Date.now() - pollStart < POLL_TIMEOUT && !abortRef.current) {
       try {
         const result = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken);
         if (result.screenshot) {
           setCurrentScreenshot(result.screenshot);
+
+          const meaningful = await isMeaningfulScreenshot(result.screenshot);
+          if (meaningful) {
+            updateStep(waitStepId, {
+              status: "done",
+              screenshot: result.screenshot,
+              reasoning: `Desktop UI ready (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
+            });
+            ready = true;
+            break;
+          }
+
+          lastWaitReason = "Desktop screenshot is still blank/black";
           updateStep(waitStepId, {
-            status: "done",
+            status: "executing",
             screenshot: result.screenshot,
-            reasoning: `Desktop ready (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
+            reasoning: `${lastWaitReason} (${Math.ceil((Date.now() - pollStart) / 1000)}s)`,
           });
-          ready = true;
-          break;
         }
-      } catch {
-        // Screenshot not ready yet, keep polling
+      } catch (error: any) {
+        lastWaitReason = error?.message || "Screenshot not ready yet";
       }
       await new Promise((r) => setTimeout(r, 3000));
     }
 
     if (!ready) {
-      updateStep(waitStepId, { status: "error", reasoning: "Desktop did not become ready in time" });
+      updateStep(waitStepId, { status: "error", reasoning: `${lastWaitReason}. Desktop did not become ready in time` });
       setIsRunning(false);
       setStatus("error");
       toast.error("Desktop did not become ready in time");

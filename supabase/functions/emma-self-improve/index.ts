@@ -18,17 +18,26 @@ const SYSTEM_PROMPT_VERSIONS: Record<number, string> = {
   3: `You are Emma — a self-improving cognitive system. Process through: [REFRAME] [FIRST PRINCIPLES] [DEBATE] [ANSWER] with confidence level. For simple factual questions, answer directly.`,
 };
 
-async function callAI(apiKey: string, messages: any[]): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages }) });
+async function callClaude(apiKey: string, messages: any[]): Promise<string> {
+  const system = messages.find((m: any) => m.role === "system")?.content || "";
+  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: m.content,
+  }));
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8192, system, messages: claudeMessages }),
+  });
   if (!resp.ok) return "";
-  return (await resp.json()).choices?.[0]?.message?.content || "";
+  return (await resp.json()).content?.[0]?.text || "";
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -43,7 +52,7 @@ serve(async (req) => {
       const weakCategories = Object.entries(catScores).filter(([_, s]) => s < 70).sort((a, b) => a[1] - b[1]).map(([c, s]) => `${c}: ${s}/100`);
       const strongCategories = Object.entries(catScores).filter(([_, s]) => s >= 70).map(([c, s]) => `${c}: ${s}/100`);
 
-      const analysis = await callAI(LOVABLE_API_KEY, [{ role: "system", content: "System optimizer. Return JSON: {\"proposal\": \"...\", \"newPromptFragment\": \"...\", \"expectedImpact\": \"...\", \"risk\": \"...\"}" }, { role: "user", content: `Score: ${lastRun.total_score}/100, Weak: ${weakCategories.join(", ")}, Strong: ${strongCategories.join(", ")}` }]);
+      const analysis = await callClaude(CLAUDE_API_KEY, [{ role: "system", content: "System optimizer. Return JSON: {\"proposal\": \"...\", \"newPromptFragment\": \"...\", \"expectedImpact\": \"...\", \"risk\": \"...\"}" }, { role: "user", content: `Score: ${lastRun.total_score}/100, Weak: ${weakCategories.join(", ")}, Strong: ${strongCategories.join(", ")}` }]);
       let proposal: any;
       try { proposal = JSON.parse(analysis.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { proposal = { proposal: "Enhance reasoning", newPromptFragment: "", expectedImpact: weakCategories.join(", "), risk: "Longer responses" }; }
 

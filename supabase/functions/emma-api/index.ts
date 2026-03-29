@@ -53,12 +53,31 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
-async function callAI(apiKey: string, body: Record<string, unknown>) {
-  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function callClaude(apiKey: string, system: string, messages: any[], stream = false) {
+  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: m.content,
+  }));
+
+  return await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 8192,
+      system,
+      messages: claudeMessages,
+      stream,
+    }),
   });
+}
+
+function extractClaudeText(data: any): string {
+  return data.content?.[0]?.text || "";
 }
 
 serve(async (req) => {
@@ -104,7 +123,6 @@ serve(async (req) => {
     const stream: boolean = body.stream ?? false;
     const model: string = body.model || "emma-1";
     const temperature: number = body.temperature ?? 0.7;
-    const maxTokens: number | undefined = body.max_tokens || body.max_completion_tokens;
 
     if (!messages.length) {
       return new Response(JSON.stringify({ error: { message: "messages is required", type: "invalid_request_error" } }), {
@@ -112,8 +130,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY is not configured");
 
     // --- Inject memory context ---
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
@@ -128,40 +146,21 @@ serve(async (req) => {
       systemPrompt += `\n\n## RECALLED MEMORIES\n${memCtx}`;
     }
 
-    // Determine backend model
-    const backendModel = "google/gemini-2.5-flash";
-
-    // Build the AI payload
-    const aiMessages = [{ role: "system", content: systemPrompt }, ...messages];
-    const aiBody: Record<string, unknown> = {
-      model: backendModel,
-      messages: aiMessages,
-      stream,
-      temperature,
-    };
-    if (maxTokens) aiBody.max_tokens = maxTokens;
-
     const useRefinement = !stream && isComplexQuery(messages);
 
     if (useRefinement) {
       // Two-pass: draft → refine
-      const draftResp = await callAI(LOVABLE_API_KEY, { ...aiBody, stream: false });
+      const draftResp = await callClaude(CLAUDE_API_KEY, systemPrompt, messages, false);
       if (!draftResp.ok) return proxyError(draftResp);
       const draftData = await draftResp.json();
-      const draftContent = draftData.choices?.[0]?.message?.content || "";
+      const draftContent = extractClaudeText(draftData);
 
-      const refineResp = await callAI(LOVABLE_API_KEY, {
-        model: backendModel,
-        messages: [
-          { role: "system", content: REFINEMENT_PROMPT },
-          { role: "user", content: `Original query: ${messages[messages.length - 1].content}\n\nDraft response to refine:\n${draftContent}` },
-        ],
-        stream: false,
-        temperature,
-      });
+      const refineResp = await callClaude(CLAUDE_API_KEY, REFINEMENT_PROMPT, [
+        { role: "user", content: `Original query: ${messages[messages.length - 1].content}\n\nDraft response to refine:\n${draftContent}` },
+      ], false);
       if (!refineResp.ok) return proxyError(refineResp);
       const refineData = await refineResp.json();
-      const refinedContent = refineData.choices?.[0]?.message?.content || draftContent;
+      const refinedContent = extractClaudeText(refineData) || draftContent;
 
       // Store memory
       const lastUserMsg = messages[messages.length - 1]?.content || "";
@@ -193,22 +192,34 @@ serve(async (req) => {
     }
 
     // --- Streaming or simple non-streaming ---
-    const aiResp = await callAI(LOVABLE_API_KEY, aiBody);
+    const aiResp = await callClaude(CLAUDE_API_KEY, systemPrompt, messages, stream);
     if (!aiResp.ok) return proxyError(aiResp);
 
     if (stream) {
-      // Proxy the SSE stream, rewriting model name
       return new Response(aiResp.body, {
         headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
       });
     }
 
-    // Non-streaming simple
+    // Non-streaming simple — convert Claude response to OpenAI format
     const data = await aiResp.json();
-    // Rewrite model name to "emma-1"
-    data.model = model;
-    data.id = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
-    return new Response(JSON.stringify(data), {
+    const responseId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
+    return new Response(JSON.stringify({
+      id: responseId,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: extractClaudeText(data) },
+        finish_reason: "stop",
+      }],
+      usage: {
+        prompt_tokens: data.usage?.input_tokens || 0,
+        completion_tokens: data.usage?.output_tokens || 0,
+        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+      },
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
@@ -234,7 +245,7 @@ async function proxyError(response: Response) {
     });
   }
   const t = await response.text().catch(() => "");
-  console.error("AI gateway error:", response.status, t);
+  console.error("Claude API error:", response.status, t);
   return new Response(JSON.stringify({ error: { message: "AI gateway error", type: "server_error" } }), {
     status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });

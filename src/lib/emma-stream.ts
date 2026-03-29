@@ -47,10 +47,28 @@ export async function streamChat({ messages, feedback, mode, answerStyle, onDelt
       textBuffer = textBuffer.slice(newlineIndex + 1);
       if (line.endsWith("\r")) line = line.slice(0, -1);
       if (line.startsWith(":") || line.trim() === "") continue;
+      
+      // Handle Claude's "event:" lines
+      if (line.startsWith("event: ")) {
+        const eventType = line.slice(7).trim();
+        if (eventType === "message_stop") { streamDone = true; break; }
+        continue;
+      }
+      
       if (!line.startsWith("data: ")) continue;
       const jsonStr = line.slice(6).trim();
       if (jsonStr === "[DONE]") { streamDone = true; break; }
-      try { const parsed = JSON.parse(jsonStr); const content = parsed.choices?.[0]?.delta?.content as string | undefined; if (content) onDelta(content); } catch { textBuffer = line + "\n" + textBuffer; break; }
+      try {
+        const parsed = JSON.parse(jsonStr);
+        // Claude streaming format
+        if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+          onDelta(parsed.delta.text);
+        }
+        // OpenAI streaming format (fallback)
+        else if (parsed.choices?.[0]?.delta?.content) {
+          onDelta(parsed.choices[0].delta.content);
+        }
+      } catch { textBuffer = line + "\n" + textBuffer; break; }
     }
   }
 
@@ -58,11 +76,18 @@ export async function streamChat({ messages, feedback, mode, answerStyle, onDelt
     for (let raw of textBuffer.split("\n")) {
       if (!raw) continue;
       if (raw.endsWith("\r")) raw = raw.slice(0, -1);
-      if (raw.startsWith(":") || raw.trim() === "") continue;
+      if (raw.startsWith(":") || raw.trim() === "" || raw.startsWith("event: ")) continue;
       if (!raw.startsWith("data: ")) continue;
       const jsonStr = raw.slice(6).trim();
       if (jsonStr === "[DONE]") continue;
-      try { const parsed = JSON.parse(jsonStr); const content = parsed.choices?.[0]?.delta?.content as string | undefined; if (content) onDelta(content); } catch {}
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+          onDelta(parsed.delta.text);
+        } else if (parsed.choices?.[0]?.delta?.content) {
+          onDelta(parsed.choices[0].delta.content);
+        }
+      } catch {}
     }
   }
   onDone();

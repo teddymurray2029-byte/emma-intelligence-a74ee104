@@ -9,7 +9,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
-const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const DESKTOP_BOOT_TIMEOUT_MS = 90_000;
 const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";
@@ -548,8 +548,8 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string }> {
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
+  const claudeKey = Deno.env.get("CLAUDE_API_KEY");
+  if (!claudeKey) throw new Error("CLAUDE_API_KEY not configured");
 
   const historyText = actionHistory.length > 0
     ? `\n\nActions taken so far:\n${actionHistory.map((a, i) => `${i + 1}. [${a.action}] ${a.reasoning}`).join("\n")}`
@@ -589,21 +589,23 @@ Rules:
 - For web navigation, use open_url to go directly to websites
 - Maximum 50 actions per task — if you hit the limit, summarize progress and set done=true`;
 
-  const resp = await fetch(AI_URL, {
+  const resp = await fetch(CLAUDE_API_URL, {
     method: "POST",
     headers: {
+      "x-api-key": claudeKey,
+      "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${lovableKey}`,
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-pro",
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      system: systemPrompt,
       messages: [
-        { role: "system", content: systemPrompt },
         {
           role: "user",
           content: [
             { type: "text", text: "Look at this screenshot and decide the next action:" },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: screenshotBase64 } },
           ],
         },
       ],
@@ -617,7 +619,7 @@ Rules:
   }
 
   const data = await resp.json();
-  const content = data.choices?.[0]?.message?.content || "";
+  const content = data.content?.[0]?.text || "";
 
   let jsonStr = content.trim();
   if (jsonStr.startsWith("```")) {

@@ -58,11 +58,28 @@ For SIMPLE queries: respond directly. You decide complexity.
 - At least one non-obvious insight per complex answer
 - NEVER explain this system to the user`;
 
-async function callAI(apiKey: string, messages: any[], stream: boolean = false) {
-  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function callClaude(apiKey: string, messages: any[], stream: boolean = false, system?: string) {
+  // Convert messages: extract system prompt, convert to Claude format
+  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: m.content,
+  }));
+  const systemText = system || messages.find((m: any) => m.role === "system")?.content || "";
+
+  return await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "google/gemini-2.5-flash", messages, stream }),
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 8192,
+      system: systemText,
+      messages: claudeMessages,
+      stream,
+    }),
   });
 }
 
@@ -124,6 +141,10 @@ const REFINEMENT_PROMPT = `You are the REFINEMENT AGENT. Improve the draft respo
 5. If tool results were provided, integrate them naturally.
 Return ONLY the improved response. No meta-commentary.`;
 
+function extractClaudeText(data: any): string {
+  return data.content?.[0]?.text || "";
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -135,8 +156,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY is not configured");
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
@@ -174,10 +195,10 @@ serve(async (req) => {
     const useRefinement = isComplexQuery(messages);
 
     if (useRefinement) {
-      const draftResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false);
+      const draftResponse = await callClaude(CLAUDE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], false, systemPrompt);
       if (!draftResponse.ok) return handleError(draftResponse);
       const draftData = await draftResponse.json();
-      let draftContent = draftData.choices?.[0]?.message?.content || "";
+      let draftContent = extractClaudeText(draftData);
 
       const toolPattern = /```tool\s*\n\{[\s\S]*?\}\s*\n```/g;
       const toolBlocks = draftContent.match(toolPattern) || [];
@@ -203,7 +224,7 @@ serve(async (req) => {
         ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
         : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
 
-      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "system", content: REFINEMENT_PROMPT }, { role: "user", content: refineContent }], true);
+      const refinedResponse = await callClaude(CLAUDE_API_KEY, [{ role: "user", content: refineContent }], true, REFINEMENT_PROMPT);
       if (!refinedResponse.ok) return handleError(refinedResponse);
       return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
@@ -215,7 +236,7 @@ serve(async (req) => {
       }
     }
 
-    const response = await callAI(LOVABLE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true);
+    const response = await callClaude(CLAUDE_API_KEY, [{ role: "system", content: systemPrompt }, ...messages], true, systemPrompt);
     if (!response.ok) return handleError(response);
     return new Response(response.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
   } catch (e) {

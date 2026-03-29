@@ -12,25 +12,32 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   try { const { payload } = await jwtVerify(token, JWKS); return (payload.sub as string) || null; } catch { return null; }
 }
 
+async function callClaude(apiKey: string, system: string, userContent: string): Promise<string> {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4096, system, messages: [{ role: "user", content: userContent }] }),
+  });
+  if (!resp.ok) return "";
+  return (await resp.json()).content?.[0]?.text || "";
+}
+
 async function evaluateAnswer(apiKey: string, question: string, expected: string, actual: string) {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "system", content: `Score 0-10. Return JSON: {"score": N, "reasoning": "..."}` }, { role: "user", content: `Q: ${question}\nExpected: ${expected}\nActual: ${actual}` }] }) });
-  if (!resp.ok) return { score: 0, reasoning: "Evaluation failed" };
-  const data = await resp.json();
-  try { return JSON.parse((data.choices?.[0]?.message?.content || "").replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return { score: 5, reasoning: "Parse error" }; }
+  const result = await callClaude(apiKey, `Score 0-10. Return JSON: {"score": N, "reasoning": "..."}`, `Q: ${question}\nExpected: ${expected}\nActual: ${actual}`);
+  if (!result) return { score: 0, reasoning: "Evaluation failed" };
+  try { return JSON.parse(result.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return { score: 5, reasoning: "Parse error" }; }
 }
 
 async function getAIAnswer(apiKey: string, question: string, systemPrompt: string) {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: question }] }) });
-  if (!resp.ok) return "ERROR";
-  const data = await resp.json();
-  return data.choices?.[0]?.message?.content || "No response";
+  const result = await callClaude(apiKey, systemPrompt, question);
+  return result || "No response";
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -48,8 +55,8 @@ serve(async (req) => {
       const categoryScores: Record<string, { total: number; max: number; count: number }> = {};
 
       for (const q of questions) {
-        const answer = await getAIAnswer(LOVABLE_API_KEY, q.question, systemPrompt);
-        const evaluation = await evaluateAnswer(LOVABLE_API_KEY, q.question, q.expected_answer || "", answer);
+        const answer = await getAIAnswer(CLAUDE_API_KEY, q.question, systemPrompt);
+        const evaluation = await evaluateAnswer(CLAUDE_API_KEY, q.question, q.expected_answer || "", answer);
         const ws = evaluation.score * q.difficulty, ms = 10 * q.difficulty;
         if (!categoryScores[q.category]) categoryScores[q.category] = { total: 0, max: 0, count: 0 };
         categoryScores[q.category].total += ws; categoryScores[q.category].max += ms; categoryScores[q.category].count++;
@@ -62,7 +69,7 @@ serve(async (req) => {
       const catScoresNormalized: Record<string, number> = {};
       for (const [cat, scores] of Object.entries(categoryScores)) catScoresNormalized[cat] = scores.max > 0 ? Math.round((scores.total / scores.max) * 100) : 0;
 
-      await supabase.from("benchmark_runs").insert({ user_id: userId, total_score: normalizedScore, max_score: 100, category_scores: catScoresNormalized, model_config: { model: "gemini-2.5-flash", prompt_version: systemPromptVersion || 1 }, system_prompt_version: systemPromptVersion || 1 });
+      await supabase.from("benchmark_runs").insert({ user_id: userId, total_score: normalizedScore, max_score: 100, category_scores: catScoresNormalized, model_config: { model: "claude-sonnet-4", prompt_version: systemPromptVersion || 1 }, system_prompt_version: systemPromptVersion || 1 });
       const { data: prevRuns } = await supabase.from("benchmark_runs").select("total_score").eq("user_id", userId).order("created_at", { ascending: false }).limit(2);
       const previousScore = prevRuns && prevRuns.length > 1 ? Number(prevRuns[1].total_score) : null;
       const delta = previousScore !== null ? normalizedScore - previousScore : null;

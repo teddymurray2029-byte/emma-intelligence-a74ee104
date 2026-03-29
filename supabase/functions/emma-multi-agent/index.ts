@@ -12,10 +12,14 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   try { const { payload } = await jwtVerify(token, JWKS); return (payload.sub as string) || null; } catch { return null; }
 }
 
-async function callAI(apiKey: string, messages: any[]): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages }) });
+async function callClaude(apiKey: string, system: string, userContent: string): Promise<string> {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8192, system, messages: [{ role: "user", content: userContent }] }),
+  });
   if (!resp.ok) throw new Error(`AI failed: ${resp.status}`);
-  return (await resp.json()).choices?.[0]?.message?.content || "";
+  return (await resp.json()).content?.[0]?.text || "";
 }
 
 const AGENTS = [
@@ -28,7 +32,8 @@ const AGENTS = [
 
 async function runAgent(apiKey: string, agent: typeof AGENTS[0], task: string, context: string) {
   const start = Date.now();
-  const output = await callAI(apiKey, [{ role: "system", content: agent.prompt }, { role: "user", content: `Task: ${task}\n${context ? `Context:\n${context}` : ""}` }]);
+  const userContent = `Task: ${task}\n${context ? `Context:\n${context}` : ""}`;
+  const output = await callClaude(apiKey, agent.prompt, userContent);
   let confidence = 0.5;
   try { const p = JSON.parse(output.replace(/```json\n?/g, "").replace(/```/g, "").trim()); confidence = p.confidence || p.reliability || p.overallConfidence || 0.5; } catch {}
   return { agent: agent.id, role: agent.role, output, confidence, duration: Date.now() - start };
@@ -37,8 +42,8 @@ async function runAgent(apiKey: string, agent: typeof AGENTS[0], task: string, c
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -52,14 +57,14 @@ serve(async (req) => {
       const log: string[] = [];
 
       const phase1 = activeAgents.filter(a => ["analyst", "critic", "synthesizer"].includes(a.id));
-      const phase1Results = await Promise.all(phase1.map(a => runAgent(LOVABLE_API_KEY, a, input, "")));
+      const phase1Results = await Promise.all(phase1.map(a => runAgent(CLAUDE_API_KEY, a, input, "")));
       results.push(...phase1Results);
       phase1Results.forEach(r => log.push(`[${r.agent.toUpperCase()}] ${r.duration}ms, conf: ${r.confidence.toFixed(2)}`));
 
       const validator = activeAgents.find(a => a.id === "validator");
       if (validator) {
         const ctx = phase1Results.map(r => `[${r.agent}]: ${r.output.slice(0, 500)}`).join("\n\n");
-        const vr = await runAgent(LOVABLE_API_KEY, validator, input, ctx);
+        const vr = await runAgent(CLAUDE_API_KEY, validator, input, ctx);
         results.push(vr);
         log.push(`[VALIDATOR] ${vr.duration}ms`);
       }
@@ -68,7 +73,7 @@ serve(async (req) => {
       let finalOutput = "";
       if (meta) {
         const ctx = results.map(r => `[${r.agent}]: ${r.output.slice(0, 600)}`).join("\n\n");
-        const mr = await runAgent(LOVABLE_API_KEY, meta, input, ctx);
+        const mr = await runAgent(CLAUDE_API_KEY, meta, input, ctx);
         results.push(mr);
         finalOutput = mr.output;
       } else finalOutput = results.map(r => r.output).join("\n\n");

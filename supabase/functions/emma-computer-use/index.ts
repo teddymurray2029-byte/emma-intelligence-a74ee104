@@ -9,7 +9,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
-const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const DESKTOP_BOOT_TIMEOUT_MS = 90_000;
 const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";

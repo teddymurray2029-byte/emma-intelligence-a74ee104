@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -19,20 +20,21 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   } catch { return null; }
 }
 
-async function callClaude(apiKey: string, messages: any[]): Promise<string> {
+async function callAI(apiKey: string, messages: any[]): Promise<string> {
   const system = messages.find((m: any) => m.role === "system")?.content || "";
-  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+  const userMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: m.content,
   }));
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const allMessages = system ? [{ role: "system", content: system }, ...userMessages] : userMessages;
+  const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
-    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8192, system, messages: claudeMessages }),
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "google/gemini-3-flash-preview", max_tokens: 8192, messages: allMessages }),
   });
   if (!resp.ok) return "";
   const data = await resp.json();
-  return data.content?.[0]?.text || "";
+  return data.choices?.[0]?.message?.content || "";
 }
 
 function parseJSON(text: string): any {
@@ -48,7 +50,6 @@ serve(async (req) => {
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // Verify admin role
     const { data: roles } = await supabase
       .from("user_roles")
       .select("role")
@@ -56,22 +57,15 @@ serve(async (req) => {
       .eq("role", "admin");
     if (!roles?.length) return json({ error: "Admin access required" }, 403);
 
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
     const { action } = await req.json();
 
     if (action === "get_dashboard") {
       const [
-        { count: userCount },
-        { count: convCount },
-        { count: msgCount },
-        { count: memCount },
-        { data: recentBenchmarks },
-        { data: recentImprovements },
-        { data: patterns },
-        { data: promptVersions },
-        { data: insights },
+        { count: userCount }, { count: convCount }, { count: msgCount }, { count: memCount },
+        { data: recentBenchmarks }, { data: recentImprovements }, { data: patterns }, { data: promptVersions }, { data: insights },
       ] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("conversations").select("id", { count: "exact", head: true }),
@@ -86,21 +80,13 @@ serve(async (req) => {
 
       return json({
         stats: { users: userCount || 0, conversations: convCount || 0, messages: msgCount || 0, memoryEpisodes: memCount || 0 },
-        recentBenchmarks: recentBenchmarks || [],
-        recentImprovements: recentImprovements || [],
-        patterns: patterns || [],
-        promptVersions: promptVersions || [],
-        insights: insights || [],
+        recentBenchmarks: recentBenchmarks || [], recentImprovements: recentImprovements || [],
+        patterns: patterns || [], promptVersions: promptVersions || [], insights: insights || [],
       });
     }
 
     if (action === "aggregate_data") {
-      const [
-        { data: memoryData },
-        { data: benchData },
-        { data: improvData },
-        { data: goalData },
-      ] = await Promise.all([
+      const [{ data: memoryData }, { data: benchData }, { data: improvData }, { data: goalData }] = await Promise.all([
         supabase.from("memory_episodes").select("episode_type, content, relevance_score").order("created_at", { ascending: false }).limit(500),
         supabase.from("benchmark_runs").select("total_score, category_scores, created_at").order("created_at", { ascending: false }).limit(100),
         supabase.from("improvement_logs").select("improvement_type, description, before_score, after_score, delta, accepted").order("created_at", { ascending: false }).limit(100),
@@ -109,132 +95,73 @@ serve(async (req) => {
 
       const episodeTypes: Record<string, number> = {};
       (memoryData || []).forEach((m: any) => { episodeTypes[m.episode_type] = (episodeTypes[m.episode_type] || 0) + 1; });
-
       const benchScores = (benchData || []).map((b: any) => Number(b.total_score));
       const avgScore = benchScores.length ? benchScores.reduce((a, b) => a + b, 0) / benchScores.length : 0;
-
       const improvementTypes: Record<string, number> = {};
       (improvData || []).forEach((i: any) => { improvementTypes[i.improvement_type] = (improvementTypes[i.improvement_type] || 0) + 1; });
-
       const goalTypes: Record<string, number> = {};
       (goalData || []).forEach((g: any) => { goalTypes[g.goal_type] = (goalTypes[g.goal_type] || 0) + 1; });
 
       const aggregation = {
         memoryEpisodeTypes: episodeTypes,
         benchmarkStats: { count: benchScores.length, avg: Math.round(avgScore * 10) / 10, min: Math.min(...benchScores, 0), max: Math.max(...benchScores, 0) },
-        improvementTypes,
-        goalTypes,
+        improvementTypes, goalTypes,
         sampleInteractions: (memoryData || []).filter((m: any) => m.episode_type === "interaction").slice(0, 20).map((m: any) => m.content.slice(0, 200)),
       };
 
       await supabase.from("admin_insights").insert({
-        insight_type: "aggregation",
-        category: "system_wide",
+        insight_type: "aggregation", category: "system_wide",
         description: `Aggregated data: ${benchScores.length} benchmarks (avg ${Math.round(avgScore)}), ${(memoryData || []).length} memories`,
         data: aggregation,
       });
-
       return json(aggregation);
     }
 
     if (action === "extract_patterns") {
-      const { data: recentInsight } = await supabase
-        .from("admin_insights")
-        .select("data")
-        .eq("insight_type", "aggregation")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
-
+      const { data: recentInsight } = await supabase.from("admin_insights").select("data").eq("insight_type", "aggregation").order("created_at", { ascending: false }).limit(1).single();
       if (!recentInsight) return json({ error: "Run aggregate_data first" }, 400);
 
-      const raw = await callClaude(CLAUDE_API_KEY, [
-        {
-          role: "system",
-          content: `You are an AI system analyst. Given aggregated user data, extract learning patterns.
-Return JSON array:
-[{"pattern_type": "common_question|failure_mode|success_pattern|user_behavior", "description": "...", "frequency": <number>, "confidence": 0-1, "recommendation": "..."}]`,
-        },
+      const raw = await callAI(LOVABLE_API_KEY, [
+        { role: "system", content: `You are an AI system analyst. Given aggregated user data, extract learning patterns.\nReturn JSON array:\n[{"pattern_type": "common_question|failure_mode|success_pattern|user_behavior", "description": "...", "frequency": <number>, "confidence": 0-1, "recommendation": "..."}]` },
         { role: "user", content: `Aggregated data:\n${JSON.stringify(recentInsight.data)}` },
       ]);
 
       let patterns: any[] = [];
       try { patterns = parseJSON(raw); } catch { patterns = []; }
-
       for (const p of patterns) {
-        await supabase.from("learning_patterns").insert({
-          pattern_type: p.pattern_type || "common_question",
-          pattern_data: p,
-          frequency: p.frequency || 1,
-          confidence_score: p.confidence || 0.5,
-        });
+        await supabase.from("learning_patterns").insert({ pattern_type: p.pattern_type || "common_question", pattern_data: p, frequency: p.frequency || 1, confidence_score: p.confidence || 0.5 });
       }
-
       return json({ patterns, count: patterns.length });
     }
 
     if (action === "generate_improvement") {
-      const { data: patterns } = await supabase
-        .from("learning_patterns")
-        .select("*")
-        .order("confidence_score", { ascending: false })
-        .limit(20);
+      const { data: patterns } = await supabase.from("learning_patterns").select("*").order("confidence_score", { ascending: false }).limit(20);
+      const { data: currentPrompt } = await supabase.from("prompt_evolutions").select("*").eq("active", true).limit(1).single();
 
-      const { data: currentPrompt } = await supabase
-        .from("prompt_evolutions")
-        .select("*")
-        .eq("active", true)
-        .limit(1)
-        .single();
-
-      const raw = await callClaude(CLAUDE_API_KEY, [
-        {
-          role: "system",
-          content: `You are a system prompt optimizer. Based on learned patterns and current prompt, generate an improved system prompt.
-Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvements": ["..."], "risk_assessment": "..."}`,
-        },
-        {
-          role: "user",
-          content: `Patterns:\n${JSON.stringify(patterns || [])}\n\nCurrent prompt:\n${currentPrompt?.prompt_text || "Default system prompt"}`,
-        },
+      const raw = await callAI(LOVABLE_API_KEY, [
+        { role: "system", content: `You are a system prompt optimizer. Based on learned patterns and current prompt, generate an improved system prompt.\nReturn JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvements": ["..."], "risk_assessment": "..."}` },
+        { role: "user", content: `Patterns:\n${JSON.stringify(patterns || [])}\n\nCurrent prompt:\n${currentPrompt?.prompt_text || "Default system prompt"}` },
       ]);
 
       let improvement: any = {};
       try { improvement = parseJSON(raw); } catch {
         improvement = { improved_prompt: "Failed to generate", changes: [], expected_improvements: [], risk_assessment: "Parse error" };
       }
-
       return json(improvement);
     }
 
     if (action === "apply_improvement") {
       const { prompt_text, source_pattern_ids } = await req.json().catch(() => ({ prompt_text: null, source_pattern_ids: [] }));
       if (!prompt_text) return json({ error: "prompt_text required" }, 400);
-
       await supabase.from("prompt_evolutions").update({ active: false }).eq("active", true);
-
-      const { data: latest } = await supabase
-        .from("prompt_evolutions")
-        .select("version")
-        .order("version", { ascending: false })
-        .limit(1)
-        .single();
-
+      const { data: latest } = await supabase.from("prompt_evolutions").select("version").order("version", { ascending: false }).limit(1).single();
       const nextVersion = (latest?.version || 0) + 1;
-
-      await supabase.from("prompt_evolutions").insert({
-        version: nextVersion,
-        prompt_text,
-        source_insights: source_pattern_ids || [],
-        active: true,
-      });
-
+      await supabase.from("prompt_evolutions").insert({ version: nextVersion, prompt_text, source_insights: source_pattern_ids || [], active: true });
       if (source_pattern_ids?.length) {
         for (const id of source_pattern_ids) {
           await supabase.from("learning_patterns").update({ applied_to_prompt_version: nextVersion }).eq("id", id);
         }
       }
-
       return json({ success: true, version: nextVersion });
     }
 
@@ -250,25 +177,8 @@ Return JSON: {"improved_prompt": "...", "changes": ["..."], "expected_improvemen
         sampleContent: (memoryData || []).slice(0, 15).map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`),
       };
 
-      const raw = await callClaude(CLAUDE_API_KEY, [
-        {
-          role: "system",
-          content: `You are an AI meta-learning system. Analyze all user interaction data and generate:
-1. Key patterns in how users interact with the system
-2. Common failure modes and weaknesses
-3. An improved system prompt that addresses weaknesses
-4. Specific reasoning pipeline improvements
-
-Return JSON:
-{
-  "patterns": [{"type": "...", "description": "...", "frequency": N, "confidence": 0-1}],
-  "weaknesses": [{"area": "...", "description": "...", "severity": "high|medium|low"}],
-  "improved_prompt": "Full improved system prompt text",
-  "pipeline_changes": ["..."],
-  "expected_score_delta": N,
-  "confidence": 0-1
-}`,
-        },
+      const raw = await callAI(LOVABLE_API_KEY, [
+        { role: "system", content: `You are an AI meta-learning system. Analyze all user interaction data and generate:\n1. Key patterns\n2. Common failure modes\n3. An improved system prompt\n4. Pipeline improvements\n\nReturn JSON:\n{"patterns": [{"type": "...", "description": "...", "frequency": N, "confidence": 0-1}], "weaknesses": [{"area": "...", "description": "...", "severity": "high|medium|low"}], "improved_prompt": "...", "pipeline_changes": ["..."], "expected_score_delta": N, "confidence": 0-1}` },
         { role: "user", content: `System data:\n${JSON.stringify(aggregation)}` },
       ]);
 
@@ -278,21 +188,13 @@ Return JSON:
       }
 
       for (const p of (result.patterns || [])) {
-        await supabase.from("learning_patterns").insert({
-          pattern_type: p.type || "user_behavior",
-          pattern_data: p,
-          frequency: p.frequency || 1,
-          confidence_score: p.confidence || 0.5,
-        });
+        await supabase.from("learning_patterns").insert({ pattern_type: p.type || "user_behavior", pattern_data: p, frequency: p.frequency || 1, confidence_score: p.confidence || 0.5 });
       }
-
       await supabase.from("admin_insights").insert({
-        insight_type: "mass_improvement",
-        category: "system_wide",
+        insight_type: "mass_improvement", category: "system_wide",
         description: `Mass improvement: ${(result.patterns || []).length} patterns, ${(result.weaknesses || []).length} weaknesses found`,
         data: result,
       });
-
       return json(result);
     }
 

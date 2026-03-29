@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -18,20 +19,21 @@ async function getClerkUserId(req: Request): Promise<string | null> {
 
 interface CognitiveState { phase: string; input: string; memories: string[]; goals: any[]; plan: string[]; toolResults: string[]; evaluation: string; decision: string; }
 
-async function callClaude(apiKey: string, messages: any[]): Promise<string> {
+async function callAI(apiKey: string, messages: any[]): Promise<string> {
   const system = messages.find((m: any) => m.role === "system")?.content || "";
-  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+  const userMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: m.content,
   }));
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const allMessages = system ? [{ role: "system", content: system }, ...userMessages] : userMessages;
+  const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
-    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8192, system, messages: claudeMessages }),
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "google/gemini-3-flash-preview", max_tokens: 8192, messages: allMessages }),
   });
   if (!resp.ok) return "";
   const data = await resp.json();
-  return data.content?.[0]?.text || "";
+  return data.choices?.[0]?.message?.content || "";
 }
 
 async function perceive(input: string) {
@@ -54,21 +56,21 @@ async function getActiveGoals(supabase: any, userId: string) {
 async function generatePlan(apiKey: string, task: string, memories: string[], goals: any[]) {
   const context = memories.length ? `\nRelevant memories:\n${memories.join("\n")}` : "";
   const goalContext = goals.length ? `\nActive goals:\n${goals.map((g: any) => `- [P${g.priority}] ${g.description}`).join("\n")}` : "";
-  const planResponse = await callClaude(apiKey, [{ role: "system", content: `You are a planning engine. Break a task into 2-5 substeps. Return ONLY a JSON array of strings.` }, { role: "user", content: `Task: ${task}${context}${goalContext}` }]);
+  const planResponse = await callAI(apiKey, [{ role: "system", content: `You are a planning engine. Break a task into 2-5 substeps. Return ONLY a JSON array of strings.` }, { role: "user", content: `Task: ${task}${context}${goalContext}` }]);
   try { const parsed = JSON.parse(planResponse.replace(/```json\n?/g, "").replace(/```/g, "").trim()); if (Array.isArray(parsed)) return parsed; } catch {}
   return [task];
 }
 
 async function evaluate(apiKey: string, task: string, result: string) {
-  const evalResponse = await callClaude(apiKey, [{ role: "system", content: `Evaluate quality. Return ONLY JSON: {"quality": <1-10>, "issues": ["..."]}` }, { role: "user", content: `Task: ${task}\nResult: ${result.slice(0, 500)}` }]);
+  const evalResponse = await callAI(apiKey, [{ role: "system", content: `Evaluate quality. Return ONLY JSON: {"quality": <1-10>, "issues": ["..."]}` }, { role: "user", content: `Task: ${task}\nResult: ${result.slice(0, 500)}` }]);
   try { return JSON.parse(evalResponse.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return { quality: 5, issues: [] }; }
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -83,15 +85,15 @@ serve(async (req) => {
       state.phase = "perceive"; const perception = await perceive(input); log.push(`[PERCEIVE] Type: ${perception.taskType}, Complexity: ${perception.complexity}`);
       state.phase = "recall"; state.memories = await recall(supabase, userId, input); log.push(`[RECALL] ${state.memories.length} memories`);
       state.phase = "goals"; state.goals = await getActiveGoals(supabase, userId); log.push(`[GOALS] ${state.goals.length} active`);
-      state.phase = "plan"; state.plan = await generatePlan(CLAUDE_API_KEY, input, state.memories, state.goals); log.push(`[PLAN] ${state.plan.length} steps`);
+      state.phase = "plan"; state.plan = await generatePlan(LOVABLE_API_KEY, input, state.memories, state.goals); log.push(`[PLAN] ${state.plan.length} steps`);
 
       state.phase = "execute";
       let executionContext = `Task: ${input}\nPlan: ${state.plan.join(" → ")}`;
       if (state.memories.length) executionContext += `\nContext:\n${state.memories.join("\n")}`;
-      const executionResult = await callClaude(CLAUDE_API_KEY, [{ role: "system", content: `You are Emma's execution engine. Follow the plan precisely.` }, { role: "user", content: executionContext }]);
+      const executionResult = await callAI(LOVABLE_API_KEY, [{ role: "system", content: `You are Emma's execution engine. Follow the plan precisely.` }, { role: "user", content: executionContext }]);
       log.push(`[EXECUTE] ${executionResult.length} chars`);
 
-      state.phase = "evaluate"; const evalResult = await evaluate(CLAUDE_API_KEY, input, executionResult); log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
+      state.phase = "evaluate"; const evalResult = await evaluate(LOVABLE_API_KEY, input, executionResult); log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
 
       await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "episodic", content: `Task: "${input.slice(0, 100)}". Quality: ${evalResult.quality}/10.`, relevance_score: evalResult.quality });
 

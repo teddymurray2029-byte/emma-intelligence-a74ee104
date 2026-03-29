@@ -5,6 +5,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -18,33 +20,41 @@ serve(async (req) => {
       });
     }
 
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    // Claude doesn't natively generate images, so we use it to generate a detailed description
-    // and return that as text. For actual image generation, consider using a dedicated service.
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    // Use Lovable AI image generation model
+    const response = await fetch(AI_GATEWAY_URL, {
       method: "POST",
       headers: {
-        "x-api-key": CLAUDE_API_KEY,
-        "anthropic-version": "2023-06-01",
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2048,
+        model: "google/gemini-3-pro-image-preview",
         messages: [
           {
             role: "user",
-            content: `Generate a detailed visual description for an image: ${prompt}. Describe the composition, colors, lighting, style, and details as if directing an artist.`,
+            content: `Generate an image: ${prompt}`,
           },
         ],
+        max_tokens: 2048,
       }),
     });
 
     if (!response.ok) {
       const t = await response.text();
       console.error("Image gen error:", response.status, t);
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limited. Please try again later." }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: `Image generation failed: ${response.status}` }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -52,9 +62,9 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    const text = data.content?.[0]?.text || "";
+    const text = data.choices?.[0]?.message?.content || "";
 
-    return new Response(JSON.stringify({ imageUrl: null, text, message: "Claude provides text descriptions. For image generation, integrate a dedicated image API (DALL-E, Stability AI, etc.)" }), {
+    return new Response(JSON.stringify({ imageUrl: null, text }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

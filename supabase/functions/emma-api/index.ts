@@ -6,6 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
 const COGNITIVE_SYSTEM_PROMPT = `You are Emma — a multi-agent cognitive reasoning system. You demonstrate intelligence through reasoning depth, self-correction, and novel thinking.
 
 ## INTERNAL COGNITIVE AGENTS
@@ -53,31 +55,31 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
-async function callClaude(apiKey: string, system: string, messages: any[], stream = false) {
-  const claudeMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+async function callAI(apiKey: string, system: string, messages: any[], stream = false) {
+  const allMessages = [];
+  if (system) allMessages.push({ role: "system", content: system });
+  allMessages.push(...messages.filter((m: any) => m.role !== "system").map((m: any) => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: m.content,
-  }));
+  })));
 
-  return await fetch("https://api.anthropic.com/v1/messages", {
+  return await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "google/gemini-3-flash-preview",
       max_tokens: 8192,
-      system,
-      messages: claudeMessages,
+      messages: allMessages,
       stream,
     }),
   });
 }
 
-function extractClaudeText(data: any): string {
-  return data.content?.[0]?.text || "";
+function extractAIText(data: any): string {
+  return data.choices?.[0]?.message?.content || "";
 }
 
 serve(async (req) => {
@@ -122,7 +124,6 @@ serve(async (req) => {
     const messages: any[] = body.messages || [];
     const stream: boolean = body.stream ?? false;
     const model: string = body.model || "emma-1";
-    const temperature: number = body.temperature ?? 0.7;
 
     if (!messages.length) {
       return new Response(JSON.stringify({ error: { message: "messages is required", type: "invalid_request_error" } }), {
@@ -130,8 +131,8 @@ serve(async (req) => {
       });
     }
 
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-    if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     // --- Inject memory context ---
     let systemPrompt = COGNITIVE_SYSTEM_PROMPT;
@@ -149,20 +150,18 @@ serve(async (req) => {
     const useRefinement = !stream && isComplexQuery(messages);
 
     if (useRefinement) {
-      // Two-pass: draft → refine
-      const draftResp = await callClaude(CLAUDE_API_KEY, systemPrompt, messages, false);
+      const draftResp = await callAI(LOVABLE_API_KEY, systemPrompt, messages, false);
       if (!draftResp.ok) return proxyError(draftResp);
       const draftData = await draftResp.json();
-      const draftContent = extractClaudeText(draftData);
+      const draftContent = extractAIText(draftData);
 
-      const refineResp = await callClaude(CLAUDE_API_KEY, REFINEMENT_PROMPT, [
+      const refineResp = await callAI(LOVABLE_API_KEY, REFINEMENT_PROMPT, [
         { role: "user", content: `Original query: ${messages[messages.length - 1].content}\n\nDraft response to refine:\n${draftContent}` },
       ], false);
       if (!refineResp.ok) return proxyError(refineResp);
       const refineData = await refineResp.json();
-      const refinedContent = extractClaudeText(refineData) || draftContent;
+      const refinedContent = extractAIText(refineData) || draftContent;
 
-      // Store memory
       const lastUserMsg = messages[messages.length - 1]?.content || "";
       if (lastUserMsg.length > 20) {
         await supabase.from("memory_episodes").insert({
@@ -173,7 +172,6 @@ serve(async (req) => {
         });
       }
 
-      // Return OpenAI-compatible non-streaming response
       const responseId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
       return new Response(JSON.stringify({
         id: responseId,
@@ -192,7 +190,7 @@ serve(async (req) => {
     }
 
     // --- Streaming or simple non-streaming ---
-    const aiResp = await callClaude(CLAUDE_API_KEY, systemPrompt, messages, stream);
+    const aiResp = await callAI(LOVABLE_API_KEY, systemPrompt, messages, stream);
     if (!aiResp.ok) return proxyError(aiResp);
 
     if (stream) {
@@ -201,7 +199,6 @@ serve(async (req) => {
       });
     }
 
-    // Non-streaming simple — convert Claude response to OpenAI format
     const data = await aiResp.json();
     const responseId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 29)}`;
     return new Response(JSON.stringify({
@@ -211,13 +208,13 @@ serve(async (req) => {
       model,
       choices: [{
         index: 0,
-        message: { role: "assistant", content: extractClaudeText(data) },
+        message: { role: "assistant", content: extractAIText(data) },
         finish_reason: "stop",
       }],
       usage: {
-        prompt_tokens: data.usage?.input_tokens || 0,
-        completion_tokens: data.usage?.output_tokens || 0,
-        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+        prompt_tokens: data.usage?.prompt_tokens || 0,
+        completion_tokens: data.usage?.completion_tokens || 0,
+        total_tokens: (data.usage?.prompt_tokens || 0) + (data.usage?.completion_tokens || 0),
       },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -245,7 +242,7 @@ async function proxyError(response: Response) {
     });
   }
   const t = await response.text().catch(() => "");
-  console.error("Claude API error:", response.status, t);
+  console.error("AI gateway error:", response.status, t);
   return new Response(JSON.stringify({ error: { message: "AI gateway error", type: "server_error" } }), {
     status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });

@@ -48,7 +48,7 @@ export async function streamChat({ messages, feedback, mode, answerStyle, onDelt
       if (line.endsWith("\r")) line = line.slice(0, -1);
       if (line.startsWith(":") || line.trim() === "") continue;
       
-      // Handle Claude's "event:" lines
+      // Handle event lines
       if (line.startsWith("event: ")) {
         const eventType = line.slice(7).trim();
         if (eventType === "message_stop") { streamDone = true; break; }
@@ -60,12 +60,8 @@ export async function streamChat({ messages, feedback, mode, answerStyle, onDelt
       if (jsonStr === "[DONE]") { streamDone = true; break; }
       try {
         const parsed = JSON.parse(jsonStr);
-        // Claude streaming format
-        if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-          onDelta(parsed.delta.text);
-        }
-        // OpenAI streaming format (fallback)
-        else if (parsed.choices?.[0]?.delta?.content) {
+        // OpenAI streaming format (used by Lovable AI Gateway)
+        if (parsed.choices?.[0]?.delta?.content) {
           onDelta(parsed.choices[0].delta.content);
         }
       } catch { textBuffer = line + "\n" + textBuffer; break; }
@@ -82,9 +78,7 @@ export async function streamChat({ messages, feedback, mode, answerStyle, onDelt
       if (jsonStr === "[DONE]") continue;
       try {
         const parsed = JSON.parse(jsonStr);
-        if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-          onDelta(parsed.delta.text);
-        } else if (parsed.choices?.[0]?.delta?.content) {
+        if (parsed.choices?.[0]?.delta?.content) {
           onDelta(parsed.choices[0].delta.content);
         }
       } catch {}

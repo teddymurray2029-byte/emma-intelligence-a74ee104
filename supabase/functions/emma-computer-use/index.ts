@@ -618,7 +618,7 @@ Rules:
   }
 
   const data = await resp.json();
-  const content = data.content?.[0]?.text || "";
+  const content = data.choices?.[0]?.message?.content || "";
 
   let jsonStr = content.trim();
   if (jsonStr.startsWith("```")) {

@@ -320,11 +320,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         await new Promise((r) => setTimeout(r, 3000));
       }
     }
-
-    if (!abortRef.current && stepsRef.current.length >= MAX_STEPS) {
-      setSummary("Reached maximum step limit.");
-      setStatus("done");
-      setIsRunning(false);
     }
   };
 

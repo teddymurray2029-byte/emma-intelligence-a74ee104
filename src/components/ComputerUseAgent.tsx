@@ -320,7 +320,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         await new Promise((r) => setTimeout(r, 3000));
       }
     }
-    }
   };
 
   const stopSession = useCallback(async () => {

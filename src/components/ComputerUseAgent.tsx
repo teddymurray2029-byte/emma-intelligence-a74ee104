@@ -646,7 +646,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                               src={`data:image/png;base64,${step.screenshot}`}
                               alt="Step screenshot"
                               className="w-full rounded border border-border mt-1 cursor-pointer hover:opacity-80 transition-opacity"
-                              onClick={() => { setCurrentScreenshot(step.screenshot!); setViewMode("screenshot"); }}
+                              onClick={() => setCurrentScreenshot(step.screenshot!)}
                             />
                           )}
                         </div>

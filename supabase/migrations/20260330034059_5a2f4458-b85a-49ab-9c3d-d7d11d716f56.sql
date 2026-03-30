@@ -1,0 +1,34 @@
+CREATE OR REPLACE FUNCTION public.match_transfer_knowledge(
+  query_embedding vector(768),
+  match_threshold float DEFAULT 0.3,
+  match_count int DEFAULT 5,
+  p_user_id text DEFAULT ''
+)
+RETURNS TABLE (
+  id uuid,
+  user_id text,
+  source_domain text,
+  target_domain text,
+  knowledge_type text,
+  content text,
+  confidence numeric,
+  transfer_count int,
+  created_at timestamptz,
+  similarity float
+)
+LANGUAGE sql STABLE
+AS $$
+  SELECT
+    tk.id, tk.user_id, tk.source_domain, tk.target_domain,
+    tk.knowledge_type, tk.content, tk.confidence, tk.transfer_count,
+    tk.created_at,
+    1 - (tk.embedding <=> query_embedding) AS similarity
+  FROM public.transfer_knowledge tk
+  WHERE tk.user_id = p_user_id
+    AND tk.embedding IS NOT NULL
+    AND 1 - (tk.embedding <=> query_embedding) > match_threshold
+  ORDER BY tk.embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.autonomous_runs;

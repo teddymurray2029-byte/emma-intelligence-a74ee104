@@ -786,6 +786,7 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       category: "Intrinsic Motivation",
       status: "implemented",
       detail: "Curiosity-driven goal generation. Open-ended objectives beyond reactive improvement.",
+    },
     {
       category: "Safety",
       status: s.safety ? "implemented" : "partial",

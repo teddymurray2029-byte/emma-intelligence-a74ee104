@@ -773,6 +773,20 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       detail: "4 cognitive agents: Builder, Critic, Skeptic, Inventor. Real adversarial debate.",
     },
     {
+      category: "World Model",
+      status: s.worldModel ? "implemented" : "partial",
+      detail: `Persistent internal representation. ${(s.worldModel as any)?.versions || 0} versions. Entities, relations, beliefs, temporal events.`,
+    },
+    {
+      category: "Metacognition",
+      status: s.metacognition ? "implemented" : "partial",
+      detail: `Real-time quality monitoring per cognitive phase. ${(s.metacognition as any)?.checks || 0} checks. Auto-redirect on low quality.`,
+    },
+    {
+      category: "Intrinsic Motivation",
+      status: "implemented",
+      detail: "Curiosity-driven goal generation. Open-ended objectives beyond reactive improvement.",
+    {
       category: "Safety",
       status: s.safety ? "implemented" : "partial",
       detail: "Dangerous pattern detection, prompt injection blocking, resource limits, rollback on failure.",

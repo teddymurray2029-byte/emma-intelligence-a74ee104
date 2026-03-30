@@ -148,7 +148,7 @@ export default function ASITransformationDashboard() {
                         { phase: "2A", name: "Modular Architecture Upgrade", items: ["Cognitive Module Integration", "Stable Testing"], status: "active" },
                         { phase: "2B", name: "Learning Paradigm Evolution", items: ["First-Principles Reasoning", "Hypothesis Testing", "Active Experimentation"], status: "active" },
                         { phase: "2C", name: "Recursive Optimization", items: ["Self-Improvement Loop", "Safety-Gated Modifications", "Rollback Mechanisms"], status: "active" },
-                        { phase: "2D", name: "Grounding & Embodiment", items: ["Sensory Integration", "World Model Building"], status: "active" },
+                        { phase: "2D", name: "Grounding & Embodiment", items: ["Sensory Integration", "World Model Building ✓", "Metacognitive Monitoring ✓", "Intrinsic Motivation ✓"], status: "active" },
                         { phase: "3A", name: "Perpetual Alignment Monitor", items: ["Real-time Value Monitoring", "Intent Verification"], status: "active" },
                         { phase: "3B", name: "Collaborative Growth", items: ["Symbiotic Co-Evolution", "Mutual Robustness"], status: "active" },
                       ].map(p => (

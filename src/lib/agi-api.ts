@@ -44,6 +44,14 @@ export async function runSelfAwarenessProbe() { return agiCall("emma-causal-engi
 export async function runAgentSwarm(input: string, agents?: string[]) { return agiCall("emma-multi-agent", { action: "swarm", input, agents }); }
 export async function getAvailableAgents() { return agiCall("emma-multi-agent", { action: "agents" }); }
 
+// World Model API
+export async function getWorldModel() { return agiCall("emma-world-model", { action: "get_state" }); }
+export async function updateWorldModel(observations: string) { return agiCall("emma-world-model", { action: "update_state", observations }); }
+export async function queryWorldModel(query: string) { return agiCall("emma-world-model", { action: "query_state", query }); }
+
+// Metacognitive Logs API
+export async function getMetacognitiveLogs(loopId?: string) { return agiCall("emma-db-proxy", { action: "get_metacognitive_logs", loopId }); }
+
 // Admin Learning API
 export async function getAdminDashboard() { return agiCall("emma-admin-learn", { action: "get_dashboard" }); }
 export async function aggregateData() { return agiCall("emma-admin-learn", { action: "aggregate_data" }); }

@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft, Brain, Activity, Target, Database, GitBranch, Shield,
   Play, CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw,
-  TrendingUp, Zap, Flag, Eye, Terminal
+  TrendingUp, Zap, Flag, Eye, Terminal, Globe, Gauge, Lightbulb, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,8 @@ import { BenchmarkPanel } from "@/components/BenchmarkPanel";
 import { SelfImprovePanel } from "@/components/SelfImprovePanel";
 import { GoalsPanel } from "@/components/GoalsPanel";
 import { MemoryPanel } from "@/components/MemoryPanel";
-import { getSystemStatus, getHealthCheck, runCognitiveLoop } from "@/lib/agi-api";
+import { getSystemStatus, getHealthCheck, runCognitiveLoop, getWorldModel, queryWorldModel, getMetacognitiveLogs } from "@/lib/agi-api";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
 interface SubsystemStatus {
@@ -52,6 +53,19 @@ interface LoopResult {
     issues: string[];
     decision: string;
   };
+  metacognition?: {
+    loopId: string;
+    avgScore: number;
+    phaseScores: { phase: string; score: number; intervention: string | null }[];
+    interventionCount: number;
+  };
+  worldModel?: {
+    version: number;
+    diff: { added: any[]; modified: any[]; removed: any[] };
+    entityCount: number;
+    beliefCount: number;
+  };
+  intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string }[];
   log: string[];
 }
 
@@ -80,7 +94,12 @@ export default function AGIDashboard() {
   const [loopInput, setLoopInput] = useState("");
   const [loopRunning, setLoopRunning] = useState(false);
   const [loopResult, setLoopResult] = useState<LoopResult | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "bench" | "improve" | "goals" | "memory" | "loop">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "bench" | "improve" | "goals" | "memory" | "loop" | "worldmodel" | "metacog">("overview");
+  const [worldModel, setWorldModel] = useState<any>(null);
+  const [worldModelQuery, setWorldModelQuery] = useState("");
+  const [worldModelAnswer, setWorldModelAnswer] = useState("");
+  const [wmLoading, setWmLoading] = useState(false);
+  const [metacogData, setMetacogData] = useState<any[]>([]);
 
   const loadStatus = useCallback(async () => {
     setLoadingStatus(true);
@@ -113,9 +132,27 @@ export default function AGIDashboard() {
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" />;
 
+  const loadWorldModel = async () => {
+    setWmLoading(true);
+    try { const data = await getWorldModel(); setWorldModel(data); } catch {}
+    setWmLoading(false);
+  };
+
+  const handleWorldModelQuery = async () => {
+    if (!worldModelQuery.trim()) return;
+    setWmLoading(true);
+    try {
+      const data = await queryWorldModel(worldModelQuery);
+      setWorldModelAnswer(data.answer || "No answer");
+    } catch (e: any) { toast.error(e.message); }
+    setWmLoading(false);
+  };
+
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Eye },
     { id: "loop" as const, label: "Cognitive Loop", icon: RefreshCw },
+    { id: "worldmodel" as const, label: "World Model", icon: Globe },
+    { id: "metacog" as const, label: "Metacognition", icon: Gauge },
     { id: "bench" as const, label: "Benchmarks", icon: Target },
     { id: "improve" as const, label: "Self-Improve", icon: Zap },
     { id: "goals" as const, label: "Goals", icon: Flag },
@@ -389,7 +426,264 @@ export default function AGIDashboard() {
                         ))}
                       </div>
                     )}
+
+                    {/* Metacognitive Quality Bars */}
+                    {loopResult.metacognition && (
+                      <div className="emma-surface-elevated emma-glow-border rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-primary mb-3 flex items-center gap-1">
+                          <Gauge className="h-3 w-3" /> METACOGNITIVE MONITORING
+                        </p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                          <div className="bg-secondary/50 rounded-lg p-2 text-center">
+                            <p className="text-[10px] text-muted-foreground">AVG QUALITY</p>
+                            <p className={`text-lg font-bold ${loopResult.metacognition.avgScore >= 7 ? "text-green-400" : loopResult.metacognition.avgScore >= 4 ? "text-accent" : "text-destructive"}`}>
+                              {loopResult.metacognition.avgScore}/10
+                            </p>
+                          </div>
+                          <div className="bg-secondary/50 rounded-lg p-2 text-center">
+                            <p className="text-[10px] text-muted-foreground">INTERVENTIONS</p>
+                            <p className={`text-lg font-bold ${loopResult.metacognition.interventionCount > 0 ? "text-accent" : "text-green-400"}`}>
+                              {loopResult.metacognition.interventionCount}
+                            </p>
+                          </div>
+                          <div className="bg-secondary/50 rounded-lg p-2 text-center">
+                            <p className="text-[10px] text-muted-foreground">LOOP ID</p>
+                            <p className="text-[9px] font-mono text-muted-foreground">{loopResult.metacognition.loopId.slice(0, 8)}</p>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {loopResult.metacognition.phaseScores.map((ps, i) => (
+                            <div key={i} className="flex items-center gap-3">
+                              <span className="text-[10px] text-foreground w-20 capitalize">{ps.phase}</span>
+                              <Progress value={ps.score * 10} className="flex-1 h-2" />
+                              <span className={`text-[10px] font-mono w-8 ${ps.score >= 7 ? "text-green-400" : ps.score >= 4 ? "text-accent" : "text-destructive"}`}>{ps.score}</span>
+                              {ps.intervention && <AlertTriangle className="h-3 w-3 text-destructive" />}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* World Model Diff */}
+                    {loopResult.worldModel && (
+                      <div className="emma-surface-elevated rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-primary mb-2 flex items-center gap-1">
+                          <Globe className="h-3 w-3" /> WORLD MODEL UPDATE (v{loopResult.worldModel.version})
+                        </p>
+                        <div className="flex gap-4 text-[10px] font-mono">
+                          <span className="text-green-400">+{loopResult.worldModel.diff.added?.length || 0} added</span>
+                          <span className="text-accent">~{loopResult.worldModel.diff.modified?.length || 0} modified</span>
+                          <span className="text-destructive">-{loopResult.worldModel.diff.removed?.length || 0} removed</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-1">{loopResult.worldModel.entityCount} entities, {loopResult.worldModel.beliefCount} beliefs</p>
+                      </div>
+                    )}
+
+                    {/* Intrinsic Goals */}
+                    {loopResult.intrinsicGoals && loopResult.intrinsicGoals.length > 0 && (
+                      <div className="emma-surface-elevated rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-accent mb-2 flex items-center gap-1">
+                          <Lightbulb className="h-3 w-3" /> INTRINSIC GOALS GENERATED
+                        </p>
+                        {loopResult.intrinsicGoals.map((g, i) => (
+                          <div key={i} className="bg-secondary/50 rounded-lg p-2 mb-2">
+                            <p className="text-xs text-foreground flex items-center gap-1">
+                              <Lightbulb className="h-3 w-3 text-accent" /> {g.description}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">{g.motivation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
+                )}
+              </div>
+            )}
+
+            {/* World Model Tab */}
+            {activeTab === "worldmodel" && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-primary" />
+                  Persistent World Model
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Internal representation of the environment that persists across sessions. Entities, relations, beliefs, and temporal events.
+                </p>
+
+                <div className="flex gap-2">
+                  <Button onClick={loadWorldModel} disabled={wmLoading} size="sm" className="gap-1">
+                    {wmLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    Load State
+                  </Button>
+                </div>
+
+                {worldModel && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">VERSION</p>
+                        <p className="text-2xl font-bold text-primary">{worldModel.version}</p>
+                      </div>
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">ENTITIES</p>
+                        <p className="text-2xl font-bold text-foreground">{worldModel.state?.entities?.length || 0}</p>
+                      </div>
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">BELIEFS</p>
+                        <p className="text-2xl font-bold text-accent">{worldModel.state?.beliefs?.length || 0}</p>
+                      </div>
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">RELATIONS</p>
+                        <p className="text-2xl font-bold text-foreground">{worldModel.state?.relations?.length || 0}</p>
+                      </div>
+                    </div>
+
+                    {/* Entities */}
+                    {worldModel.state?.entities?.length > 0 && (
+                      <div className="emma-surface-elevated emma-glow-border rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-primary mb-2">ENTITIES</p>
+                        <div className="space-y-1">
+                          {worldModel.state.entities.map((e: any, i: number) => (
+                            <div key={i} className="bg-secondary/50 rounded-lg p-2 flex items-center justify-between">
+                              <span className="text-xs text-foreground">{e.name || JSON.stringify(e)}</span>
+                              {e.confidence && (
+                                <span className="text-[10px] font-mono text-muted-foreground">{Math.round(e.confidence * 100)}%</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Beliefs with confidence bars */}
+                    {worldModel.state?.beliefs?.length > 0 && (
+                      <div className="emma-surface-elevated rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-accent mb-2">BELIEFS</p>
+                        <div className="space-y-2">
+                          {worldModel.state.beliefs.map((b: any, i: number) => (
+                            <div key={i}>
+                              <p className="text-xs text-foreground mb-1">{b.statement || JSON.stringify(b)}</p>
+                              {b.confidence !== undefined && (
+                                <Progress value={b.confidence * 100} className="h-1.5" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Raw JSON */}
+                    <div className="emma-surface-elevated rounded-xl p-4">
+                      <p className="text-[10px] font-mono text-muted-foreground mb-2">RAW STATE</p>
+                      <pre className="text-[10px] text-muted-foreground font-mono max-h-64 overflow-auto whitespace-pre-wrap">
+                        {JSON.stringify(worldModel.state, null, 2)}
+                      </pre>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Query */}
+                <div className="emma-surface-elevated rounded-xl p-4 space-y-3">
+                  <p className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
+                    <Search className="h-3 w-3" /> QUERY WORLD MODEL
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      value={worldModelQuery}
+                      onChange={(e) => setWorldModelQuery(e.target.value)}
+                      placeholder="What does the system know about..."
+                      className="flex-1 bg-secondary text-foreground text-sm rounded-lg px-3 py-2 outline-none border border-border focus:border-primary"
+                      onKeyDown={(e) => e.key === "Enter" && handleWorldModelQuery()}
+                    />
+                    <Button onClick={handleWorldModelQuery} disabled={wmLoading} size="sm">
+                      {wmLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                    </Button>
+                  </div>
+                  {worldModelAnswer && (
+                    <div className="bg-secondary/50 rounded-lg p-3">
+                      <p className="text-xs text-foreground whitespace-pre-wrap">{worldModelAnswer}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Metacognition Tab */}
+            {activeTab === "metacog" && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Gauge className="h-4 w-4 text-primary" />
+                  Metacognitive Monitoring
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Real-time quality tracking of reasoning phases. The system monitors its own cognitive processes and can interrupt/redirect mid-loop.
+                </p>
+
+                {loopResult?.metacognition ? (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">AVG QUALITY</p>
+                        <p className={`text-2xl font-bold ${loopResult.metacognition.avgScore >= 7 ? "text-green-400" : "text-accent"}`}>
+                          {loopResult.metacognition.avgScore}/10
+                        </p>
+                      </div>
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">PHASES CHECKED</p>
+                        <p className="text-2xl font-bold text-primary">{loopResult.metacognition.phaseScores.length}</p>
+                      </div>
+                      <div className="emma-surface-elevated rounded-lg p-3 text-center">
+                        <p className="text-[10px] text-muted-foreground">INTERVENTIONS</p>
+                        <p className={`text-2xl font-bold ${loopResult.metacognition.interventionCount > 0 ? "text-destructive" : "text-green-400"}`}>
+                          {loopResult.metacognition.interventionCount}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Phase Quality Heatmap */}
+                    <div className="emma-surface-elevated emma-glow-border rounded-xl p-4">
+                      <p className="text-[10px] font-mono text-primary mb-3">PHASE QUALITY TIMELINE</p>
+                      <div className="space-y-3">
+                        {loopResult.metacognition.phaseScores.map((ps, i) => (
+                          <div key={i} className="flex items-center gap-3">
+                            <span className="text-[10px] text-foreground w-20 capitalize font-medium">{ps.phase}</span>
+                            <div className="flex-1 flex items-center gap-1">
+                              {Array.from({ length: 10 }, (_, j) => (
+                                <div
+                                  key={j}
+                                  className={`h-6 flex-1 rounded-sm ${
+                                    j < ps.score
+                                      ? ps.score >= 7 ? "bg-green-400/80" : ps.score >= 4 ? "bg-accent/80" : "bg-destructive/80"
+                                      : "bg-secondary/30"
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-[10px] font-mono w-6 text-right">{ps.score}</span>
+                            {ps.intervention && (
+                              <span className="text-[9px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded-full">
+                                ⚠ {ps.intervention.slice(0, 40)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="emma-surface-elevated rounded-xl p-4">
+                      <p className="text-[10px] font-mono text-muted-foreground mb-2">LOOP ID</p>
+                      <p className="text-xs font-mono text-foreground">{loopResult.metacognition.loopId}</p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <div className="emma-surface-elevated rounded-xl p-8 text-center">
+                    <Gauge className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-xs text-muted-foreground">Run a cognitive loop to see metacognitive monitoring data.</p>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => setActiveTab("loop")}>
+                      Go to Cognitive Loop
+                    </Button>
+                  </div>
                 )}
               </div>
             )}
@@ -477,6 +771,21 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       category: "Multi-Agent",
       status: "implemented",
       detail: "4 cognitive agents: Builder, Critic, Skeptic, Inventor. Real adversarial debate.",
+    },
+    {
+      category: "World Model",
+      status: s.worldModel ? "implemented" : "partial",
+      detail: `Persistent internal representation. ${(s.worldModel as any)?.versions || 0} versions. Entities, relations, beliefs, temporal events.`,
+    },
+    {
+      category: "Metacognition",
+      status: s.metacognition ? "implemented" : "partial",
+      detail: `Real-time quality monitoring per cognitive phase. ${(s.metacognition as any)?.checks || 0} checks. Auto-redirect on low quality.`,
+    },
+    {
+      category: "Intrinsic Motivation",
+      status: "implemented",
+      detail: "Curiosity-driven goal generation. Open-ended objectives beyond reactive improvement.",
     },
     {
       category: "Safety",

@@ -66,6 +66,8 @@ interface LoopResult {
     beliefCount: number;
   };
   intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string }[];
+  safety?: { passed: boolean; invariantsChecked: number; violations: string[] };
+  transfer?: { knowledgeExtracted: number; patterns: any[] };
   log: string[];
 }
 

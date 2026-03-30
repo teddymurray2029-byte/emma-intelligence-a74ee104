@@ -770,6 +770,15 @@ serve(async (req) => {
           }
         }
 
+        // Always capture a post-action screenshot so frontend stays in sync
+        try {
+          await new Promise((r) => setTimeout(r, 500)); // brief delay for UI to update
+          const { base64: screenshot } = await captureScreenshotData(sandbox);
+          result.screenshot = screenshot;
+        } catch (e) {
+          console.warn(`[execute] post-action screenshot failed: ${e}`);
+        }
+
         return json(result);
       }
 

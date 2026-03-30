@@ -43,6 +43,8 @@ export async function runAlignmentCheck(input: string) { return agiCall("emma-ca
 export async function runSelfAwarenessProbe() { return agiCall("emma-causal-engine", { action: "self_awareness" }); }
 export async function runAgentSwarm(input: string, agents?: string[]) { return agiCall("emma-multi-agent", { action: "swarm", input, agents }); }
 export async function getAvailableAgents() { return agiCall("emma-multi-agent", { action: "agents" }); }
+export async function shareAgentMemory(memory_key: string, memory_value: string, agent_id?: string) { return agiCall("emma-multi-agent", { action: "share_memory", memory_key, memory_value, agent_id }); }
+export async function recallSharedMemory() { return agiCall("emma-multi-agent", { action: "recall_shared" }); }
 
 // World Model API
 export async function getWorldModel() { return agiCall("emma-world-model", { action: "get_state" }); }

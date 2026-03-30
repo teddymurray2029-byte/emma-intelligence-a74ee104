@@ -57,14 +57,25 @@ serve(async (req) => {
       const results: any[] = [];
       const log: string[] = [];
 
+      // Cross-agent memory: load shared context from previous swarms
+      const { data: sharedMemories } = await supabase
+        .from("memory_episodes")
+        .select("content, created_at")
+        .eq("user_id", userId)
+        .eq("episode_type", "agent_shared")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      const sharedCtx = (sharedMemories || []).map((m: any) => m.content).join("\n");
+      if (sharedCtx) log.push(`[SHARED_MEMORY] Loaded ${sharedMemories!.length} cross-agent memories`);
+
       const phase1 = activeAgents.filter(a => ["analyst", "critic", "synthesizer"].includes(a.id));
-      const phase1Results = await Promise.all(phase1.map(a => runAgent(LOVABLE_API_KEY, a, input, "")));
+      const phase1Results = await Promise.all(phase1.map(a => runAgent(LOVABLE_API_KEY, a, input, sharedCtx)));
       results.push(...phase1Results);
       phase1Results.forEach(r => log.push(`[${r.agent.toUpperCase()}] ${r.duration}ms, conf: ${r.confidence.toFixed(2)}`));
 
       const validator = activeAgents.find(a => a.id === "validator");
       if (validator) {
-        const ctx = phase1Results.map(r => `[${r.agent}]: ${r.output.slice(0, 500)}`).join("\n\n");
+        const ctx = phase1Results.map(r => `[${r.agent}]: ${r.output.slice(0, 500)}`).join("\n\n") + (sharedCtx ? `\n\n[SHARED MEMORY]:\n${sharedCtx}` : "");
         const vr = await runAgent(LOVABLE_API_KEY, validator, input, ctx);
         results.push(vr);
         log.push(`[VALIDATOR] ${vr.duration}ms`);
@@ -80,9 +91,19 @@ serve(async (req) => {
       } else finalOutput = results.map(r => r.output).join("\n\n");
 
       const avgConfidence = results.reduce((s, r) => s + r.confidence, 0) / results.length;
+
+      // Store key findings as shared memory for future swarms
+      await supabase.from("memory_episodes").insert({
+        user_id: userId, episode_type: "agent_shared",
+        content: `[SWARM_RESULT] Task: "${input.slice(0, 80)}". Confidence: ${avgConfidence.toFixed(2)}. Key: ${finalOutput.slice(0, 200)}`,
+        relevance_score: Math.round(avgConfidence * 10),
+        embedding_key: `swarm:${Date.now()}`,
+      });
+      log.push(`[SHARED_MEMORY] Stored swarm result for cross-agent recall`);
+
       await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "multi_agent_swarm", content: `Swarm: "${input.slice(0, 100)}". ${results.length} agents. Conf: ${avgConfidence.toFixed(2)}`, relevance_score: Math.round(avgConfidence * 10) });
 
-      return new Response(JSON.stringify({ finalOutput, agentResults: results, log, metrics: { totalDuration: results.reduce((s, r) => s + r.duration, 0), avgConfidence, agentCount: results.length } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ finalOutput, agentResults: results, log, sharedMemoryUsed: (sharedMemories || []).length, metrics: { totalDuration: results.reduce((s, r) => s + r.duration, 0), avgConfidence, agentCount: results.length } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "agents") {

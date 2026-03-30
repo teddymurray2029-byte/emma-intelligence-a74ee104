@@ -66,6 +66,8 @@ interface LoopResult {
     beliefCount: number;
   };
   intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string }[];
+  safety?: { passed: boolean; invariantsChecked: number; violations: string[] };
+  transfer?: { knowledgeExtracted: number; patterns: any[] };
   log: string[];
 }
 
@@ -495,6 +497,40 @@ export default function AGIDashboard() {
                         ))}
                       </div>
                     )}
+
+                    {/* Formal Safety Verification */}
+                    {(loopResult as any).safety && (
+                      <div className="emma-surface-elevated rounded-xl p-4">
+                        <p className="text-[10px] font-mono mb-2 flex items-center gap-1">
+                          <Shield className={`h-3 w-3 ${(loopResult as any).safety.passed ? "text-green-400" : "text-destructive"}`} />
+                          <span className={(loopResult as any).safety.passed ? "text-green-400" : "text-destructive"}>
+                            FORMAL SAFETY: {(loopResult as any).safety.passed ? "VERIFIED" : "VIOLATIONS DETECTED"}
+                          </span>
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {(loopResult as any).safety.invariantsChecked} invariant checks • {(loopResult as any).safety.violations?.length || 0} violations
+                        </p>
+                        {(loopResult as any).safety.violations?.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {(loopResult as any).safety.violations.map((v: string, i: number) => (
+                              <p key={i} className="text-[10px] text-destructive">⚠ {v}</p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Transfer Learning */}
+                    {(loopResult as any).transfer?.knowledgeExtracted > 0 && (
+                      <div className="emma-surface-elevated rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-primary mb-2 flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3" /> TRANSFER LEARNING
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {(loopResult as any).transfer.knowledgeExtracted} knowledge pattern(s) extracted for cross-domain transfer
+                        </p>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </div>
@@ -786,6 +822,31 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       category: "Intrinsic Motivation",
       status: "implemented",
       detail: "Curiosity-driven goal generation. Open-ended objectives beyond reactive improvement.",
+    },
+    {
+      category: "Vector Embeddings",
+      status: "implemented",
+      detail: "768-dim n-gram embeddings for semantic memory retrieval. Cosine similarity ranking with keyword fallback.",
+    },
+    {
+      category: "Formal Safety",
+      status: s.formalSafety ? "implemented" : "partial",
+      detail: `Deterministic invariant checks + temporal property verification. ${(s.formalSafety as any)?.verifications || 0} verifications. No LLM dependency.`,
+    },
+    {
+      category: "Transfer Learning",
+      status: s.transferLearning ? "implemented" : "partial",
+      detail: `Embedding-based cross-domain generalization. ${(s.transferLearning as any)?.patterns || 0} knowledge patterns stored.`,
+    },
+    {
+      category: "Autonomous Loop",
+      status: s.autonomousLoop ? "implemented" : "partial",
+      detail: `Background scheduled agent. ${(s.autonomousLoop as any)?.runs || 0} autonomous runs. Proactive goal advancement.`,
+    },
+    {
+      category: "Sensory Grounding",
+      status: s.sensoryGrounding ? "implemented" : "partial",
+      detail: `Multi-modal perception: visual + text grounding. ${(s.sensoryGrounding as any)?.logs || 0} sensory logs. Physical/spatial/temporal understanding.`,
     },
     {
       category: "Safety",

@@ -77,6 +77,48 @@ export type Database = {
         }
         Relationships: []
       }
+      autonomous_runs: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          goals_generated: number | null
+          id: string
+          quality_score: number | null
+          result_summary: string | null
+          safety_report: Json | null
+          task_description: string
+          trigger_type: string
+          user_id: string
+          world_model_updated: boolean | null
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          goals_generated?: number | null
+          id?: string
+          quality_score?: number | null
+          result_summary?: string | null
+          safety_report?: Json | null
+          task_description: string
+          trigger_type?: string
+          user_id: string
+          world_model_updated?: boolean | null
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          goals_generated?: number | null
+          id?: string
+          quality_score?: number | null
+          result_summary?: string | null
+          safety_report?: Json | null
+          task_description?: string
+          trigger_type?: string
+          user_id?: string
+          world_model_updated?: boolean | null
+        }
+        Relationships: []
+      }
       benchmark_questions: {
         Row: {
           category: string
@@ -316,6 +358,7 @@ export type Database = {
         Row: {
           content: string
           created_at: string
+          embedding: string | null
           embedding_key: string | null
           episode_type: string
           id: string
@@ -325,6 +368,7 @@ export type Database = {
         Insert: {
           content: string
           created_at?: string
+          embedding?: string | null
           embedding_key?: string | null
           episode_type?: string
           id?: string
@@ -334,6 +378,7 @@ export type Database = {
         Update: {
           content?: string
           created_at?: string
+          embedding?: string | null
           embedding_key?: string | null
           episode_type?: string
           id?: string
@@ -533,6 +578,114 @@ export type Database = {
           prompt_text?: string
           source_insights?: Json
           version?: number
+        }
+        Relationships: []
+      }
+      safety_verifications: {
+        Row: {
+          created_at: string
+          formal_proofs: Json | null
+          id: string
+          input_hash: string | null
+          passed: boolean
+          risk_score: number | null
+          user_id: string
+          verification_type: string
+          violations: Json | null
+        }
+        Insert: {
+          created_at?: string
+          formal_proofs?: Json | null
+          id?: string
+          input_hash?: string | null
+          passed?: boolean
+          risk_score?: number | null
+          user_id: string
+          verification_type: string
+          violations?: Json | null
+        }
+        Update: {
+          created_at?: string
+          formal_proofs?: Json | null
+          id?: string
+          input_hash?: string | null
+          passed?: boolean
+          risk_score?: number | null
+          user_id?: string
+          verification_type?: string
+          violations?: Json | null
+        }
+        Relationships: []
+      }
+      sensory_logs: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          grounded_representation: Json | null
+          id: string
+          modality: string
+          physical_properties: Json | null
+          raw_input_ref: string | null
+          user_id: string
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          grounded_representation?: Json | null
+          id?: string
+          modality?: string
+          physical_properties?: Json | null
+          raw_input_ref?: string | null
+          user_id: string
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          grounded_representation?: Json | null
+          id?: string
+          modality?: string
+          physical_properties?: Json | null
+          raw_input_ref?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      transfer_knowledge: {
+        Row: {
+          confidence: number | null
+          content: string
+          created_at: string
+          embedding: string | null
+          id: string
+          knowledge_type: string
+          source_domain: string
+          target_domain: string | null
+          transfer_count: number | null
+          user_id: string
+        }
+        Insert: {
+          confidence?: number | null
+          content: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          knowledge_type?: string
+          source_domain: string
+          target_domain?: string | null
+          transfer_count?: number | null
+          user_id: string
+        }
+        Update: {
+          confidence?: number | null
+          content?: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          knowledge_type?: string
+          source_domain?: string
+          target_domain?: string | null
+          transfer_count?: number | null
+          user_id?: string
         }
         Relationships: []
       }

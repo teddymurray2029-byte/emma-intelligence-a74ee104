@@ -17,23 +17,19 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   try { const { payload } = await jwtVerify(token, JWKS); return (payload.sub as string) || null; } catch { return null; }
 }
 
-interface CognitiveState { phase: string; input: string; memories: string[]; goals: any[]; plan: string[]; toolResults: string[]; evaluation: string; decision: string; }
-
-async function callAI(apiKey: string, messages: any[]): Promise<string> {
-  const system = messages.find((m: any) => m.role === "system")?.content || "";
-  const userMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
-    role: m.role === "assistant" ? "assistant" : "user",
-    content: m.content,
-  }));
-  const allMessages = system ? [{ role: "system", content: system }, ...userMessages] : userMessages;
+async function callAI(apiKey: string, messages: any[], model = "google/gemini-3-flash-preview"): Promise<string> {
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "google/gemini-3-flash-preview", max_tokens: 8192, messages: allMessages }),
+    body: JSON.stringify({ model, max_tokens: 8192, messages }),
   });
   if (!resp.ok) return "";
   const data = await resp.json();
   return data.choices?.[0]?.message?.content || "";
+}
+
+async function callAIFast(apiKey: string, messages: any[]): Promise<string> {
+  return callAI(apiKey, messages, "google/gemini-2.5-flash-lite");
 }
 
 async function perceive(input: string) {
@@ -66,6 +62,80 @@ async function evaluate(apiKey: string, task: string, result: string) {
   try { return JSON.parse(evalResponse.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return { quality: 5, issues: [] }; }
 }
 
+// Metacognitive monitor: rates phase quality, decides if redirect needed
+async function metacognitiveCheck(apiKey: string, phase: string, phaseOutput: string): Promise<{ score: number; redirect: boolean; reason: string }> {
+  const result = await callAIFast(apiKey, [
+    { role: "system", content: `You are a metacognitive monitor. Rate the quality of a cognitive phase output 1-10. Determine if the phase should be re-run. Return ONLY JSON: {"score": <1-10>, "redirect": <true/false>, "reason": "..."}` },
+    { role: "user", content: `Phase: ${phase}\nOutput: ${typeof phaseOutput === "string" ? phaseOutput.slice(0, 500) : JSON.stringify(phaseOutput).slice(0, 500)}` }
+  ]);
+  try {
+    return JSON.parse(result.replace(/```json\n?/g, "").replace(/```/g, "").trim());
+  } catch {
+    return { score: 5, redirect: false, reason: "Parse error" };
+  }
+}
+
+// Intrinsic motivation: generate curiosity-driven goals
+async function generateIntrinsicGoals(apiKey: string, worldModelState: any, memories: string[]): Promise<any[]> {
+  const result = await callAI(apiKey, [
+    { role: "system", content: `You are an intrinsic motivation engine. Given a world model and recent memories, identify 1-2 novel objectives the system hasn't explored yet. These should be curiosity-driven, open-ended goals that push the system's boundaries.
+
+Return ONLY a JSON array: [{"description": "...", "motivation": "...", "priority": <1-10>, "goal_type": "intrinsic"}]` },
+    { role: "user", content: `World model:\n${JSON.stringify(worldModelState).slice(0, 2000)}\n\nRecent memories:\n${memories.join("\n").slice(0, 1000)}` }
+  ]);
+  try {
+    const parsed = JSON.parse(result.replace(/```json\n?/g, "").replace(/```/g, "").trim());
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+  return [];
+}
+
+// Get current world model state
+async function getWorldModelState(supabase: any, userId: string) {
+  const { data } = await supabase
+    .from("world_model_states")
+    .select("state, version")
+    .eq("user_id", userId)
+    .order("version", { ascending: false })
+    .limit(1)
+    .single();
+  return data?.state || { entities: [], relations: [], beliefs: [], temporal: [] };
+}
+
+// Update world model with new observations
+async function updateWorldModel(supabase: any, apiKey: string, userId: string, observations: string) {
+  // Internal call to world model update logic
+  const { data: current } = await supabase
+    .from("world_model_states")
+    .select("state, version")
+    .eq("user_id", userId)
+    .order("version", { ascending: false })
+    .limit(1)
+    .single();
+
+  const currentState = current?.state || { entities: [], relations: [], beliefs: [], temporal: [] };
+  const currentVersion = current?.version || 0;
+
+  const mergeResult = await callAIFast(apiKey, [
+    { role: "system", content: `Merge new observations into a world model. Return ONLY JSON: {"updated_state": {entities:[],relations:[],beliefs:[],temporal:[]}, "diff": {"added":[],"modified":[],"removed":[]}}` },
+    { role: "user", content: `Current:\n${JSON.stringify(currentState).slice(0, 3000)}\n\nObservations:\n${observations}` }
+  ]);
+
+  let updatedState = currentState;
+  let diff = { added: [], modified: [], removed: [] };
+  try {
+    const parsed = JSON.parse(mergeResult.replace(/```json\n?/g, "").replace(/```/g, "").trim());
+    if (parsed.updated_state) updatedState = parsed.updated_state;
+    if (parsed.diff) diff = parsed.diff;
+  } catch {}
+
+  await supabase.from("world_model_states").insert({
+    user_id: userId, version: currentVersion + 1, state: updatedState, diff,
+  });
+
+  return { updatedState, diff, version: currentVersion + 1 };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -79,51 +149,186 @@ serve(async (req) => {
 
     if (action === "run_loop") {
       if (!input) return new Response(JSON.stringify({ error: "Input required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const state: CognitiveState = { phase: "perceive", input, memories: [], goals: [], plan: [], toolResults: [], evaluation: "", decision: "" };
+
+      const loopId = crypto.randomUUID();
       const log: string[] = [];
+      const metacogLogs: any[] = [];
 
-      state.phase = "perceive"; const perception = await perceive(input); log.push(`[PERCEIVE] Type: ${perception.taskType}, Complexity: ${perception.complexity}`);
-      state.phase = "recall"; state.memories = await recall(supabase, userId, input); log.push(`[RECALL] ${state.memories.length} memories`);
-      state.phase = "goals"; state.goals = await getActiveGoals(supabase, userId); log.push(`[GOALS] ${state.goals.length} active`);
-      state.phase = "plan"; state.plan = await generatePlan(LOVABLE_API_KEY, input, state.memories, state.goals); log.push(`[PLAN] ${state.plan.length} steps`);
+      // Helper to log metacognitive checks
+      const logMetacog = async (phase: string, output: string, retried = false) => {
+        const startMs = Date.now();
+        const check = await metacognitiveCheck(LOVABLE_API_KEY, phase, output);
+        const duration = Date.now() - startMs;
 
-      state.phase = "execute";
-      let executionContext = `Task: ${input}\nPlan: ${state.plan.join(" → ")}`;
-      if (state.memories.length) executionContext += `\nContext:\n${state.memories.join("\n")}`;
-      const executionResult = await callAI(LOVABLE_API_KEY, [{ role: "system", content: `You are Emma's execution engine. Follow the plan precisely.` }, { role: "user", content: executionContext }]);
+        const logEntry = {
+          user_id: userId,
+          loop_id: loopId,
+          phase,
+          quality_score: check.score,
+          intervention: check.redirect ? `Redirect: ${check.reason}` : null,
+          metrics: { duration_ms: duration, output_length: output.length, retried },
+        };
+        metacogLogs.push(logEntry);
+        await supabase.from("metacognitive_logs").insert(logEntry);
+        log.push(`[METACOG:${phase}] Score: ${check.score}/10${check.redirect ? ` ⚠ ${check.reason}` : ""}`);
+        return check;
+      };
+
+      // === PERCEIVE ===
+      let perception = await perceive(input);
+      let perceiveCheck = await logMetacog("perceive", JSON.stringify(perception));
+      if (perceiveCheck.score < 3) {
+        perception = await perceive(input); // retry
+        await logMetacog("perceive", JSON.stringify(perception), true);
+      }
+      log.push(`[PERCEIVE] Type: ${perception.taskType}, Complexity: ${perception.complexity}`);
+
+      // === RECALL ===
+      let memories = await recall(supabase, userId, input);
+      let recallCheck = await logMetacog("recall", memories.join("\n"));
+      log.push(`[RECALL] ${memories.length} memories`);
+
+      // === WORLD MODEL (inject context) ===
+      const worldModelState = await getWorldModelState(supabase, userId);
+      log.push(`[WORLD_MODEL] Loaded: ${(worldModelState.entities?.length || 0)} entities, ${(worldModelState.beliefs?.length || 0)} beliefs`);
+
+      // === GOALS ===
+      const goals = await getActiveGoals(supabase, userId);
+      await logMetacog("goals", JSON.stringify(goals));
+      log.push(`[GOALS] ${goals.length} active`);
+
+      // === PLAN ===
+      let plan = await generatePlan(LOVABLE_API_KEY, input, memories, goals);
+      let planCheck = await logMetacog("plan", JSON.stringify(plan));
+      if (planCheck.score < 3) {
+        plan = await generatePlan(LOVABLE_API_KEY, input, memories, goals);
+        await logMetacog("plan", JSON.stringify(plan), true);
+      }
+      log.push(`[PLAN] ${plan.length} steps`);
+
+      // === EXECUTE (with world model context) ===
+      let executionContext = `Task: ${input}\nPlan: ${plan.join(" → ")}`;
+      if (memories.length) executionContext += `\nMemory context:\n${memories.join("\n")}`;
+      if (worldModelState.entities?.length) {
+        executionContext += `\nWorld model context: ${worldModelState.entities.length} known entities, ${worldModelState.beliefs?.length || 0} beliefs`;
+        const relevantBeliefs = (worldModelState.beliefs || []).slice(0, 5);
+        if (relevantBeliefs.length) executionContext += `\nKey beliefs: ${relevantBeliefs.map((b: any) => b.statement || JSON.stringify(b)).join("; ")}`;
+      }
+
+      let executionResult = await callAI(LOVABLE_API_KEY, [
+        { role: "system", content: `You are Emma's execution engine. Follow the plan precisely. Use world model context for informed decisions.` },
+        { role: "user", content: executionContext }
+      ]);
+      let execCheck = await logMetacog("execute", executionResult);
+      if (execCheck.score < 3) {
+        executionResult = await callAI(LOVABLE_API_KEY, [
+          { role: "system", content: `You are Emma's execution engine. The previous attempt was low quality. Follow the plan more carefully and produce a thorough response.` },
+          { role: "user", content: executionContext }
+        ]);
+        await logMetacog("execute", executionResult, true);
+      }
       log.push(`[EXECUTE] ${executionResult.length} chars`);
 
-      state.phase = "evaluate"; const evalResult = await evaluate(LOVABLE_API_KEY, input, executionResult); log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
+      // === EVALUATE ===
+      const evalResult = await evaluate(LOVABLE_API_KEY, input, executionResult);
+      await logMetacog("evaluate", JSON.stringify(evalResult));
+      log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
 
-      await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "episodic", content: `Task: "${input.slice(0, 100)}". Quality: ${evalResult.quality}/10.`, relevance_score: evalResult.quality });
+      // === STORE MEMORY ===
+      await supabase.from("memory_episodes").insert({
+        user_id: userId, episode_type: "episodic",
+        content: `Task: "${input.slice(0, 100)}". Quality: ${evalResult.quality}/10.`,
+        relevance_score: evalResult.quality,
+      });
 
+      // === UPDATE WORLD MODEL ===
+      const worldModelUpdate = await updateWorldModel(
+        supabase, LOVABLE_API_KEY, userId,
+        `Completed task: "${input.slice(0, 200)}". Quality: ${evalResult.quality}/10. Domain: ${perception.domain}. Result summary: ${executionResult.slice(0, 300)}`
+      );
+      log.push(`[WORLD_MODEL] Updated to v${worldModelUpdate.version}. Changes: +${worldModelUpdate.diff.added?.length || 0} ~${worldModelUpdate.diff.modified?.length || 0} -${worldModelUpdate.diff.removed?.length || 0}`);
+
+      // === REACTIVE IMPROVEMENT GOALS ===
       if (evalResult.quality < 6) {
-        await supabase.from("goals").insert({ user_id: userId, goal_type: "improvement", description: `Improve ${perception.domain}. Scored ${evalResult.quality}/10.`, priority: Math.max(1, 10 - evalResult.quality), status: "active" });
+        await supabase.from("goals").insert({
+          user_id: userId, goal_type: "improvement",
+          description: `Improve ${perception.domain}. Scored ${evalResult.quality}/10.`,
+          priority: Math.max(1, 10 - evalResult.quality), status: "active",
+        });
         log.push(`[REFLECT] Low quality. Created improvement goal.`);
       }
 
-      return new Response(JSON.stringify({ output: executionResult, state: { perception, memoriesRecalled: state.memories.length, activeGoals: state.goals.length, plan: state.plan, quality: evalResult.quality, issues: evalResult.issues, decision: evalResult.quality >= 6 ? "accept" : "flag_for_improvement" }, log }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // === INTRINSIC MOTIVATION ===
+      let intrinsicGoals: any[] = [];
+      if (evalResult.quality >= 7) {
+        intrinsicGoals = await generateIntrinsicGoals(LOVABLE_API_KEY, worldModelUpdate.updatedState, memories);
+        for (const g of intrinsicGoals) {
+          await supabase.from("goals").insert({
+            user_id: userId, goal_type: g.goal_type || "intrinsic",
+            description: g.description, priority: g.priority || 5, status: "active",
+          });
+        }
+        if (intrinsicGoals.length) {
+          log.push(`[INTRINSIC] Generated ${intrinsicGoals.length} curiosity-driven goals: ${intrinsicGoals.map(g => g.description.slice(0, 60)).join("; ")}`);
+        }
+      }
+
+      // Metacognitive summary
+      const avgScore = metacogLogs.length ? metacogLogs.reduce((s, l) => s + l.quality_score, 0) / metacogLogs.length : 0;
+      const interventions = metacogLogs.filter(l => l.intervention);
+
+      return new Response(JSON.stringify({
+        output: executionResult,
+        state: {
+          perception,
+          memoriesRecalled: memories.length,
+          activeGoals: goals.length,
+          plan,
+          quality: evalResult.quality,
+          issues: evalResult.issues,
+          decision: evalResult.quality >= 6 ? "accept" : "flag_for_improvement",
+        },
+        metacognition: {
+          loopId,
+          avgScore: Math.round(avgScore * 10) / 10,
+          phaseScores: metacogLogs.map(l => ({ phase: l.phase, score: l.quality_score, intervention: l.intervention })),
+          interventionCount: interventions.length,
+        },
+        worldModel: {
+          version: worldModelUpdate.version,
+          diff: worldModelUpdate.diff,
+          entityCount: worldModelUpdate.updatedState.entities?.length || 0,
+          beliefCount: worldModelUpdate.updatedState.beliefs?.length || 0,
+        },
+        intrinsicGoals,
+        log,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "status") {
-      const [memCount, goalCount, benchCount, improvCount] = await Promise.all([
+      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount] = await Promise.all([
         supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("goals").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "active"),
         supabase.from("benchmark_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("improvement_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("world_model_states").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("metacognitive_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
       ]);
       const { data: lastBench } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
       const { data: recentGoals } = await supabase.from("goals").select("description, priority, status, goal_type").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: recentImprovements } = await supabase.from("improvement_logs").select("improvement_type, description, before_score, after_score, delta, accepted, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
+      const { data: latestWorldModel } = await supabase.from("world_model_states").select("version, created_at").eq("user_id", userId).order("version", { ascending: false }).limit(1).single();
 
       return new Response(JSON.stringify({
         status: "operational",
         subsystems: {
-          cognition: { status: "active", description: "Multi-agent reasoning" },
+          cognition: { status: "active", description: "Multi-agent reasoning with metacognitive monitoring" },
           memory: { status: "active", episodes: memCount.count || 0 },
           goals: { status: "active", active: goalCount.count || 0 },
           benchmarks: { status: "active", runs: benchCount.count || 0, lastScore: lastBench?.total_score || null },
           selfImprovement: { status: "active", attempts: improvCount.count || 0 },
+          worldModel: { status: "active", versions: worldModelCount.count || 0, latestVersion: latestWorldModel?.version || 0 },
+          metacognition: { status: "active", checks: metacogCount.count || 0 },
           planning: { status: "active" }, tools: { status: "active" }, safety: { status: "enforced" },
         },
         lastBenchmark: lastBench || null, recentGoals: recentGoals || [], recentImprovements: recentImprovements || [],

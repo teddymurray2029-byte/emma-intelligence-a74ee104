@@ -142,7 +142,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
-  const [viewMode, setViewMode] = useState<"live" | "screenshot">("live");
+  
 
   // HITL state
   const [pendingApproval, setPendingApproval] = useState<{

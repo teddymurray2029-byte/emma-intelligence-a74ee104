@@ -13,7 +13,7 @@ import { BenchmarkPanel } from "@/components/BenchmarkPanel";
 import { SelfImprovePanel } from "@/components/SelfImprovePanel";
 import { GoalsPanel } from "@/components/GoalsPanel";
 import { MemoryPanel } from "@/components/MemoryPanel";
-import { getSystemStatus, getHealthCheck, runCognitiveLoop, getWorldModel, queryWorldModel, getMetacognitiveLogs } from "@/lib/agi-api";
+import { getSystemStatus, getHealthCheck, runCognitiveLoop, getWorldModel, queryWorldModel, getMetacognitiveLogs, maintainWorldModel } from "@/lib/agi-api";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
@@ -58,14 +58,16 @@ interface LoopResult {
     avgScore: number;
     phaseScores: { phase: string; score: number; intervention: string | null }[];
     interventionCount: number;
+    trends?: { phase: string; avgLast10: number; trend: string; threshold: number; dataPoints: number }[];
   };
   worldModel?: {
     version: number;
-    diff: { added: any[]; modified: any[]; removed: any[] };
+    diff: { added: any[]; modified: any[]; removed: any[]; decay?: any[]; contradictions_resolved?: any[] };
     entityCount: number;
     beliefCount: number;
   };
-  intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string }[];
+  intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string; noveltyScore?: number }[];
+  boredomBias?: string | null;
   safety?: { passed: boolean; invariantsChecked: number; violations: string[] };
   transfer?: { knowledgeExtracted: number; patterns: any[] };
   log: string[];

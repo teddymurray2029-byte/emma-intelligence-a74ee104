@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
-  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert, ExternalLink,
-  Keyboard, Globe, Wifi, WifiOff, Image as ImageIcon,
+  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert,
+  Keyboard, Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

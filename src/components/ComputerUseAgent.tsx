@@ -492,7 +492,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
                   <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
                 </div>
-                <div className="h-[500px] overflow-y-auto" ref={scrollRef}>
+                <div className="h-[500px] overflow-y-scroll" ref={scrollRef}>
                   <div className="p-2 space-y-1">
                     {steps.map((step) => (
                       <div

@@ -32,16 +32,88 @@ async function callAIFast(apiKey: string, messages: any[]): Promise<string> {
   return callAI(apiKey, messages, "google/gemini-2.5-flash-lite");
 }
 
+// Generate 768-dim embedding from text (deterministic n-gram hashing)
+function generateEmbedding(text: string): number[] {
+  const dim = 768;
+  const vec = new Float64Array(dim);
+  const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+  const words = normalized.split(/\s+/);
+  for (const word of words) {
+    for (let n = 1; n <= 3 && n <= word.length; n++) {
+      for (let i = 0; i <= word.length - n; i++) {
+        const gram = word.slice(i, i + n);
+        let hash = 0;
+        for (let c = 0; c < gram.length; c++) hash = ((hash << 5) - hash + gram.charCodeAt(c)) | 0;
+        const idx = Math.abs(hash) % dim;
+        vec[idx] += (hash > 0 ? 1 : -1) / (n * n);
+      }
+    }
+  }
+  let norm = 0;
+  for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
+  norm = Math.sqrt(norm) || 1;
+  const result: number[] = [];
+  for (let i = 0; i < dim; i++) result.push(vec[i] / norm);
+  return result;
+}
+
+// Cosine similarity between two vectors
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
+}
+
 async function perceive(input: string) {
   const hasCode = /```|function |const |import /.test(input);
   return { taskType: hasCode ? "coding" : input.includes("?") ? "question" : "task", complexity: input.length > 200 ? "high" : input.length > 50 ? "medium" : "low", domain: hasCode ? "coding" : "reasoning" };
 }
 
+// Semantic recall using embeddings with fallback to keyword matching
 async function recall(supabase: any, userId: string, query: string): Promise<string[]> {
-  const { data } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(10);
-  if (!data?.length) return [];
-  const words = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-  return data.filter((m: any) => words.some((w: string) => m.content.toLowerCase().includes(w))).slice(0, 5).map((m: any) => `[${m.episode_type}|R:${m.relevance_score}] ${m.content.slice(0, 200)}`);
+  const queryEmbedding = generateEmbedding(query);
+  
+  // Try embedding-based retrieval first
+  const { data: allMemories } = await supabase
+    .from("memory_episodes")
+    .select("content, episode_type, relevance_score, embedding")
+    .eq("user_id", userId)
+    .order("relevance_score", { ascending: false })
+    .limit(50);
+  
+  if (!allMemories?.length) return [];
+
+  // Score by embedding similarity (semantic) + relevance score
+  const scored = allMemories.map((m: any) => {
+    let semanticScore = 0;
+    if (m.embedding) {
+      try {
+        const memEmb = typeof m.embedding === "string" ? JSON.parse(m.embedding) : m.embedding;
+        if (Array.isArray(memEmb) && memEmb.length === 768) {
+          semanticScore = cosineSimilarity(queryEmbedding, memEmb);
+        }
+      } catch {}
+    }
+    // Fallback: keyword matching for memories without embeddings
+    if (semanticScore === 0) {
+      const words = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+      const matches = words.filter((w: string) => m.content.toLowerCase().includes(w)).length;
+      semanticScore = matches / (words.length || 1) * 0.5; // Lower weight than embedding
+    }
+    const combinedScore = semanticScore * 0.7 + ((m.relevance_score || 0) / 10) * 0.3;
+    return { ...m, combinedScore, semanticScore };
+  });
+
+  scored.sort((a: any, b: any) => b.combinedScore - a.combinedScore);
+
+  return scored
+    .filter((m: any) => m.combinedScore > 0.1)
+    .slice(0, 5)
+    .map((m: any) => `[${m.episode_type}|R:${m.relevance_score}|S:${Math.round(m.semanticScore * 100)}%] ${m.content.slice(0, 200)}`);
 }
 
 async function getActiveGoals(supabase: any, userId: string) {

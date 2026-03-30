@@ -52,6 +52,25 @@ export async function queryWorldModel(query: string) { return agiCall("emma-worl
 // Metacognitive Logs API
 export async function getMetacognitiveLogs(loopId?: string) { return agiCall("emma-db-proxy", { action: "get_metacognitive_logs", loopId }); }
 
+// Formal Safety Verification API
+export async function verifyInvariants(content: string) { return agiCall("emma-formal-safety", { action: "verify_invariants", content }); }
+export async function verifyTemporal(history: any[]) { return agiCall("emma-formal-safety", { action: "verify_temporal", history }); }
+export async function fullSafetyVerification(content: string, history?: any[]) { return agiCall("emma-formal-safety", { action: "full_verification", content, history }); }
+export async function getSafetyHistory() { return agiCall("emma-formal-safety", { action: "get_history" }); }
+
+// Transfer Learning API
+export async function extractKnowledge(content: string, source_domain: string) { return agiCall("emma-transfer-sensory", { action: "extract_knowledge", content, source_domain }); }
+export async function transferKnowledge(content: string, target_domain: string) { return agiCall("emma-transfer-sensory", { action: "transfer", content, target_domain }); }
+export async function getKnowledgeBase() { return agiCall("emma-transfer-sensory", { action: "get_knowledge_base" }); }
+
+// Sensory Grounding API
+export async function groundVisual(image_url: string, content?: string) { return agiCall("emma-transfer-sensory", { action: "ground_visual", image_url, content }); }
+export async function groundText(content: string) { return agiCall("emma-transfer-sensory", { action: "ground_text", content }); }
+export async function getSensoryHistory() { return agiCall("emma-transfer-sensory", { action: "get_sensory_history" }); }
+
+// Autonomous Loop API
+export async function getAutonomousRuns() { return agiCall("emma-autonomous-loop", { action: "get_runs", user_id: "self" }); }
+
 // Admin Learning API
 export async function getAdminDashboard() { return agiCall("emma-admin-learn", { action: "get_dashboard" }); }
 export async function aggregateData() { return agiCall("emma-admin-learn", { action: "aggregate_data" }); }

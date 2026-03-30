@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
-  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert, ExternalLink,
-  Keyboard, Globe, Wifi, WifiOff, Image as ImageIcon,
+  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert,
+  Keyboard, Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -142,7 +142,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
-  const [viewMode, setViewMode] = useState<"live" | "screenshot">("live");
+  
 
   // HITL state
   const [pendingApproval, setPendingApproval] = useState<{
@@ -228,10 +228,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setPendingApproval(null);
   };
 
-  const getVncUrl = () => {
-    if (!sessionId) return null;
-    return `https://6080-${sessionId}.e2b.app`;
-  };
 
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
@@ -454,23 +450,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     );
   };
 
-  const vncUrl = getVncUrl();
-
   const renderDesktopView = () => {
-    // Live VNC stream via iframe
-    if (viewMode === "live" && vncUrl && (isRunning || status === "done")) {
-      return (
-        <iframe
-          src={vncUrl}
-          className="w-full h-full border-0"
-          title="Live Desktop Stream"
-          sandbox="allow-scripts allow-same-origin"
-          allow="clipboard-read; clipboard-write"
-        />
-      );
-    }
-
-    // Fallback: static screenshot
     if (currentScreenshot) {
       return (
         <img
@@ -585,35 +565,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                     <span className="text-[10px] font-mono text-foreground capitalize">{status}</span>
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}…</span>}
                   </div>
-                  <div className="flex items-center gap-1">
-                    {/* View mode toggle */}
-                    <Button
-                      variant={viewMode === "live" ? "default" : "ghost"}
-                      size="sm"
-                      className="h-6 px-2 text-[10px] gap-1"
-                      onClick={() => setViewMode("live")}
-                      title="Live VNC stream"
-                    >
-                      {viewMode === "live" ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-                      Live
-                    </Button>
-                    <Button
-                      variant={viewMode === "screenshot" ? "default" : "ghost"}
-                      size="sm"
-                      className="h-6 px-2 text-[10px] gap-1"
-                      onClick={() => setViewMode("screenshot")}
-                      title="Screenshot mode"
-                    >
-                      <ImageIcon className="h-3 w-3" />
-                      Screenshot
-                    </Button>
-
-                    {vncUrl && (
-                      <Button variant="ghost" size="sm" className="h-6 px-1.5" asChild title="Open in new tab">
-                        <a href={vncUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3 w-3" /></a>
-                      </Button>
-                    )}
-
+                   <div className="flex items-center gap-1">
                     {status === "error" && (
                       <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry
@@ -694,7 +646,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                               src={`data:image/png;base64,${step.screenshot}`}
                               alt="Step screenshot"
                               className="w-full rounded border border-border mt-1 cursor-pointer hover:opacity-80 transition-opacity"
-                              onClick={() => { setCurrentScreenshot(step.screenshot!); setViewMode("screenshot"); }}
+                              onClick={() => setCurrentScreenshot(step.screenshot!)}
                             />
                           )}
                         </div>

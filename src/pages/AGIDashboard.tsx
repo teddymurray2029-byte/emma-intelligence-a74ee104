@@ -483,20 +483,74 @@ export default function AGIDashboard() {
                       </div>
                     )}
 
-                    {/* Intrinsic Goals */}
+                    {/* Intrinsic Goals with Novelty Scores */}
                     {loopResult.intrinsicGoals && loopResult.intrinsicGoals.length > 0 && (
                       <div className="emma-surface-elevated rounded-xl p-4">
                         <p className="text-[10px] font-mono text-accent mb-2 flex items-center gap-1">
                           <Lightbulb className="h-3 w-3" /> INTRINSIC GOALS GENERATED
+                          {loopResult.boredomBias && (
+                            <span className="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full ml-2">
+                              BOREDOM→{loopResult.boredomBias}
+                            </span>
+                          )}
                         </p>
                         {loopResult.intrinsicGoals.map((g, i) => (
                           <div key={i} className="bg-secondary/50 rounded-lg p-2 mb-2">
                             <p className="text-xs text-foreground flex items-center gap-1">
                               <Lightbulb className="h-3 w-3 text-accent" /> {g.description}
                             </p>
-                            <p className="text-[10px] text-muted-foreground">{g.motivation}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-[10px] text-muted-foreground flex-1">{g.motivation}</p>
+                              {g.noveltyScore !== undefined && (
+                                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full ${
+                                  g.noveltyScore > 0.7 ? "bg-green-400/10 text-green-400" : g.noveltyScore > 0.4 ? "bg-accent/10 text-accent" : "bg-secondary text-muted-foreground"
+                                }`}>
+                                  novelty: {Math.round(g.noveltyScore * 100)}%
+                                </span>
+                              )}
+                            </div>
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* Metacognitive Trends */}
+                    {loopResult.metacognition?.trends && loopResult.metacognition.trends.length > 0 && (
+                      <div className="emma-surface-elevated emma-glow-border rounded-xl p-4">
+                        <p className="text-[10px] font-mono text-primary mb-3 flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3" /> CROSS-LOOP METACOGNITIVE TRENDS
+                        </p>
+                        <div className="space-y-2">
+                          {loopResult.metacognition.trends.map((t, i) => (
+                            <div key={i} className="flex items-center gap-3 bg-secondary/30 rounded-lg p-2">
+                              <span className="text-[10px] text-foreground w-20 capitalize font-medium">{t.phase}</span>
+                              <div className="flex-1 flex items-center gap-1">
+                                {/* Mini sparkline using last 10 avg */}
+                                <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      t.trend === "improving" ? "bg-green-400" : t.trend === "declining" ? "bg-destructive" : "bg-primary"
+                                    }`}
+                                    style={{ width: `${t.avgLast10 * 10}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-mono w-10">{t.avgLast10}</span>
+                              <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full ${
+                                t.trend === "improving" ? "bg-green-400/10 text-green-400" :
+                                t.trend === "declining" ? "bg-destructive/10 text-destructive" :
+                                "bg-secondary text-muted-foreground"
+                              }`}>
+                                {t.trend === "improving" ? "↑" : t.trend === "declining" ? "↓" : "→"} {t.trend}
+                              </span>
+                              {t.threshold > 3 && (
+                                <span className="text-[9px] bg-destructive/10 text-destructive px-1 py-0.5 rounded">
+                                  T:{t.threshold}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -553,6 +607,18 @@ export default function AGIDashboard() {
                   <Button onClick={loadWorldModel} disabled={wmLoading} size="sm" className="gap-1">
                     {wmLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                     Load State
+                  </Button>
+                  <Button onClick={async () => {
+                    setWmLoading(true);
+                    try {
+                      const result = await maintainWorldModel();
+                      toast.success(`Maintenance: ${result.decayEvents?.length || 0} decayed, ${result.resolutions?.length || 0} contradictions resolved`);
+                      await loadWorldModel();
+                    } catch (e: any) { toast.error(e.message); }
+                    setWmLoading(false);
+                  }} disabled={wmLoading} variant="outline" size="sm" className="gap-1">
+                    <Zap className="h-3 w-3" />
+                    Maintain (Decay + Resolve)
                   </Button>
                 </div>
 

@@ -318,11 +318,15 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           try {
-            await cuApi("execute", {
+            const execResult = await cuApi("execute", {
               sessionId: sid, actionType: decision.action,
               params: decision.params, envdAccessToken: token,
             }, getToken, 20_000);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
+            // Update main screenshot if the execute response includes one
+            if (execResult?.screenshot) {
+              setCurrentScreenshot(execResult.screenshot);
+            }
           } catch (e: any) {
             updateStep(execStepId, { status: "error", reasoning: `Action failed: ${e.message}` });
           }

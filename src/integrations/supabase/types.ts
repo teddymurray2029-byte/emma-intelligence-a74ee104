@@ -785,6 +785,26 @@ export type Database = {
         }
         Returns: boolean
       }
+      match_transfer_knowledge: {
+        Args: {
+          match_count?: number
+          match_threshold?: number
+          p_user_id?: string
+          query_embedding: string
+        }
+        Returns: {
+          confidence: number
+          content: string
+          created_at: string
+          id: string
+          knowledge_type: string
+          similarity: number
+          source_domain: string
+          target_domain: string
+          transfer_count: number
+          user_id: string
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

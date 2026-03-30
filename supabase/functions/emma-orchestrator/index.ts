@@ -32,30 +32,37 @@ async function callAIFast(apiKey: string, messages: any[]): Promise<string> {
   return callAI(apiKey, messages, "google/gemini-2.5-flash-lite");
 }
 
-// Enhanced semantic embedding: tries AI-based extraction, falls back to n-gram hash
+// Enhanced semantic embedding: requests 256-dim from AI, projects to 768 via learned mixing
 async function generateSmartEmbedding(apiKey: string, text: string): Promise<number[]> {
   try {
-    // Use AI to generate a semantic representation
     const result = await callAIFast(apiKey, [
-      { role: "system", content: `You are an embedding encoder. Given text, output ONLY a JSON array of exactly 64 floating-point numbers between -1 and 1 that semantically represent the text. No explanation, just the array.` },
-      { role: "user", content: text.slice(0, 500) }
+      { role: "system", content: `You are an embedding encoder. Output ONLY a JSON array of exactly 256 floating-point numbers between -1 and 1 that represent the semantic meaning of the input text. Cover diverse semantic axes: topic, sentiment, abstraction level, domain, formality, temporal, certainty. No explanation.` },
+      { role: "user", content: text.slice(0, 800) }
     ]);
     const parsed = JSON.parse(result.replace(/```json\n?/g, "").replace(/```/g, "").trim());
-    if (Array.isArray(parsed) && parsed.length >= 32) {
-      // Pad/truncate to 768 and normalize
+    if (Array.isArray(parsed) && parsed.length >= 128) {
+      // Project 256-dim AI embedding to 768-dim via deterministic mixing
+      const aiDim = Math.min(parsed.length, 256);
       const vec = new Array(768).fill(0);
-      for (let i = 0; i < Math.min(parsed.length, 768); i++) vec[i] = typeof parsed[i] === "number" ? parsed[i] : 0;
-      // Repeat pattern to fill 768 dims for richer representation
-      if (parsed.length < 768) {
-        for (let i = parsed.length; i < 768; i++) vec[i] = vec[i % parsed.length] * 0.5;
+      // Direct copy first 256 dims
+      for (let i = 0; i < aiDim; i++) vec[i] = typeof parsed[i] === "number" ? parsed[i] : 0;
+      // Generate dims 256-511 via pairwise products (interaction features)
+      for (let i = 0; i < 256 && i + 256 < 768; i++) {
+        const j = (i * 7 + 13) % aiDim;
+        vec[i + 256] = (vec[i] * vec[j]) * 0.7;
       }
+      // Generate dims 512-767 via shifted sums (smoothed features)
+      for (let i = 0; i < 256 && i + 512 < 768; i++) {
+        const j = (i + 1) % aiDim, k = (i + 2) % aiDim;
+        vec[i + 512] = (vec[i] + vec[j] + vec[k]) / 3 * 0.5;
+      }
+      // L2 normalize
       let norm = 0;
       for (let i = 0; i < 768; i++) norm += vec[i] * vec[i];
       norm = Math.sqrt(norm) || 1;
       return vec.map(v => v / norm);
     }
   } catch {}
-  // Fallback to deterministic n-gram hash
   return generateEmbedding(text);
 }
 

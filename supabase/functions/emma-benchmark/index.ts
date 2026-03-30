@@ -51,7 +51,15 @@ serve(async (req) => {
       const { data: questions } = await query;
       if (!questions?.length) return new Response(JSON.stringify({ error: "No benchmark questions" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-      const systemPrompt = `You are Emma, a cognitive reasoning system. Answer directly and concisely.`;
+      // Prompt A/B testing: get active prompt or use default
+      let systemPrompt = `You are Emma, a cognitive reasoning system. Answer directly and concisely.`;
+      let promptVersion = systemPromptVersion || 1;
+      const { data: activePrompt } = await supabase.from("prompt_evolutions").select("*").eq("active", true).order("version", { ascending: false }).limit(1).single();
+      if (activePrompt) {
+        systemPrompt = activePrompt.prompt_text;
+        promptVersion = activePrompt.version;
+      }
+
       const results: any[] = [];
       const categoryScores: Record<string, { total: number; max: number; count: number }> = {};
 
@@ -70,12 +78,40 @@ serve(async (req) => {
       const catScoresNormalized: Record<string, number> = {};
       for (const [cat, scores] of Object.entries(categoryScores)) catScoresNormalized[cat] = scores.max > 0 ? Math.round((scores.total / scores.max) * 100) : 0;
 
-      await supabase.from("benchmark_runs").insert({ user_id: userId, total_score: normalizedScore, max_score: 100, category_scores: catScoresNormalized, model_config: { model: "gemini-3-flash", prompt_version: systemPromptVersion || 1 }, system_prompt_version: systemPromptVersion || 1 });
-      const { data: prevRuns } = await supabase.from("benchmark_runs").select("total_score").eq("user_id", userId).order("created_at", { ascending: false }).limit(2);
+      await supabase.from("benchmark_runs").insert({ user_id: userId, total_score: normalizedScore, max_score: 100, category_scores: catScoresNormalized, model_config: { model: "gemini-3-flash", prompt_version: promptVersion }, system_prompt_version: promptVersion });
+      const { data: prevRuns } = await supabase.from("benchmark_runs").select("total_score, system_prompt_version").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const previousScore = prevRuns && prevRuns.length > 1 ? Number(prevRuns[1].total_score) : null;
       const delta = previousScore !== null ? normalizedScore - previousScore : null;
 
-      return new Response(JSON.stringify({ score: normalizedScore, previousScore, delta, categoryScores: catScoresNormalized, results, message: delta !== null ? `SCORE: ${previousScore} → ${normalizedScore} (${delta >= 0 ? "+" : ""}${delta})` : `SCORE: ${normalizedScore}/100` }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // A/B testing: if we have enough runs, auto-select best prompt
+      let abTestResult: any = null;
+      if (prevRuns && prevRuns.length >= 3) {
+        const versionScores: Record<number, number[]> = {};
+        for (const r of prevRuns) {
+          const v = r.system_prompt_version || 1;
+          if (!versionScores[v]) versionScores[v] = [];
+          versionScores[v].push(Number(r.total_score));
+        }
+        const versionAvgs = Object.entries(versionScores).map(([v, scores]) => ({
+          version: Number(v), avg: scores.reduce((s, x) => s + x, 0) / scores.length, runs: scores.length,
+        })).sort((a, b) => b.avg - a.avg);
+
+        abTestResult = { variants: versionAvgs, bestVersion: versionAvgs[0]?.version };
+
+        // Auto-activate best prompt if it has 2+ runs and beats current by 5+
+        if (versionAvgs.length >= 2 && versionAvgs[0].runs >= 2) {
+          const best = versionAvgs[0];
+          const current = versionAvgs.find(v => v.version === promptVersion);
+          if (current && best.version !== promptVersion && best.avg - current.avg >= 5) {
+            await supabase.from("prompt_evolutions").update({ active: false }).eq("active", true);
+            await supabase.from("prompt_evolutions").update({ active: true }).eq("version", best.version);
+            abTestResult.autoSwitched = true;
+            abTestResult.switchedTo = best.version;
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({ score: normalizedScore, previousScore, delta, promptVersion, categoryScores: catScoresNormalized, results, abTest: abTestResult, message: delta !== null ? `SCORE: ${previousScore} → ${normalizedScore} (${delta >= 0 ? "+" : ""}${delta}) [Prompt v${promptVersion}]` : `SCORE: ${normalizedScore}/100 [Prompt v${promptVersion}]` }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "history") {

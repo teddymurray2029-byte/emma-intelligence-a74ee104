@@ -520,12 +520,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
             <ResizablePanel defaultSize={40} minSize={20}>
               <div className="flex flex-col h-full bg-card overflow-hidden">
-                <div className="px-3 py-2 border-b border-border">
+                <div className="px-3 py-2 border-b border-border flex-shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
                   <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
                 </div>
-                <ScrollArea className="flex-1 min-h-0">
-                  <div ref={scrollRef} className="p-2 space-y-1">
+                <div className="flex-1 min-h-0 overflow-y-auto" ref={scrollRef}>
+                  <div className="p-2 space-y-1">
                     {steps.map((step) => (
                       <div key={step.id} className="flex gap-2 p-2 rounded-lg hover:bg-secondary/30 transition-colors group">
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(step.status)}</div>

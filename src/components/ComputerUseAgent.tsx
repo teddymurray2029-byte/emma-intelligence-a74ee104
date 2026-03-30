@@ -132,6 +132,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<{ sid: string; token: string } | null>(null);
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const taskRef = useRef("");
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

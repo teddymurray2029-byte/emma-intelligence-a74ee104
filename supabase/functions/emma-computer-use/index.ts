@@ -822,6 +822,42 @@ serve(async (req) => {
         return json(result);
       }
 
+      case "keepalive": {
+        const { sessionId, envdAccessToken } = body;
+        if (!sessionId) return json({ error: "Missing sessionId" }, 400);
+
+        try {
+          // Try extending the existing sandbox timeout
+          await e2bApi(`/sandboxes/${sessionId}/timeout`, {
+            method: "POST",
+            body: JSON.stringify({ timeout: 300 }),
+          });
+          console.log(`[keepalive] Extended timeout for ${sessionId}`);
+          return json({ status: "extended", sessionId });
+        } catch (extendError) {
+          console.warn(`[keepalive] Extend failed for ${sessionId}, recreating sandbox...`, extendError);
+          // Sandbox is dead — create a new one
+          try {
+            const cached = sandboxCache.get(sessionId);
+            sandboxCache.delete(sessionId);
+            const newSandbox = await createSandbox(userId, body.task || "recovery");
+            await kickstartDesktop(newSandbox);
+            // Wait briefly for desktop
+            await new Promise((r) => setTimeout(r, 3000));
+            console.log(`[keepalive] Recreated sandbox: ${newSandbox.sandboxId}`);
+            return json({
+              status: "recreated",
+              sessionId: newSandbox.sandboxId,
+              envdAccessToken: newSandbox.envdAccessToken,
+            });
+          } catch (recreateError) {
+            const msg = recreateError instanceof Error ? recreateError.message : "Recovery failed";
+            console.error(`[keepalive] Recreate failed: ${msg}`);
+            return json({ error: msg, errorCode: "sandbox_expired" }, 503);
+          }
+        }
+      }
+
       case "think": {
         const { sessionId, task, actionHistory, userMessage, envdAccessToken } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
@@ -850,7 +886,25 @@ serve(async (req) => {
               status: "black_screen",
             });
           }
-        } catch {}
+        } catch (screenshotError) {
+          // Attempt token refresh before giving up
+          console.warn(`[think] Screenshot failed, attempting token refresh: ${screenshotError}`);
+          try {
+            const refreshed = await connectSandbox(sandbox.sandboxId, true);
+            syncSandboxSession(sandbox, refreshed);
+            const retryScreenshot = await captureScreenshotData(sandbox);
+            screenshotBase64 = retryScreenshot.base64;
+          } catch (retryError) {
+            console.error(`[think] Token refresh also failed: ${retryError}`);
+            return json({
+              action: "wait",
+              params: { seconds: 5 },
+              reasoning: "Sandbox connection lost — recovery in progress via keepalive",
+              done: false,
+              errorCode: "sandbox_expired",
+            });
+          }
+        }
 
         if (!screenshotBase64) {
           return json({

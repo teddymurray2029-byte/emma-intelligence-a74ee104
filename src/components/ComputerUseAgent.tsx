@@ -132,6 +132,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<{ sid: string; token: string } | null>(null);
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const taskRef = useRef("");
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -190,6 +192,37 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     return null;
   }, [getToken, updateStep]);
 
+  const stopKeepalive = useCallback(() => {
+    if (keepaliveRef.current) {
+      clearInterval(keepaliveRef.current);
+      keepaliveRef.current = null;
+    }
+  }, []);
+
+  const startKeepalive = useCallback((sid: string, token: string) => {
+    stopKeepalive();
+    keepaliveRef.current = setInterval(async () => {
+      const session = sessionRef.current;
+      if (!session) return;
+      try {
+        const res = await cuApi("keepalive", {
+          sessionId: session.sid,
+          envdAccessToken: session.token,
+          task: taskRef.current,
+        }, getToken, 15_000);
+        if (res.status === "recreated" && res.sessionId && res.envdAccessToken) {
+          // Sandbox was recreated — update all refs
+          console.log(`[keepalive] Sandbox recreated: ${res.sessionId}`);
+          setSessionId(res.sessionId);
+          setEnvdToken(res.envdAccessToken);
+          sessionRef.current = { sid: res.sessionId, token: res.envdAccessToken };
+        }
+      } catch (e) {
+        console.warn("[keepalive] ping failed:", e);
+      }
+    }, 60_000);
+  }, [getToken, stopKeepalive]);
+
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
@@ -198,6 +231,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     abortRef.current = false;
+    taskRef.current = task.trim();
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
@@ -246,8 +280,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
     setIsBooting(false);
     if (abortRef.current) return;
+
+    // Start keepalive heartbeat
+    startKeepalive(sid, token);
+
     await runAgentLoop(sid, task.trim(), token);
-  }, [task, getToken, addStep, updateStep]);
+  }, [task, getToken, addStep, updateStep, startKeepalive]);
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
     const actionHistory: { action: string; reasoning: string }[] = [];
@@ -258,6 +296,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         break;
       }
 
+      // Always use latest session credentials (keepalive may have swapped them)
+      const currentSession = sessionRef.current;
+      const curSid = currentSession?.sid || sid;
+      const curToken = currentSession?.token || token;
+
       const thinkStepId = addStep({ action: "thinking", reasoning: "Analyzing screen...", status: "executing" });
 
       try {
@@ -265,10 +308,17 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         if (pendingIntervention) setIntervention("");
 
         const decision = await cuApi("think", {
-          sessionId: sid, task: taskDesc, actionHistory,
+          sessionId: curSid, task: taskDesc, actionHistory,
           userMessage: pendingIntervention || undefined,
-          envdAccessToken: token,
+          envdAccessToken: curToken,
         }, getToken, 60_000);
+
+        // If sandbox_expired, wait for keepalive to recover
+        if (decision.errorCode === "sandbox_expired") {
+          updateStep(thinkStepId, { status: "executing", reasoning: "Sandbox expired — auto-recovering..." });
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
@@ -284,10 +334,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
 
         if (decision.done) {
-          await refreshLatestScreenshot(sid, token, thinkStepId);
+          await refreshLatestScreenshot(curSid, curToken, thinkStepId);
           setSummary(decision.summary || "Task completed.");
           setStatus("done");
           setIsRunning(false);
+          stopKeepalive();
           addStep({ action: "complete", reasoning: decision.summary || "Task completed successfully!", status: "done" });
           break;
         }
@@ -299,8 +350,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           latestStepId = execStepId;
           try {
             const execResult = await cuApi("execute", {
-              sessionId: sid, actionType: decision.action,
-              params: decision.params, envdAccessToken: token,
+              sessionId: curSid, actionType: decision.action,
+              params: decision.params, envdAccessToken: curToken,
             }, getToken, 30_000);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
             if (execResult?.screenshot) {
@@ -314,7 +365,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
         await new Promise((r) => setTimeout(r, waitTime));
-        await refreshLatestScreenshot(sid, token, latestStepId ?? thinkStepId);
+        await refreshLatestScreenshot(curSid, curToken, latestStepId ?? thinkStepId);
       } catch (e: any) {
         updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
         await new Promise((r) => setTimeout(r, 3000));
@@ -325,6 +376,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const stopSession = useCallback(async () => {
     abortRef.current = true;
     setStatus("stopping");
+    stopKeepalive();
     if (sessionId) {
       try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
     }
@@ -335,7 +387,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setIsBooting(false);
     setStatus("done");
     toast.success("Agent stopped");
-  }, [sessionId, envdToken, getToken]);
+  }, [sessionId, envdToken, getToken, stopKeepalive]);
 
   const handleIntervene = () => {
     if (!intervention.trim()) return;

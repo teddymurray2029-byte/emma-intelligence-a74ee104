@@ -251,9 +251,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
     const actionHistory: { action: string; reasoning: string }[] = [];
-    const MAX_STEPS = 50;
 
-    for (let i = 0; i < MAX_STEPS; i++) {
+    while (true) {
       if (abortRef.current) {
         addStep({ action: "stopped", reasoning: "Task stopped by user", status: "done" });
         break;
@@ -321,11 +320,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         await new Promise((r) => setTimeout(r, 3000));
       }
     }
-
-    if (!abortRef.current && stepsRef.current.length >= MAX_STEPS) {
-      setSummary("Reached maximum step limit.");
-      setStatus("done");
-      setIsRunning(false);
     }
   };
 

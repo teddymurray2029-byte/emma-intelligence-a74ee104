@@ -306,12 +306,51 @@ serve(async (req) => {
       await logMetacog("evaluate", JSON.stringify(evalResult));
       log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
 
-      // === STORE MEMORY ===
+      // === FORMAL SAFETY VERIFICATION ===
+      const safetyInvariants = [
+        { name: "bounded_output", passed: executionResult.length <= 102400, violation: executionResult.length > 102400 ? "Output exceeds 100KB" : null },
+        { name: "no_credential_leak", passed: !/sk[-_][a-zA-Z0-9]{20,}|-----BEGIN.*PRIVATE KEY|AKIA[0-9A-Z]{16}/.test(executionResult), violation: "Credential leak detected" },
+        { name: "no_self_modification", passed: !/(modify|disable|bypass|override).*safety/i.test(executionResult), violation: "Safety self-modification attempt" },
+        { name: "no_harm_instructions", passed: !/how to (make|build|create) (a |an )?(bomb|weapon|explosive)/i.test(executionResult), violation: "Harmful content" },
+      ];
+      const safetyPassed = safetyInvariants.every(s => s.passed);
+      const safetyViolations = safetyInvariants.filter(s => !s.passed);
+      log.push(`[SAFETY] Formal verification: ${safetyPassed ? "PASSED" : "FAILED"} (${safetyInvariants.length} invariants, ${safetyViolations.length} violations)`);
+
+      if (!safetyPassed) {
+        log.push(`[SAFETY] ⚠ Violations: ${safetyViolations.map(v => v.name).join(", ")}`);
+        await supabase.from("safety_verifications").insert({
+          user_id: userId, verification_type: "loop_invariant",
+          passed: false, violations: safetyViolations, formal_proofs: safetyInvariants,
+          risk_score: safetyViolations.length * 25,
+        });
+      }
+
+      // === STORE MEMORY (with embedding) ===
+      const memoryContent = `Task: "${input.slice(0, 100)}". Quality: ${evalResult.quality}/10.`;
+      const embedding = generateEmbedding(`${input} ${executionResult.slice(0, 200)} ${perception.domain}`);
       await supabase.from("memory_episodes").insert({
         user_id: userId, episode_type: "episodic",
-        content: `Task: "${input.slice(0, 100)}". Quality: ${evalResult.quality}/10.`,
+        content: memoryContent,
         relevance_score: evalResult.quality,
+        embedding: `[${embedding.join(",")}]`,
       });
+
+      // === TRANSFER LEARNING: Extract knowledge ===
+      let transferKnowledge: any[] = [];
+      if (evalResult.quality >= 7) {
+        const tkEmbedding = generateEmbedding(`${perception.domain} ${input.slice(0, 100)}`);
+        await supabase.from("transfer_knowledge").insert({
+          user_id: userId,
+          source_domain: perception.domain,
+          knowledge_type: "pattern",
+          content: `High-quality ${perception.taskType}: "${input.slice(0, 100)}". Approach: ${plan.join(" → ")}`,
+          embedding: `[${tkEmbedding.join(",")}]`,
+          confidence: evalResult.quality / 10,
+        });
+        transferKnowledge.push({ domain: perception.domain, type: perception.taskType });
+        log.push(`[TRANSFER] Stored knowledge pattern in ${perception.domain}`);
+      }
 
       // === UPDATE WORLD MODEL ===
       const worldModelUpdate = await updateWorldModel(

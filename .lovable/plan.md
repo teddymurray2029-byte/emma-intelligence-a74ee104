@@ -1,91 +1,100 @@
 
 
-# Plan: World Model, Metacognitive Monitoring, and Intrinsic Motivation Systems
+# Plan: Implement All Remaining ASI Gap Features (~89% → 100%)
 
 ## Overview
 
-Three new subsystems that close the remaining ASI gaps: a persistent world model that survives across sessions, real-time metacognitive monitoring during cognitive loop execution, and autonomous intrinsic goal generation.
+Six specific gaps identified in the last assessment. Each is a targeted enhancement to existing subsystems.
 
-## 1. Database Schema (Migration)
+## Gap 1: Belief Decay & Contradiction Resolution (World Model)
 
-Create two new tables:
+**File:** `supabase/functions/emma-world-model/index.ts`
 
-- **`world_model_states`** — Stores the persistent internal representation of the environment per user. Contains a JSONB `state` field (entities, relations, beliefs, confidence scores), a `version` integer that auto-increments on updates, and timestamps. RLS: service_role only.
+Add a new action `maintain_state` that:
+- Scans all beliefs, reduces `confidence` by 5% for beliefs not updated in 24h, 15% for 72h+
+- Detects contradictions: beliefs with opposing statements (e.g., "X is fast" vs "X is slow") flagged and lowest-confidence one removed
+- Auto-runs during `update_state` before merging new observations
+- Stores decay/resolution events in the diff
 
-- **`metacognitive_logs`** — Tracks reasoning quality snapshots captured mid-cognitive-loop. Fields: `user_id`, `loop_id` (UUID grouping), `phase` (perceive/recall/plan/execute/evaluate), `quality_score` (numeric), `intervention` (text, nullable — records if/why the system interrupted), `metrics` (JSONB — latency, token count, coherence), `created_at`. RLS: service_role only.
+## Gap 2: Cross-Loop Metacognitive Trend Analysis
 
-No changes to existing tables. The existing `goals` table already supports the intrinsic motivation output (new `goal_type` values like `"intrinsic"`, `"curiosity"`, `"exploration"`).
+**File:** `supabase/functions/emma-orchestrator/index.ts`
 
-## 2. New Edge Function: `emma-world-model`
+After the existing metacognitive checks in `run_loop`:
+- Query last 10 metacognitive_logs for this user, compute rolling averages per phase
+- If a phase's average has been declining over 3+ loops, auto-raise the quality threshold for that phase from 3 to 5
+- Include `trends` object in the response: `{phase: string, avgLast10: number, trend: "improving"|"stable"|"declining"}`
 
-Actions:
-- **`get_state`** — Returns current world model for the user (latest version from `world_model_states`)
-- **`update_state`** — Takes new observations (from chat, cognitive loop, benchmarks) and calls AI to merge them into the existing world model. Produces a diff and stores the new version.
-- **`query_state`** — Natural language query against the world model ("What does the system know about X?")
+## Gap 3: Persistent pg_cron Scheduling (Autonomous Loop)
 
-The AI prompt instructs the model to maintain a structured JSON representation with: `entities` (known objects/concepts), `relations` (how they connect), `beliefs` (inferred facts with confidence), `temporal` (time-ordered events).
+**Action:** Use Supabase insert tool (not migration) to create a `cron.schedule` entry that calls `emma-autonomous-loop` every 15 minutes via `net.http_post`.
 
-## 3. Modify Edge Function: `emma-orchestrator`
+Requires enabling `pg_cron` and `pg_net` extensions first via migration.
 
-Enhance the `run_loop` action with:
+## Gap 4: Novelty Detection & Boredom Modeling (Intrinsic Motivation)
 
-**World Model Integration:**
-- After `perceive`, fetch current world model state and inject it as context
-- After `evaluate`, call `emma-world-model/update_state` with the loop results to update the persistent model
+**File:** `supabase/functions/emma-orchestrator/index.ts`
 
-**Metacognitive Monitoring:**
-- Generate a unique `loop_id` at start
-- After each phase (perceive, recall, plan, execute, evaluate), run a lightweight AI check: "Rate the quality of this phase output 1-10. Should we redirect? Return JSON: {score, redirect, reason}"
-- Log each check to `metacognitive_logs`
-- If any phase scores below 3, interrupt and re-run that phase with adjusted parameters (max 1 retry per phase)
-- Include metacognitive summary in the final response
+Enhance `generateIntrinsicGoals`:
+- Before generating, query existing goals to compute a "novelty score" — how different the proposed goal is from existing ones (via embedding similarity)
+- Add a "boredom" heuristic: if the last 5 cognitive loops were in the same domain, bias goal generation toward unexplored domains
+- Filter out generated goals that are >80% similar to existing active goals
 
-**Intrinsic Motivation (Goal Generation):**
-- After evaluation, if quality >= 7 (system is performing well), trigger an "exploration" step
-- AI prompt: "Given the world model state and recent memories, identify 1-2 novel objectives the system hasn't explored. Return JSON array of {description, motivation, priority, goal_type}."
-- Insert as goals with `goal_type: "intrinsic"` — these represent curiosity-driven, non-reactive objectives
-- Add `[INTRINSIC]` log entries
+## Gap 5: Enhanced Semantic Embeddings via AI Gateway
 
-## 4. Frontend API (`src/lib/agi-api.ts`)
+**File:** `supabase/functions/emma-orchestrator/index.ts` (and shared functions)
 
-Add new exports:
+Add an `aiEmbedding` function that calls the AI gateway with a prompt like "Represent this for retrieval: {text}" and extracts a semantic vector from the response token probabilities. Falls back to the existing n-gram hash if the AI call fails. This gives semantically richer embeddings without a dedicated embedding API.
+
+## Gap 6: Deeper Multi-Modal Fusion (Sensory Grounding)
+
+**File:** `supabase/functions/emma-transfer-sensory/index.ts`
+
+Add a new action `fuse_modalities`:
+- Takes multiple sensory inputs (text + image_url + optional audio description)
+- Cross-references visual grounding output with text grounding output
+- Produces a unified "fused representation" with cross-modal consistency score
+- Stores in `sensory_logs` with modality `"fused"`
+
+## Frontend Updates
+
+**`src/pages/AGIDashboard.tsx`:**
+- Add metacognitive trend visualization (sparkline per phase showing last 10 scores)
+- Show belief decay info in World Model tab
+- Display novelty scores on intrinsic goals
+
+**`src/pages/ASITransformation.tsx`:**
+- Update phase 2D items to show all gaps as completed with checkmarks
+
+**`src/lib/agi-api.ts`:**
+- Add `maintainWorldModel()`, `fuseModalities(inputs)` API wrappers
+
+## Database Changes
+
+**Migration:**
+- `CREATE EXTENSION IF NOT EXISTS pg_cron` and `CREATE EXTENSION IF NOT EXISTS pg_net`
+
+**Insert (not migration) — pg_cron job:**
+```sql
+SELECT cron.schedule('emma-autonomous-loop', '*/15 * * * *', $$
+  SELECT net.http_post(
+    url:='https://lckpqjkvwvqpfymhmqgb.supabase.co/functions/v1/emma-autonomous-loop',
+    headers:='{"Content-Type":"application/json","Authorization":"Bearer <anon_key>"}'::jsonb,
+    body:='{"action":"run_autonomous_loop"}'::jsonb
+  ) as request_id;
+$$);
 ```
-getWorldModel()
-updateWorldModel(observations)
-queryWorldModel(query)
-getMetacognitiveLogs(loopId?)
-```
-
-## 5. Frontend UI Updates
-
-**AGI Dashboard (`AGIDashboard.tsx`):**
-- Add two new tabs: "World Model" and "Metacognition"
-- **World Model tab**: Displays the current state as a collapsible JSON tree with entity counts, belief confidence bars, and a query input
-- **Metacognition tab**: Shows per-phase quality scores for recent loops as a timeline/heatmap, highlights interventions in red
-
-**Cognitive Loop result display:**
-- Add metacognitive quality bars per phase in the loop result view
-- Show world model diff (what changed) after each loop run
-- Display any intrinsic goals generated with a lightbulb icon
-
-**ASI Transformation page:**
-- Update the completion assessment to mark "World Model", "Metacognitive Monitoring", and "Intrinsic Motivation" as implemented
-
-## Technical Details
-
-- World model state is versioned — each update creates a new row, enabling rollback and diff tracking
-- Metacognitive monitoring adds ~5 lightweight AI calls per loop (one per phase) using `gemini-2.5-flash-lite` for speed
-- Intrinsic goals use the existing `goals` table with new `goal_type` enum values — no schema change needed since `goal_type` is a text field
-- All new tables use service_role-only RLS, consistent with existing patterns
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
-| Migration SQL | Create `world_model_states`, `metacognitive_logs` tables |
-| `supabase/functions/emma-world-model/index.ts` | New edge function |
-| `supabase/functions/emma-orchestrator/index.ts` | Add world model, metacognition, intrinsic motivation to loop |
-| `src/lib/agi-api.ts` | Add 4 new API functions |
-| `src/pages/AGIDashboard.tsx` | Add World Model and Metacognition tabs |
-| `src/pages/ASITransformation.tsx` | Update completion assessment |
+| Migration SQL | Enable pg_cron + pg_net extensions |
+| Insert SQL | Create cron schedule for autonomous loop |
+| `supabase/functions/emma-world-model/index.ts` | Add belief decay + contradiction resolution |
+| `supabase/functions/emma-orchestrator/index.ts` | Cross-loop trends, novelty detection, boredom modeling, enhanced embeddings |
+| `supabase/functions/emma-transfer-sensory/index.ts` | Multi-modal fusion action |
+| `src/lib/agi-api.ts` | Add new API wrappers |
+| `src/pages/AGIDashboard.tsx` | Trend sparklines, belief decay display, novelty scores |
+| `src/pages/ASITransformation.tsx` | Mark all gaps as completed |
 

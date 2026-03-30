@@ -489,7 +489,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   </div>
                 </div>
 
-                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
+                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden min-h-0">
                   {renderDesktopView()}
                 </div>
 

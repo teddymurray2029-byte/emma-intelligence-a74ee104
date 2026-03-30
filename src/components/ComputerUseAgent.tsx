@@ -524,7 +524,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
                   <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
                 </div>
-                <ScrollArea className="flex-1">
+                <ScrollArea className="flex-1 min-h-0">
                   <div ref={scrollRef} className="p-2 space-y-1">
                     {steps.map((step) => (
                       <div key={step.id} className="flex gap-2 p-2 rounded-lg hover:bg-secondary/30 transition-colors group">

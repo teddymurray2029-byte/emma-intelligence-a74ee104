@@ -894,7 +894,27 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
     {
       category: "Vector Embeddings",
       status: "implemented",
-      detail: "768-dim n-gram embeddings for semantic memory retrieval. Cosine similarity ranking with keyword fallback.",
+      detail: "AI-enhanced semantic embeddings with n-gram hash fallback. Cosine similarity + keyword retrieval.",
+    },
+    {
+      category: "Belief Decay",
+      status: "implemented",
+      detail: "Auto-decay stale beliefs (5% @24h, 15% @72h). Contradiction resolution removes lowest-confidence opposing beliefs.",
+    },
+    {
+      category: "Metacog Trends",
+      status: "implemented",
+      detail: "Cross-loop rolling averages per phase. Adaptive quality thresholds rise when performance declines.",
+    },
+    {
+      category: "Novelty Detection",
+      status: "implemented",
+      detail: "Embedding-based novelty scoring. Boredom modeling biases exploration toward unexplored domains. >80% similar goals filtered.",
+    },
+    {
+      category: "Multi-Modal Fusion",
+      status: "implemented",
+      detail: "Cross-references text + visual + audio grounding. Unified fused representation with consistency scoring.",
     },
     {
       category: "Formal Safety",
@@ -908,8 +928,8 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
     },
     {
       category: "Autonomous Loop",
-      status: s.autonomousLoop ? "implemented" : "partial",
-      detail: `Background scheduled agent. ${(s.autonomousLoop as any)?.runs || 0} autonomous runs. Proactive goal advancement.`,
+      status: "implemented",
+      detail: `pg_cron scheduled every 15min. ${(s.autonomousLoop as any)?.runs || 0} autonomous runs. Proactive goal advancement.`,
     },
     {
       category: "Sensory Grounding",

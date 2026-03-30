@@ -48,6 +48,7 @@ export async function getAvailableAgents() { return agiCall("emma-multi-agent", 
 export async function getWorldModel() { return agiCall("emma-world-model", { action: "get_state" }); }
 export async function updateWorldModel(observations: string) { return agiCall("emma-world-model", { action: "update_state", observations }); }
 export async function queryWorldModel(query: string) { return agiCall("emma-world-model", { action: "query_state", query }); }
+export async function maintainWorldModel() { return agiCall("emma-world-model", { action: "maintain_state" }); }
 
 // Metacognitive Logs API
 export async function getMetacognitiveLogs(loopId?: string) { return agiCall("emma-db-proxy", { action: "get_metacognitive_logs", loopId }); }
@@ -67,6 +68,7 @@ export async function getKnowledgeBase() { return agiCall("emma-transfer-sensory
 export async function groundVisual(image_url: string, content?: string) { return agiCall("emma-transfer-sensory", { action: "ground_visual", image_url, content }); }
 export async function groundText(content: string) { return agiCall("emma-transfer-sensory", { action: "ground_text", content }); }
 export async function getSensoryHistory() { return agiCall("emma-transfer-sensory", { action: "get_sensory_history" }); }
+export async function fuseModalities(inputs: { text?: string; image_url?: string; audio_description?: string }) { return agiCall("emma-transfer-sensory", { action: "fuse_modalities", inputs }); }
 
 // Autonomous Loop API
 export async function getAutonomousRuns() { return agiCall("emma-autonomous-loop", { action: "get_runs", user_id: "self" }); }

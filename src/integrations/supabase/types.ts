@@ -377,6 +377,39 @@ export type Database = {
           },
         ]
       }
+      metacognitive_logs: {
+        Row: {
+          created_at: string
+          id: string
+          intervention: string | null
+          loop_id: string
+          metrics: Json
+          phase: string
+          quality_score: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          intervention?: string | null
+          loop_id: string
+          metrics?: Json
+          phase: string
+          quality_score?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          intervention?: string | null
+          loop_id?: string
+          metrics?: Json
+          phase?: string
+          quality_score?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       payments: {
         Row: {
           amount: number
@@ -557,6 +590,33 @@ export type Database = {
           id?: string
           role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
+        }
+        Relationships: []
+      }
+      world_model_states: {
+        Row: {
+          created_at: string
+          diff: Json | null
+          id: string
+          state: Json
+          user_id: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          diff?: Json | null
+          id?: string
+          state?: Json
+          user_id: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          diff?: Json | null
+          id?: string
+          state?: Json
+          user_id?: string
+          version?: number
         }
         Relationships: []
       }

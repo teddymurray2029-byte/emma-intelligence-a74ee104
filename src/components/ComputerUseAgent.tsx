@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
-  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert,
+  Eye, MousePointer, RotateCcw, Timer,
   Keyboard, Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,18 +9,9 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Progress } from "@/components/ui/progress";
-import { Badge } from "@/components/ui/badge";
 
 const BOOT_TIMEOUT_SECONDS = 90;
 const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;
-
-// Actions that require HITL approval before execution
-const SENSITIVE_ACTIONS = new Set(["open_url", "type", "hotkey"]);
-const HIGH_RISK_PATTERNS = [
-  /password/i, /credit.?card/i, /ssn/i, /social.?security/i,
-  /bank/i, /payment/i, /login/i, /sign.?in/i, /credential/i,
-  /sudo/i, /rm\s+-rf/i, /delete/i, /format/i,
-];
 
 interface AgentStep {
   id: number;
@@ -28,8 +19,7 @@ interface AgentStep {
   reasoning: string;
   screenshot?: string;
   timestamp: string;
-  status: "pending" | "executing" | "done" | "error" | "awaiting_approval";
-  riskLevel?: "low" | "medium" | "high";
+  status: "pending" | "executing" | "done" | "error";
   params?: any;
 }
 
@@ -101,13 +91,6 @@ function formatBootFailure(error: unknown) {
   return error instanceof Error ? error.message : "Desktop boot failed";
 }
 
-function assessRisk(action: string, params: any, reasoning: string): "low" | "medium" | "high" {
-  const combined = `${action} ${JSON.stringify(params || {})} ${reasoning}`;
-  if (HIGH_RISK_PATTERNS.some(p => p.test(combined))) return "high";
-  if (SENSITIVE_ACTIONS.has(action)) return "medium";
-  return "low";
-}
-
 function isMeaningfulScreenshot(base64: string): Promise<boolean> {
   return new Promise((resolve) => {
     const img = new window.Image();
@@ -142,17 +125,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
-  
-
-  // HITL state
-  const [pendingApproval, setPendingApproval] = useState<{
-    stepId: number;
-    action: string;
-    params: any;
-    reasoning: string;
-    riskLevel: "low" | "medium" | "high";
-  } | null>(null);
-  const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
 
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
@@ -204,31 +176,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([...stepsRef.current]);
   }, []);
 
-  // HITL: wait for user approval
-  const waitForApproval = (stepId: number, action: string, params: any, reasoning: string, riskLevel: "low" | "medium" | "high"): Promise<boolean> => {
-    return new Promise((resolve) => {
-      approvalResolverRef.current = resolve;
-      setPendingApproval({ stepId, action, params, reasoning, riskLevel });
-    });
-  };
-
-  const handleApproval = (approved: boolean) => {
-    if (approvalResolverRef.current) {
-      approvalResolverRef.current(approved);
-      approvalResolverRef.current = null;
-    }
-    if (pendingApproval) {
-      updateStep(pendingApproval.stepId, {
-        status: approved ? "executing" : "error",
-        reasoning: approved
-          ? `✅ Approved: ${pendingApproval.reasoning}`
-          : `🚫 Rejected by user`,
-      });
-    }
-    setPendingApproval(null);
-  };
-
-
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
@@ -237,7 +184,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     abortRef.current = false;
-    setPendingApproval(null);
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
@@ -333,27 +279,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         }
 
         if (decision.action !== "wait") {
-          const riskLevel = assessRisk(decision.action, decision.params, decision.reasoning);
-
-          // HITL checkpoint: pause for approval on medium/high risk actions
-          if (riskLevel !== "low") {
-            const approvalStepId = addStep({
-              action: `approve: ${decision.action}`,
-              reasoning: `⏸ Awaiting approval — ${decision.reasoning}`,
-              status: "awaiting_approval",
-              riskLevel,
-              params: decision.params,
-            });
-
-            const approved = await waitForApproval(approvalStepId, decision.action, decision.params, decision.reasoning, riskLevel);
-
-            if (!approved) {
-              addStep({ action: "skipped", reasoning: "Action rejected by user, finding alternative...", status: "done" });
-              actionHistory.push({ action: "skipped", reasoning: "User rejected this action" });
-              continue;
-            }
-          }
-
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           try {
             const execResult = await cuApi("execute", {
@@ -388,12 +313,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const stopSession = useCallback(async () => {
     abortRef.current = true;
     setStatus("stopping");
-    // Reject any pending approval
-    if (approvalResolverRef.current) {
-      approvalResolverRef.current(false);
-      approvalResolverRef.current = null;
-      setPendingApproval(null);
-    }
     if (sessionId) {
       try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
     }
@@ -416,8 +335,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
-    sessionRef.current = null;
-    setPendingApproval(null);
   };
 
   const getStatusIcon = (s: AgentStep["status"]) => {
@@ -425,7 +342,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       case "executing": return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
       case "done": return <CheckCircle2 className="h-3 w-3 text-green-500" />;
       case "error": return <AlertCircle className="h-3 w-3 text-destructive" />;
-      case "awaiting_approval": return <ShieldAlert className="h-3 w-3 text-yellow-500 animate-pulse" />;
       default: return <div className="h-3 w-3 rounded-full bg-muted" />;
     }
   };
@@ -436,18 +352,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     if (action === "screenshot") return <Camera className="h-3 w-3" />;
     if (action.includes("type")) return <Keyboard className="h-3 w-3" />;
     if (action.includes("open_url")) return <Globe className="h-3 w-3" />;
-    if (action.includes("approve")) return <Shield className="h-3 w-3" />;
     if (action.includes("sandbox") || action.includes("boot")) return <Monitor className="h-3 w-3" />;
     return <div className="h-3 w-3" />;
-  };
-
-  const getRiskBadge = (level?: "low" | "medium" | "high") => {
-    if (!level || level === "low") return null;
-    return (
-      <Badge variant={level === "high" ? "destructive" : "secondary"} className="text-[8px] h-4 px-1">
-        {level === "high" ? "⚠ HIGH RISK" : "REVIEW"}
-      </Badge>
-    );
   };
 
   const renderDesktopView = () => {
@@ -492,7 +398,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
               Computer-Use Agent
             </h3>
             <p className="text-[10px] text-muted-foreground">
-              Spins up an isolated virtual desktop. HITL checkpoints pause for your approval on sensitive actions.
+              Spins up an isolated virtual desktop and autonomously completes tasks end-to-end.
             </p>
           </div>
           <div className="flex gap-2">
@@ -525,37 +431,10 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         </div>
       )}
 
-      {/* HITL Approval Banner */}
-      {pendingApproval && (
-        <div className={`px-4 py-3 border-b flex-shrink-0 ${pendingApproval.riskLevel === "high" ? "bg-destructive/10 border-destructive/30" : "bg-yellow-500/10 border-yellow-500/30"}`}>
-          <div className="flex items-start gap-3">
-            <ShieldAlert className={`h-5 w-5 flex-shrink-0 mt-0.5 ${pendingApproval.riskLevel === "high" ? "text-destructive" : "text-yellow-500"}`} />
-            <div className="flex-1 min-w-0 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-foreground">Action Requires Approval</span>
-                {getRiskBadge(pendingApproval.riskLevel)}
-              </div>
-              <p className="text-[11px] text-foreground">{pendingApproval.reasoning}</p>
-              <div className="text-[10px] font-mono text-muted-foreground bg-secondary/50 rounded px-2 py-1 inline-block">
-                {pendingApproval.action}: {JSON.stringify(pendingApproval.params)}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleApproval(true)}>
-                  <CheckCircle2 className="h-3 w-3" /> Approve
-                </Button>
-                <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={() => handleApproval(false)}>
-                  <Square className="h-3 w-3" /> Reject
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
       {status !== "idle" && (
         <div className="flex-1 min-h-0 overflow-hidden">
-          <ResizablePanelGroup direction="horizontal">
+          <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="flex flex-col h-full">
                 {/* Desktop toolbar */}
@@ -607,35 +486,24 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             <ResizableHandle withHandle />
 
             {/* Agent Reasoning Panel */}
-            <ResizablePanel defaultSize={40} minSize={20}>
-              <div className="flex flex-col h-full bg-card overflow-hidden">
-                <div className="px-3 py-1.5 border-b border-border flex-shrink-0 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
-                    <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Shield className="h-3 w-3 text-green-500" />
-                    <span className="text-[9px] text-muted-foreground">HITL Active</span>
-                  </div>
+            <ResizablePanel defaultSize={40} minSize={20} className="overflow-hidden">
+              <div className="flex flex-col h-full bg-card">
+                <div className="px-3 py-1.5 border-b border-border flex-shrink-0">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
+                  <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto" ref={scrollRef}>
                   <div className="p-2 space-y-1">
                     {steps.map((step) => (
                       <div
                         key={step.id}
-                        className={`flex gap-2 p-2 rounded-lg transition-colors group ${
-                          step.status === "awaiting_approval"
-                            ? "bg-yellow-500/10 border border-yellow-500/30"
-                            : "hover:bg-secondary/30"
-                        }`}
+                        className="flex gap-2 p-2 rounded-lg transition-colors group hover:bg-secondary/30"
                       >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(step.status)}</div>
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {getActionIcon(step.action)}
                             <span className="text-[10px] font-mono text-primary uppercase">{step.action}</span>
-                            {getRiskBadge(step.riskLevel)}
                             <span className="text-[9px] text-muted-foreground ml-auto">
                               {new Date(step.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                             </span>

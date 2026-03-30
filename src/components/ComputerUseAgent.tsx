@@ -394,7 +394,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         <img
           src={`data:image/png;base64,${currentScreenshot}`}
           alt="Desktop screenshot"
-          className="max-w-full max-h-full object-contain"
+          className="w-full h-full object-contain"
         />
       );
     }

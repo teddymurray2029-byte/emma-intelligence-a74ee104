@@ -1,15 +1,26 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2, Eye, MousePointer, RotateCcw, Timer } from "lucide-react";
+import {
+  Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
+  Eye, MousePointer, RotateCcw, Timer, Shield, ShieldAlert, ExternalLink,
+  Keyboard, Globe, Wifi, WifiOff, Image as ImageIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 
 const BOOT_TIMEOUT_SECONDS = 90;
-
 const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;
+
+// Actions that require HITL approval before execution
+const SENSITIVE_ACTIONS = new Set(["open_url", "type", "hotkey"]);
+const HIGH_RISK_PATTERNS = [
+  /password/i, /credit.?card/i, /ssn/i, /social.?security/i,
+  /bank/i, /payment/i, /login/i, /sign.?in/i, /credential/i,
+  /sudo/i, /rm\s+-rf/i, /delete/i, /format/i,
+];
 
 interface AgentStep {
   id: number;
@@ -17,7 +28,9 @@ interface AgentStep {
   reasoning: string;
   screenshot?: string;
   timestamp: string;
-  status: "pending" | "executing" | "done" | "error";
+  status: "pending" | "executing" | "done" | "error" | "awaiting_approval";
+  riskLevel?: "low" | "medium" | "high";
+  params?: any;
 }
 
 type CuApiErrorPayload = {
@@ -31,7 +44,6 @@ type CuApiErrorPayload = {
 class CuApiError extends Error {
   status: number;
   payload?: CuApiErrorPayload;
-
   constructor(message: string, status: number, payload?: CuApiErrorPayload) {
     super(message);
     this.name = "CuApiError";
@@ -48,7 +60,6 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
   const token = await getToken();
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     let resp: Response;
     try {
@@ -59,10 +70,9 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
         signal: controller.signal,
       });
     } catch (e: any) {
-      if (e.name === "AbortError") throw new Error("Request timed out — the server took too long to respond");
+      if (e.name === "AbortError") throw new Error("Request timed out");
       throw new Error("Failed to reach the computer-use backend");
     }
-
     const data = await resp.json().catch(() => ({ error: `Request failed [${resp.status}]` }));
     if (!resp.ok) {
       const payload = data as CuApiErrorPayload;
@@ -73,7 +83,7 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
     return data;
   } catch (e: any) {
     if (e instanceof CuApiError) throw e;
-    if (e.name === "AbortError") throw new Error("Request timed out — the server took too long to respond");
+    if (e.name === "AbortError") throw new Error("Request timed out");
     throw e;
   } finally {
     clearTimeout(tid);
@@ -83,22 +93,24 @@ async function cuApi(action: string, params: Record<string, any>, getToken: () =
 function formatBootFailure(error: unknown) {
   if (error instanceof CuApiError) {
     const code = error.payload?.errorCode;
-    const stage = error.payload?.stage ? error.payload.stage.replace(/\n/g, ", ") : null;
-
-    if (code === "black_screen") return `Desktop stayed black during startup${stage ? ` (${stage})` : ""}`;
-    if (code === "window_manager_not_ready") return `Desktop session failed to start${stage ? ` (${stage})` : ""}`;
-    if (code === "display_not_ready") return `Virtual display did not come up${stage ? ` (${stage})` : ""}`;
-    if (code === "screenshot_failed") return `Desktop screenshot capture failed${stage ? ` (${stage})` : ""}`;
+    if (code === "black_screen") return "Desktop stayed black during startup";
+    if (code === "window_manager_not_ready") return "Desktop session failed to start";
+    if (code === "display_not_ready") return "Virtual display did not come up";
     return error.message;
   }
+  return error instanceof Error ? error.message : "Desktop boot failed";
+}
 
-  if (error instanceof Error) return error.message;
-  return "Desktop boot failed";
+function assessRisk(action: string, params: any, reasoning: string): "low" | "medium" | "high" {
+  const combined = `${action} ${JSON.stringify(params || {})} ${reasoning}`;
+  if (HIGH_RISK_PATTERNS.some(p => p.test(combined))) return "high";
+  if (SENSITIVE_ACTIONS.has(action)) return "medium";
+  return "low";
 }
 
 function isMeaningfulScreenshot(base64: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const img = new Image();
+    const img = new window.Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
       canvas.width = 64;
@@ -130,7 +142,18 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "stopping" | "done" | "error">("idle");
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
-  
+  const [viewMode, setViewMode] = useState<"live" | "screenshot">("live");
+
+  // HITL state
+  const [pendingApproval, setPendingApproval] = useState<{
+    stepId: number;
+    action: string;
+    params: any;
+    reasoning: string;
+    riskLevel: "low" | "medium" | "high";
+  } | null>(null);
+  const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
+
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
@@ -142,46 +165,31 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [steps]);
 
-  // Cleanup sandbox on tab close / navigation
   useEffect(() => {
     const cleanup = () => {
       const session = sessionRef.current;
       if (session) {
-        const url = CU_URL;
         const payload = JSON.stringify({ action: "stop_session", sessionId: session.sid, envdAccessToken: session.token });
         if (navigator.sendBeacon) {
-          const blob = new Blob([payload], { type: "application/json" });
-          navigator.sendBeacon(url, blob);
+          navigator.sendBeacon(CU_URL, new Blob([payload], { type: "application/json" }));
         } else {
-          fetch(url, { method: "POST", body: payload, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
+          fetch(CU_URL, { method: "POST", body: payload, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
         }
         sessionRef.current = null;
       }
     };
-
     window.addEventListener("beforeunload", cleanup);
-    return () => {
-      window.removeEventListener("beforeunload", cleanup);
-      cleanup();
-    };
+    return () => { window.removeEventListener("beforeunload", cleanup); cleanup(); };
   }, []);
 
-  // Boot countdown timer
   useEffect(() => {
     if (isBooting) {
       setBootElapsed(0);
-      bootTimerRef.current = setInterval(() => {
-        setBootElapsed((prev) => Math.min(prev + 1, BOOT_TIMEOUT_SECONDS));
-      }, 1000);
+      bootTimerRef.current = setInterval(() => setBootElapsed((p) => Math.min(p + 1, BOOT_TIMEOUT_SECONDS)), 1000);
     } else {
-      if (bootTimerRef.current) {
-        clearInterval(bootTimerRef.current);
-        bootTimerRef.current = null;
-      }
+      if (bootTimerRef.current) { clearInterval(bootTimerRef.current); bootTimerRef.current = null; }
     }
-    return () => {
-      if (bootTimerRef.current) clearInterval(bootTimerRef.current);
-    };
+    return () => { if (bootTimerRef.current) clearInterval(bootTimerRef.current); };
   }, [isBooting]);
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
@@ -196,17 +204,45 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([...stepsRef.current]);
   }, []);
 
+  // HITL: wait for user approval
+  const waitForApproval = (stepId: number, action: string, params: any, reasoning: string, riskLevel: "low" | "medium" | "high"): Promise<boolean> => {
+    return new Promise((resolve) => {
+      approvalResolverRef.current = resolve;
+      setPendingApproval({ stepId, action, params, reasoning, riskLevel });
+    });
+  };
+
+  const handleApproval = (approved: boolean) => {
+    if (approvalResolverRef.current) {
+      approvalResolverRef.current(approved);
+      approvalResolverRef.current = null;
+    }
+    if (pendingApproval) {
+      updateStep(pendingApproval.stepId, {
+        status: approved ? "executing" : "error",
+        reasoning: approved
+          ? `✅ Approved: ${pendingApproval.reasoning}`
+          : `🚫 Rejected by user`,
+      });
+    }
+    setPendingApproval(null);
+  };
+
+  const getVncUrl = () => {
+    if (!sessionId) return null;
+    return `https://6080-${sessionId}.e2b.app`;
+  };
+
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
-
     setStatus("starting");
     setSummary(null);
     setSteps([]);
     stepsRef.current = [];
     stepIdRef.current = 0;
     abortRef.current = false;
+    setPendingApproval(null);
 
-    // Phase 1: Create sandbox (should be fast, <5s)
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
     let sid: string;
@@ -217,7 +253,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       sid = res.sessionId;
       token = res.envdAccessToken;
       setSessionId(sid);
-      
       setEnvdToken(token);
       sessionRef.current = { sid, token };
       updateStep(startStepId, { status: "done", reasoning: `Sandbox created (${sid.slice(0, 8)}...)` });
@@ -230,44 +265,31 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
     if (abortRef.current) return;
 
-    // Phase 2: Wait for desktop to be ready (up to 90s on backend)
     setStatus("running");
     setIsRunning(true);
     setIsBooting(true);
-    const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + XFCE via xdpyinfo verification)...", status: "executing" });
+    const waitStepId = addStep({ action: "boot_desktop", reasoning: "Starting virtual desktop (Xvfb + XFCE)...", status: "executing" });
 
     try {
       const readiness = await cuApi("wait_until_ready", { sessionId: sid, envdAccessToken: token }, getToken, 120_000);
-
       if (readiness.ready && readiness.screenshot) {
-        const meaningful = await isMeaningfulScreenshot(readiness.screenshot);
+        await isMeaningfulScreenshot(readiness.screenshot);
         setCurrentScreenshot(readiness.screenshot);
-        updateStep(waitStepId, {
-          status: "done",
-          screenshot: readiness.screenshot,
-          reasoning: meaningful
-            ? `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)`
-            : `Desktop loaded, display may still be initializing (${Math.ceil(readiness.waitedMs / 1000)}s)`,
-        });
+        updateStep(waitStepId, { status: "done", screenshot: readiness.screenshot, reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)` });
       } else {
-        const reason = readiness.error || readiness.message || "Desktop did not become ready";
-        const stage = readiness.stage ? ` [${readiness.stage}]` : "";
-        throw new Error(`${reason}${stage}`);
+        throw new Error(readiness.error || "Desktop did not become ready");
       }
     } catch (e: any) {
-      const message = formatBootFailure(e);
-      updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${message}` });
+      updateStep(waitStepId, { status: "error", reasoning: `Boot failed: ${formatBootFailure(e)}` });
       setIsRunning(false);
       setIsBooting(false);
       setStatus("error");
-      toast.error(`Desktop boot failed: ${message}`);
+      toast.error(`Desktop boot failed: ${formatBootFailure(e)}`);
       return;
     }
 
     setIsBooting(false);
     if (abortRef.current) return;
-
-    // Phase 3: Agent loop
     await runAgentLoop(sid, task.trim(), token);
   }, [task, getToken, addStep, updateStep]);
 
@@ -298,11 +320,10 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
-        const isWaitingForDesktop = decision.status === "black_screen";
         updateStep(thinkStepId, {
-          status: isWaitingForDesktop ? "executing" : "done",
+          status: decision.status === "black_screen" ? "executing" : "done",
           reasoning: decision.reasoning,
-          action: isWaitingForDesktop ? "think → wait_for_desktop" : `think → ${decision.action}`,
+          action: `think → ${decision.action}`,
         });
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
@@ -316,16 +337,37 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         }
 
         if (decision.action !== "wait") {
+          const riskLevel = assessRisk(decision.action, decision.params, decision.reasoning);
+
+          // HITL checkpoint: pause for approval on medium/high risk actions
+          if (riskLevel !== "low") {
+            const approvalStepId = addStep({
+              action: `approve: ${decision.action}`,
+              reasoning: `⏸ Awaiting approval — ${decision.reasoning}`,
+              status: "awaiting_approval",
+              riskLevel,
+              params: decision.params,
+            });
+
+            const approved = await waitForApproval(approvalStepId, decision.action, decision.params, decision.reasoning, riskLevel);
+
+            if (!approved) {
+              addStep({ action: "skipped", reasoning: "Action rejected by user, finding alternative...", status: "done" });
+              actionHistory.push({ action: "skipped", reasoning: "User rejected this action" });
+              continue;
+            }
+          }
+
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           try {
             const execResult = await cuApi("execute", {
               sessionId: sid, actionType: decision.action,
               params: decision.params, envdAccessToken: token,
-            }, getToken, 20_000);
+            }, getToken, 30_000);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
-            // Update main screenshot if the execute response includes one
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
+              updateStep(execStepId, { screenshot: execResult.screenshot });
             }
           } catch (e: any) {
             updateStep(execStepId, { status: "error", reasoning: `Action failed: ${e.message}` });
@@ -341,7 +383,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     }
 
     if (!abortRef.current && stepsRef.current.length >= MAX_STEPS) {
-      setSummary("Reached maximum step limit. Task may be partially complete.");
+      setSummary("Reached maximum step limit.");
       setStatus("done");
       setIsRunning(false);
     }
@@ -350,6 +392,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const stopSession = useCallback(async () => {
     abortRef.current = true;
     setStatus("stopping");
+    // Reject any pending approval
+    if (approvalResolverRef.current) {
+      approvalResolverRef.current(false);
+      approvalResolverRef.current = null;
+      setPendingApproval(null);
+    }
     if (sessionId) {
       try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
     }
@@ -373,6 +421,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSummary(null);
     setCurrentScreenshot(null);
     sessionRef.current = null;
+    setPendingApproval(null);
   };
 
   const getStatusIcon = (s: AgentStep["status"]) => {
@@ -380,6 +429,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       case "executing": return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
       case "done": return <CheckCircle2 className="h-3 w-3 text-green-500" />;
       case "error": return <AlertCircle className="h-3 w-3 text-destructive" />;
+      case "awaiting_approval": return <ShieldAlert className="h-3 w-3 text-yellow-500 animate-pulse" />;
       default: return <div className="h-3 w-3 rounded-full bg-muted" />;
     }
   };
@@ -388,11 +438,39 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     if (action.includes("think")) return <Eye className="h-3 w-3" />;
     if (action.includes("click") || action.includes("mouse")) return <MousePointer className="h-3 w-3" />;
     if (action === "screenshot") return <Camera className="h-3 w-3" />;
+    if (action.includes("type")) return <Keyboard className="h-3 w-3" />;
+    if (action.includes("open_url")) return <Globe className="h-3 w-3" />;
+    if (action.includes("approve")) return <Shield className="h-3 w-3" />;
     if (action.includes("sandbox") || action.includes("boot")) return <Monitor className="h-3 w-3" />;
     return <div className="h-3 w-3" />;
   };
 
+  const getRiskBadge = (level?: "low" | "medium" | "high") => {
+    if (!level || level === "low") return null;
+    return (
+      <Badge variant={level === "high" ? "destructive" : "secondary"} className="text-[8px] h-4 px-1">
+        {level === "high" ? "⚠ HIGH RISK" : "REVIEW"}
+      </Badge>
+    );
+  };
+
+  const vncUrl = getVncUrl();
+
   const renderDesktopView = () => {
+    // Live VNC stream via iframe
+    if (viewMode === "live" && vncUrl && (isRunning || status === "done")) {
+      return (
+        <iframe
+          src={vncUrl}
+          className="w-full h-full border-0"
+          title="Live Desktop Stream"
+          sandbox="allow-scripts allow-same-origin"
+          allow="clipboard-read; clipboard-write"
+        />
+      );
+    }
+
+    // Fallback: static screenshot
     if (currentScreenshot) {
       return (
         <img
@@ -403,12 +481,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       );
     }
 
-    // Loading state
     return (
       <div className="text-center space-y-3">
         <Monitor className="h-12 w-12 text-muted-foreground mx-auto" />
         <p className="text-xs text-muted-foreground">
-          {status === "starting" ? "Creating sandbox..." : status === "running" && !currentScreenshot ? "Booting virtual desktop..." : "Desktop view will appear here"}
+          {status === "starting" ? "Creating sandbox..." : status === "running" ? "Booting virtual desktop..." : "Desktop view will appear here"}
         </p>
         {(status === "starting" || (status === "running" && !currentScreenshot)) && <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />}
         {isBooting && (
@@ -428,19 +505,21 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Task Input Bar */}
       {(status === "idle" || status === "done" || status === "error") && (
-        <div className="p-4 border-b border-border bg-card space-y-3">
+        <div className="p-4 border-b border-border bg-card space-y-3 flex-shrink-0">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Monitor className="h-4 w-4 text-primary" />
-              Emma Computer-Use Agent
+              Computer-Use Agent
             </h3>
-            <p className="text-[10px] text-muted-foreground">Spins up an isolated virtual desktop where Emma controls mouse & keyboard to perform tasks.</p>
+            <p className="text-[10px] text-muted-foreground">
+              Spins up an isolated virtual desktop. HITL checkpoints pause for your approval on sensitive actions.
+            </p>
           </div>
           <div className="flex gap-2">
             <Input
               value={task}
               onChange={(e) => setTask(e.target.value)}
-              placeholder='e.g. "Research the top 3 AI coding tools and make a comparison doc"'
+              placeholder='e.g. "Research the top 3 AI coding tools and compare them"'
               className="text-xs"
               onKeyDown={(e) => { if (e.key === "Enter") startSession(); }}
             />
@@ -450,10 +529,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {[
-              "Apply to 10 frontend jobs on Indeed",
               "Research AI tools and make a comparison table",
               "Post a thread on X/Twitter",
-              "Book a flight on Delta under $450",
+              "Search for trending GitHub repos in AI",
             ].map((ex) => (
               <button
                 key={ex}
@@ -467,47 +545,105 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         </div>
       )}
 
+      {/* HITL Approval Banner */}
+      {pendingApproval && (
+        <div className={`px-4 py-3 border-b flex-shrink-0 ${pendingApproval.riskLevel === "high" ? "bg-destructive/10 border-destructive/30" : "bg-yellow-500/10 border-yellow-500/30"}`}>
+          <div className="flex items-start gap-3">
+            <ShieldAlert className={`h-5 w-5 flex-shrink-0 mt-0.5 ${pendingApproval.riskLevel === "high" ? "text-destructive" : "text-yellow-500"}`} />
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-foreground">Action Requires Approval</span>
+                {getRiskBadge(pendingApproval.riskLevel)}
+              </div>
+              <p className="text-[11px] text-foreground">{pendingApproval.reasoning}</p>
+              <div className="text-[10px] font-mono text-muted-foreground bg-secondary/50 rounded px-2 py-1 inline-block">
+                {pendingApproval.action}: {JSON.stringify(pendingApproval.params)}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => handleApproval(true)}>
+                  <CheckCircle2 className="h-3 w-3" /> Approve
+                </Button>
+                <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={() => handleApproval(false)}>
+                  <Square className="h-3 w-3" /> Reject
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       {status !== "idle" && (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <ResizablePanelGroup direction="horizontal">
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="flex flex-col h-full">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card">
+                {/* Desktop toolbar */}
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card flex-shrink-0">
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : status === "error" ? "bg-destructive" : "bg-muted-foreground"}`} />
-                    <span className="text-xs font-mono text-foreground capitalize">{status}</span>
-                    {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}...</span>}
+                    <span className="text-[10px] font-mono text-foreground capitalize">{status}</span>
+                    {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}…</span>}
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1">
+                    {/* View mode toggle */}
+                    <Button
+                      variant={viewMode === "live" ? "default" : "ghost"}
+                      size="sm"
+                      className="h-6 px-2 text-[10px] gap-1"
+                      onClick={() => setViewMode("live")}
+                      title="Live VNC stream"
+                    >
+                      {viewMode === "live" ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                      Live
+                    </Button>
+                    <Button
+                      variant={viewMode === "screenshot" ? "default" : "ghost"}
+                      size="sm"
+                      className="h-6 px-2 text-[10px] gap-1"
+                      onClick={() => setViewMode("screenshot")}
+                      title="Screenshot mode"
+                    >
+                      <ImageIcon className="h-3 w-3" />
+                      Screenshot
+                    </Button>
+
+                    {vncUrl && (
+                      <Button variant="ghost" size="sm" className="h-6 px-1.5" asChild title="Open in new tab">
+                        <a href={vncUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3 w-3" /></a>
+                      </Button>
+                    )}
+
                     {status === "error" && (
-                      <Button variant="secondary" size="sm" className="h-7 gap-1 text-xs" onClick={startSession}>
+                      <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry
                       </Button>
                     )}
                     {isRunning && (
-                      <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={stopSession}>
+                      <Button variant="destructive" size="sm" className="h-6 gap-1 text-[10px]" onClick={stopSession}>
                         <Square className="h-3 w-3" /> Stop
                       </Button>
                     )}
                   </div>
                 </div>
 
+                {/* Desktop view */}
                 <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden min-h-0">
                   {renderDesktopView()}
                 </div>
 
+                {/* Intervention input */}
                 {isRunning && (
-                  <div className="px-3 py-2 border-t border-border bg-card">
+                  <div className="px-3 py-1.5 border-t border-border bg-card flex-shrink-0">
                     <div className="flex gap-2">
                       <Input
                         value={intervention}
                         onChange={(e) => setIntervention(e.target.value)}
                         placeholder="Intervene: tell Emma to change approach..."
-                        className="text-xs h-8"
+                        className="text-xs h-7"
                         onKeyDown={(e) => { if (e.key === "Enter") handleIntervene(); }}
                       />
-                      <Button size="sm" variant="secondary" className="h-8 px-2" onClick={handleIntervene}>
+                      <Button size="sm" variant="secondary" className="h-7 px-2" onClick={handleIntervene}>
                         <Send className="h-3 w-3" />
                       </Button>
                     </div>
@@ -518,21 +654,36 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
             <ResizableHandle withHandle />
 
+            {/* Agent Reasoning Panel */}
             <ResizablePanel defaultSize={40} minSize={20}>
               <div className="flex flex-col h-full bg-card overflow-hidden">
-                <div className="px-3 py-2 border-b border-border flex-shrink-0">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
-                  <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
+                <div className="px-3 py-1.5 border-b border-border flex-shrink-0 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
+                    <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Shield className="h-3 w-3 text-green-500" />
+                    <span className="text-[9px] text-muted-foreground">HITL Active</span>
+                  </div>
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto" ref={scrollRef}>
                   <div className="p-2 space-y-1">
                     {steps.map((step) => (
-                      <div key={step.id} className="flex gap-2 p-2 rounded-lg hover:bg-secondary/30 transition-colors group">
+                      <div
+                        key={step.id}
+                        className={`flex gap-2 p-2 rounded-lg transition-colors group ${
+                          step.status === "awaiting_approval"
+                            ? "bg-yellow-500/10 border border-yellow-500/30"
+                            : "hover:bg-secondary/30"
+                        }`}
+                      >
                         <div className="flex-shrink-0 mt-0.5">{getStatusIcon(step.status)}</div>
                         <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             {getActionIcon(step.action)}
                             <span className="text-[10px] font-mono text-primary uppercase">{step.action}</span>
+                            {getRiskBadge(step.riskLevel)}
                             <span className="text-[9px] text-muted-foreground ml-auto">
                               {new Date(step.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                             </span>
@@ -543,7 +694,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                               src={`data:image/png;base64,${step.screenshot}`}
                               alt="Step screenshot"
                               className="w-full rounded border border-border mt-1 cursor-pointer hover:opacity-80 transition-opacity"
-                              onClick={() => setCurrentScreenshot(step.screenshot!)}
+                              onClick={() => { setCurrentScreenshot(step.screenshot!); setViewMode("screenshot"); }}
                             />
                           )}
                         </div>
@@ -558,7 +709,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                 </div>
 
                 {summary && (
-                  <div className="p-3 border-t border-border bg-primary/5">
+                  <div className="p-3 border-t border-border bg-primary/5 flex-shrink-0">
                     <div className="flex items-start gap-2">
                       <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
                       <div>

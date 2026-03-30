@@ -788,6 +788,31 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       detail: "Curiosity-driven goal generation. Open-ended objectives beyond reactive improvement.",
     },
     {
+      category: "Vector Embeddings",
+      status: "implemented",
+      detail: "768-dim n-gram embeddings for semantic memory retrieval. Cosine similarity ranking with keyword fallback.",
+    },
+    {
+      category: "Formal Safety",
+      status: s.formalSafety ? "implemented" : "partial",
+      detail: `Deterministic invariant checks + temporal property verification. ${(s.formalSafety as any)?.verifications || 0} verifications. No LLM dependency.`,
+    },
+    {
+      category: "Transfer Learning",
+      status: s.transferLearning ? "implemented" : "partial",
+      detail: `Embedding-based cross-domain generalization. ${(s.transferLearning as any)?.patterns || 0} knowledge patterns stored.`,
+    },
+    {
+      category: "Autonomous Loop",
+      status: s.autonomousLoop ? "implemented" : "partial",
+      detail: `Background scheduled agent. ${(s.autonomousLoop as any)?.runs || 0} autonomous runs. Proactive goal advancement.`,
+    },
+    {
+      category: "Sensory Grounding",
+      status: s.sensoryGrounding ? "implemented" : "partial",
+      detail: `Multi-modal perception: visual + text grounding. ${(s.sensoryGrounding as any)?.logs || 0} sensory logs. Physical/spatial/temporal understanding.`,
+    },
+    {
       category: "Safety",
       status: s.safety ? "implemented" : "partial",
       detail: "Dangerous pattern detection, prompt injection blocking, resource limits, rollback on failure.",

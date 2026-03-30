@@ -555,7 +555,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                       </div>
                     )}
                   </div>
-                </ScrollArea>
+                </div>
 
                 {summary && (
                   <div className="p-3 border-t border-border bg-primary/5">

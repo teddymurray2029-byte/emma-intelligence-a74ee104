@@ -228,10 +228,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setPendingApproval(null);
   };
 
-  const getVncUrl = () => {
-    if (!sessionId) return null;
-    return `https://6080-${sessionId}.e2b.app`;
-  };
 
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }

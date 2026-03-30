@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft, Brain, Activity, Target, Database, GitBranch, Shield,
   Play, CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw,
-  TrendingUp, Zap, Flag, Eye, Terminal
+  TrendingUp, Zap, Flag, Eye, Terminal, Globe, Gauge, Lightbulb, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,8 @@ import { BenchmarkPanel } from "@/components/BenchmarkPanel";
 import { SelfImprovePanel } from "@/components/SelfImprovePanel";
 import { GoalsPanel } from "@/components/GoalsPanel";
 import { MemoryPanel } from "@/components/MemoryPanel";
-import { getSystemStatus, getHealthCheck, runCognitiveLoop } from "@/lib/agi-api";
+import { getSystemStatus, getHealthCheck, runCognitiveLoop, getWorldModel, queryWorldModel, getMetacognitiveLogs } from "@/lib/agi-api";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
 interface SubsystemStatus {
@@ -52,6 +53,19 @@ interface LoopResult {
     issues: string[];
     decision: string;
   };
+  metacognition?: {
+    loopId: string;
+    avgScore: number;
+    phaseScores: { phase: string; score: number; intervention: string | null }[];
+    interventionCount: number;
+  };
+  worldModel?: {
+    version: number;
+    diff: { added: any[]; modified: any[]; removed: any[] };
+    entityCount: number;
+    beliefCount: number;
+  };
+  intrinsicGoals?: { description: string; motivation: string; priority: number; goal_type: string }[];
   log: string[];
 }
 
@@ -80,7 +94,12 @@ export default function AGIDashboard() {
   const [loopInput, setLoopInput] = useState("");
   const [loopRunning, setLoopRunning] = useState(false);
   const [loopResult, setLoopResult] = useState<LoopResult | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "bench" | "improve" | "goals" | "memory" | "loop">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "bench" | "improve" | "goals" | "memory" | "loop" | "worldmodel" | "metacog">("overview");
+  const [worldModel, setWorldModel] = useState<any>(null);
+  const [worldModelQuery, setWorldModelQuery] = useState("");
+  const [worldModelAnswer, setWorldModelAnswer] = useState("");
+  const [wmLoading, setWmLoading] = useState(false);
+  const [metacogData, setMetacogData] = useState<any[]>([]);
 
   const loadStatus = useCallback(async () => {
     setLoadingStatus(true);
@@ -113,9 +132,27 @@ export default function AGIDashboard() {
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" />;
 
+  const loadWorldModel = async () => {
+    setWmLoading(true);
+    try { const data = await getWorldModel(); setWorldModel(data); } catch {}
+    setWmLoading(false);
+  };
+
+  const handleWorldModelQuery = async () => {
+    if (!worldModelQuery.trim()) return;
+    setWmLoading(true);
+    try {
+      const data = await queryWorldModel(worldModelQuery);
+      setWorldModelAnswer(data.answer || "No answer");
+    } catch (e: any) { toast.error(e.message); }
+    setWmLoading(false);
+  };
+
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Eye },
     { id: "loop" as const, label: "Cognitive Loop", icon: RefreshCw },
+    { id: "worldmodel" as const, label: "World Model", icon: Globe },
+    { id: "metacog" as const, label: "Metacognition", icon: Gauge },
     { id: "bench" as const, label: "Benchmarks", icon: Target },
     { id: "improve" as const, label: "Self-Improve", icon: Zap },
     { id: "goals" as const, label: "Goals", icon: Flag },

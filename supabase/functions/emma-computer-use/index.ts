@@ -96,9 +96,9 @@ async function e2bApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 }
 
-async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
+async function connectSandbox(sandboxId: string, forceRefresh = false): Promise<SandboxSession> {
   const cached = sandboxCache.get(sandboxId);
-  if (cached) return cached;
+  if (cached && !forceRefresh) return cached;
 
   const candidates: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
     { path: `/sandboxes/${sandboxId}/connect`, method: "POST", body: { timeout: 300 } },
@@ -134,6 +134,24 @@ async function connectSandbox(sandboxId: string): Promise<SandboxSession> {
   }
 
   throw new Error(lastError);
+}
+
+function syncSandboxSession(target: SandboxSession, source: SandboxSession) {
+  target.envdAccessToken = source.envdAccessToken;
+  target.domain = source.domain;
+  target.desktopInitialized = source.desktopInitialized;
+}
+
+function isEnvdAuthError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("[401]") ||
+    message.includes("[403]") ||
+    message.includes("unauthorized") ||
+    message.includes("forbidden") ||
+    message.includes("access token")
+  );
 }
 
 // SDK-aligned: pass DISPLAY=:0 as env at sandbox creation
@@ -332,58 +350,80 @@ async function runCommand(
   timeout = 15,
   envs: Record<string, string> = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), (timeout + 5) * 1000);
+  const attempt = async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), (timeout + 5) * 1000);
+
+    try {
+      const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/process.Process/Start`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "X-Access-Token": sandbox.envdAccessToken,
+          "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
+          "Content-Type": "application/connect+json",
+        },
+        body: buildConnectEnvelope({
+          process: { cmd, args, envs: { DISPLAY: ":0", ...envs } },
+          stdin: false,
+          timeout,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
+      }
+
+      const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
+      const rawBytes = new Uint8Array(await response.arrayBuffer());
+      const messages = parseConnectStream(rawBytes);
+      messages.forEach((msg) => collectProcessOutput(msg, state));
+
+      for (const msg of messages) {
+        const event = (msg as any)?.event;
+        if (event?.end) {
+          const statusStr: string = event.end.status || "";
+          const match = statusStr.match(/exit status (\d+)/);
+          if (match) state.exitCode = parseInt(match[1], 10);
+          else if (event.end.exited) state.exitCode = 0;
+        }
+      }
+
+      return { stdout: state.stdout, stderr: state.stderr, exitCode: state.exitCode ?? 0 };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
   try {
-    const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/process.Process/Start`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "X-Access-Token": sandbox.envdAccessToken,
-        "Connect-Protocol-Version": CONNECT_PROTOCOL_VERSION,
-        "Content-Type": "application/connect+json",
-      },
-      body: buildConnectEnvelope({
-        process: { cmd, args, envs: { DISPLAY: ":0", ...envs } },
-        stdin: false,
-        timeout,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`E2B command failed [${response.status}]: ${await response.text()}`);
-    }
-
-    const state: { stdout: string; stderr: string; exitCode?: number } = { stdout: "", stderr: "" };
-    const rawBytes = new Uint8Array(await response.arrayBuffer());
-    const messages = parseConnectStream(rawBytes);
-    messages.forEach((msg) => collectProcessOutput(msg, state));
-
-    for (const msg of messages) {
-      const event = (msg as any)?.event;
-      if (event?.end) {
-        const statusStr: string = event.end.status || "";
-        const match = statusStr.match(/exit status (\d+)/);
-        if (match) state.exitCode = parseInt(match[1], 10);
-        else if (event.end.exited) state.exitCode = 0;
-      }
-    }
-
-    return { stdout: state.stdout, stderr: state.stderr, exitCode: state.exitCode ?? 0 };
-  } finally {
-    clearTimeout(timeoutId);
+    return await attempt();
+  } catch (error) {
+    if (!isEnvdAuthError(error)) throw error;
+    const refreshed = await connectSandbox(sandbox.sandboxId, true);
+    syncSandboxSession(sandbox, refreshed);
+    return await attempt();
   }
 }
 
 async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<Uint8Array> {
-  const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`, {
-    headers: { "X-Access-Token": sandbox.envdAccessToken },
-  });
-  if (!response.ok) {
-    throw new Error(`E2B file download failed [${response.status}]: ${await response.text()}`);
+  const attempt = async () => {
+    const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`, {
+      headers: { "X-Access-Token": sandbox.envdAccessToken },
+    });
+    if (!response.ok) {
+      throw new Error(`E2B file download failed [${response.status}]: ${await response.text()}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  };
+
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!isEnvdAuthError(error)) throw error;
+    const refreshed = await connectSandbox(sandbox.sandboxId, true);
+    syncSandboxSession(sandbox, refreshed);
+    return await attempt();
   }
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {

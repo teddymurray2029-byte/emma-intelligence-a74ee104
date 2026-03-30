@@ -176,6 +176,20 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([...stepsRef.current]);
   }, []);
 
+  const refreshLatestScreenshot = useCallback(async (sid: string, token: string, stepId?: number) => {
+    try {
+      const latest = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken, 20_000);
+      if (latest?.screenshot) {
+        setCurrentScreenshot(latest.screenshot);
+        if (stepId) updateStep(stepId, { screenshot: latest.screenshot });
+        return latest.screenshot as string;
+      }
+    } catch {
+      // Best-effort refresh only.
+    }
+    return null;
+  }, [getToken, updateStep]);
+
   const startSession = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
@@ -271,6 +285,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
 
         if (decision.done) {
+          await refreshLatestScreenshot(sid, token, thinkStepId);
           setSummary(decision.summary || "Task completed.");
           setStatus("done");
           setIsRunning(false);
@@ -278,8 +293,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           break;
         }
 
+        let latestStepId: number | undefined;
+
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
+          latestStepId = execStepId;
           try {
             const execResult = await cuApi("execute", {
               sessionId: sid, actionType: decision.action,
@@ -297,6 +315,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
         await new Promise((r) => setTimeout(r, waitTime));
+        await refreshLatestScreenshot(sid, token, latestStepId ?? thinkStepId);
       } catch (e: any) {
         updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
         await new Promise((r) => setTimeout(r, 3000));

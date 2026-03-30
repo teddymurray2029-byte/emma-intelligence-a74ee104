@@ -318,11 +318,15 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           try {
-            await cuApi("execute", {
+            const execResult = await cuApi("execute", {
               sessionId: sid, actionType: decision.action,
               params: decision.params, envdAccessToken: token,
             }, getToken, 20_000);
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
+            // Update main screenshot if the execute response includes one
+            if (execResult?.screenshot) {
+              setCurrentScreenshot(execResult.screenshot);
+            }
           } catch (e: any) {
             updateStep(execStepId, { status: "error", reasoning: `Action failed: ${e.message}` });
           }
@@ -394,7 +398,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         <img
           src={`data:image/png;base64,${currentScreenshot}`}
           alt="Desktop screenshot"
-          className="max-w-full max-h-full object-contain"
+          className="w-full h-full object-contain"
         />
       );
     }
@@ -421,7 +425,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Task Input Bar */}
       {(status === "idle" || status === "done" || status === "error") && (
         <div className="p-4 border-b border-border bg-card space-y-3">
@@ -489,7 +493,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                   </div>
                 </div>
 
-                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
+                <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden min-h-0">
                   {renderDesktopView()}
                 </div>
 
@@ -515,7 +519,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             <ResizableHandle withHandle />
 
             <ResizablePanel defaultSize={40} minSize={20}>
-              <div className="flex flex-col h-full bg-card">
+              <div className="flex flex-col h-full bg-card overflow-hidden">
                 <div className="px-3 py-2 border-b border-border">
                   <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Agent Reasoning</span>
                   <span className="text-[10px] text-muted-foreground ml-2">{steps.length} steps</span>

@@ -690,6 +690,11 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                         New Task
                       </Button>
                     </div>
+                  </div>
+                )}
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </div>
       )}
     </div>

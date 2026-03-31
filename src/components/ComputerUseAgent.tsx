@@ -401,6 +401,87 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setCurrentScreenshot(null);
   };
 
+  const downloadBugBountyReport = useCallback(() => {
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toLocaleTimeString();
+
+    // Build HTML for PDF
+    const stepsHtml = stepsRef.current
+      .map((s, i) => {
+        const statusLabel = s.status === "done" ? "✅" : s.status === "error" ? "❌" : "⏳";
+        const screenshotHtml = s.screenshot
+          ? `<img src="data:image/png;base64,${s.screenshot}" style="max-width:100%;border:1px solid #333;border-radius:4px;margin-top:6px;" />`
+          : "";
+        return `
+          <div style="margin-bottom:16px;padding:10px;border:1px solid #ddd;border-radius:6px;page-break-inside:avoid;">
+            <div style="font-size:11px;color:#888;margin-bottom:4px;">Step ${i + 1} · ${new Date(s.timestamp).toLocaleTimeString()} ${statusLabel}</div>
+            <div style="font-size:12px;font-weight:600;color:#222;margin-bottom:4px;">${s.action}</div>
+            <div style="font-size:11px;color:#444;">${s.reasoning}</div>
+            ${screenshotHtml}
+          </div>`;
+      })
+      .join("");
+
+    const errorSteps = stepsRef.current.filter((s) => s.status === "error");
+    const findingsHtml = errorSteps.length
+      ? errorSteps
+          .map(
+            (s, i) =>
+              `<div style="margin-bottom:8px;padding:8px;background:#fff3f3;border-left:3px solid #e53e3e;border-radius:4px;">
+                <strong>Finding ${i + 1}:</strong> ${s.reasoning}
+              </div>`
+          )
+          .join("")
+      : '<p style="color:#888;">No errors or anomalies detected during this run.</p>';
+
+    const html = `
+      <html><head><meta charset="utf-8"><title>Bug Bounty Report</title>
+      <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding:40px; color:#222; max-width:800px; margin:auto; }
+        h1 { font-size:22px; margin-bottom:4px; }
+        h2 { font-size:16px; margin:24px 0 8px; border-bottom:2px solid #eee; padding-bottom:4px; }
+        .meta { font-size:11px; color:#888; margin-bottom:20px; }
+        .summary { background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; padding:12px; margin-bottom:16px; font-size:12px; line-height:1.6; }
+        @media print { body { padding:20px; } }
+      </style></head><body>
+        <h1>🛡️ Bug Bounty Agent Report</h1>
+        <div class="meta">Generated: ${dateStr} ${timeStr} · Task: ${taskRef.current || "N/A"} · Steps: ${stepsRef.current.length}</div>
+        
+        <h2>Executive Summary</h2>
+        <div class="summary">${summary || "No summary available."}</div>
+
+        <h2>Findings & Anomalies</h2>
+        ${findingsHtml}
+
+        <h2>Detailed Agent Steps</h2>
+        ${stepsHtml}
+
+        <div style="margin-top:32px;padding-top:12px;border-top:1px solid #eee;font-size:10px;color:#aaa;">
+          Emma Computer-Use Agent · Bug Bounty Report · ${dateStr}
+        </div>
+      </body></html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+      // Auto-trigger print dialog (Save as PDF)
+      setTimeout(() => printWindow.print(), 500);
+    } else {
+      // Fallback: download as HTML
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bug-bounty-report-${dateStr}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.info("Report downloaded as HTML — open and print to PDF");
+    }
+  }, [summary]);
+
   const getStatusIcon = (s: AgentStep["status"]) => {
     switch (s) {
       case "executing": return <Loader2 className="h-3 w-3 animate-spin text-primary" />;

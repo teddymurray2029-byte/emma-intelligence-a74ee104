@@ -682,14 +682,14 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
                         <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{summary}</p>
                       </div>
                     </div>
-                    <Button variant="secondary" size="sm" className="w-full mt-2 text-xs" onClick={resetToIdle}>
-                      New Task
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+                    <div className="flex gap-2 mt-2">
+                      <Button variant="secondary" size="sm" className="flex-1 text-xs gap-1.5" onClick={downloadBugBountyReport}>
+                        <FileDown className="h-3 w-3" /> Download Report
+                      </Button>
+                      <Button variant="secondary" size="sm" className="flex-1 text-xs" onClick={resetToIdle}>
+                        New Task
+                      </Button>
+                    </div>
         </div>
       )}
     </div>

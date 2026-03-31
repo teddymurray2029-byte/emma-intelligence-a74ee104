@@ -406,18 +406,55 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toLocaleTimeString();
 
-    // Build HTML for PDF
+    // Convert basic markdown to HTML
+    const mdToHtml = (text: string) => {
+      if (!text) return "";
+      return text
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        // Headers
+        .replace(/^### (.+)$/gm, '<h4 style="font-size:13px;font-weight:700;margin:16px 0 6px;color:#1a202c;">$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3 style="font-size:15px;font-weight:700;margin:20px 0 8px;color:#1a202c;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2 style="font-size:17px;font-weight:700;margin:24px 0 10px;color:#0f172a;">$1</h2>')
+        // Bold & italic
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-family:monospace;color:#be185d;">$1</code>')
+        // Code blocks
+        .replace(/```(\w*)\n([\s\S]*?)```/g, (_m: string, _lang: string, code: string) =>
+          `<pre style="background:#1e293b;color:#e2e8f0;padding:12px 16px;border-radius:6px;font-size:11px;line-height:1.5;overflow-x:auto;margin:10px 0;font-family:'JetBrains Mono',monospace;white-space:pre-wrap;word-break:break-all;">${code.trim()}</pre>`)
+        // Bullet lists
+        .replace(/^- (.+)$/gm, '<li style="margin:3px 0;padding-left:4px;">$1</li>')
+        .replace(/(<li[^>]*>.*<\/li>\n?)+/g, (match: string) => `<ul style="margin:8px 0 8px 20px;padding:0;list-style:disc;">${match}</ul>`)
+        // Numbered lists
+        .replace(/^\d+\. (.+)$/gm, '<li style="margin:3px 0;padding-left:4px;">$1</li>')
+        // Paragraphs (double newline)
+        .replace(/\n\n/g, '</p><p style="margin:8px 0;line-height:1.7;">')
+        // Single newlines inside text
+        .replace(/\n/g, '<br/>');
+      
+    };
+
     const stepsHtml = stepsRef.current
       .map((s, i) => {
-        const statusLabel = s.status === "done" ? "✅" : s.status === "error" ? "❌" : "⏳";
+        const statusColor = s.status === "done" ? "#16a34a" : s.status === "error" ? "#dc2626" : "#a3a3a3";
+        const statusLabel = s.status === "done" ? "✅ Completed" : s.status === "error" ? "❌ Error" : "⏳ Pending";
         const screenshotHtml = s.screenshot
-          ? `<img src="data:image/png;base64,${s.screenshot}" style="max-width:100%;border:1px solid #333;border-radius:4px;margin-top:6px;" />`
+          ? `<div style="margin-top:10px;"><img src="data:image/png;base64,${s.screenshot}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,0.1);" /></div>`
           : "";
         return `
-          <div style="margin-bottom:16px;padding:10px;border:1px solid #ddd;border-radius:6px;page-break-inside:avoid;">
-            <div style="font-size:11px;color:#888;margin-bottom:4px;">Step ${i + 1} · ${new Date(s.timestamp).toLocaleTimeString()} ${statusLabel}</div>
-            <div style="font-size:12px;font-weight:600;color:#222;margin-bottom:4px;">${s.action}</div>
-            <div style="font-size:11px;color:#444;">${s.reasoning}</div>
+          <div style="margin-bottom:20px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:8px;page-break-inside:avoid;background:#fff;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:13px;font-weight:700;color:#0f172a;">Step ${i + 1}</span>
+              <span style="font-size:10px;color:${statusColor};font-weight:600;">${statusLabel}</span>
+            </div>
+            <div style="font-size:10px;color:#94a3b8;margin-bottom:8px;font-family:monospace;">${new Date(s.timestamp).toLocaleString()}</div>
+            <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:6px;padding:6px 10px;background:#f8fafc;border-radius:4px;border-left:3px solid #3b82f6;">
+              ${s.action}
+            </div>
+            <div style="font-size:11px;color:#475569;line-height:1.6;padding:4px 0;">
+              ${mdToHtml(s.reasoning)}
+            </div>
             ${screenshotHtml}
           </div>`;
       })
@@ -428,50 +465,121 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       ? errorSteps
           .map(
             (s, i) =>
-              `<div style="margin-bottom:8px;padding:8px;background:#fff3f3;border-left:3px solid #e53e3e;border-radius:4px;">
-                <strong>Finding ${i + 1}:</strong> ${s.reasoning}
+              `<div style="margin-bottom:12px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:6px;">
+                <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:4px;">Finding ${i + 1}</div>
+                <div style="font-size:11px;color:#7f1d1d;line-height:1.6;">${mdToHtml(s.reasoning)}</div>
               </div>`
           )
           .join("")
-      : '<p style="color:#888;">No errors or anomalies detected during this run.</p>';
+      : '<p style="color:#94a3b8;font-style:italic;font-size:12px;">No errors or anomalies detected during this run.</p>';
 
-    const html = `
-      <html><head><meta charset="utf-8"><title>Bug Bounty Report</title>
-      <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding:40px; color:#222; max-width:800px; margin:auto; }
-        h1 { font-size:22px; margin-bottom:4px; }
-        h2 { font-size:16px; margin:24px 0 8px; border-bottom:2px solid #eee; padding-bottom:4px; }
-        .meta { font-size:11px; color:#888; margin-bottom:20px; }
-        .summary { background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; padding:12px; margin-bottom:16px; font-size:12px; line-height:1.6; }
-        @media print { body { padding:20px; } }
-      </style></head><body>
-        <h1>🛡️ Bug Bounty Agent Report</h1>
-        <div class="meta">Generated: ${dateStr} ${timeStr} · Task: ${taskRef.current || "N/A"} · Steps: ${stepsRef.current.length}</div>
-        
-        <h2>Executive Summary</h2>
-        <div class="summary">${summary || "No summary available."}</div>
+    const totalDuration = stepsRef.current.length > 0
+      ? Math.round((new Date(stepsRef.current[stepsRef.current.length - 1].timestamp).getTime() - new Date(stepsRef.current[0].timestamp).getTime()) / 1000)
+      : 0;
 
-        <h2>Findings & Anomalies</h2>
-        ${findingsHtml}
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Bug Bounty Report — ${dateStr}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 48px 56px;
+    color: #334155;
+    max-width: 860px;
+    margin: auto;
+    line-height: 1.6;
+    font-size: 12px;
+  }
+  h1 { font-size: 24px; color: #0f172a; margin-bottom: 4px; letter-spacing: -0.5px; }
+  h2 { font-size: 16px; color: #0f172a; margin: 28px 0 12px; padding-bottom: 6px; border-bottom: 2px solid #e2e8f0; }
+  .meta { font-size: 11px; color: #94a3b8; margin-bottom: 24px; line-height: 1.8; }
+  .meta span { display: inline-block; margin-right: 20px; }
+  .summary-box {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #1e40af;
+  }
+  .stats {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    flex: 1;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 16px;
+    text-align: center;
+  }
+  .stat-card .value { font-size: 20px; font-weight: 700; color: #0f172a; }
+  .stat-card .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  .footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 10px;
+    color: #cbd5e1;
+    text-align: center;
+  }
+  @media print {
+    body { padding: 24px 32px; }
+    .stat-card { break-inside: avoid; }
+  }
+</style></head><body>
 
-        <h2>Detailed Agent Steps</h2>
-        ${stepsHtml}
+<h1>🛡️ Bug Bounty Agent Report</h1>
+<div class="meta">
+  <span><strong>Date:</strong> ${dateStr} at ${timeStr}</span>
+  <span><strong>Task:</strong> ${taskRef.current || "N/A"}</span>
+</div>
 
-        <div style="margin-top:32px;padding-top:12px;border-top:1px solid #eee;font-size:10px;color:#aaa;">
-          Emma Computer-Use Agent · Bug Bounty Report · ${dateStr}
-        </div>
-      </body></html>`;
+<div class="stats">
+  <div class="stat-card">
+    <div class="value">${stepsRef.current.length}</div>
+    <div class="label">Total Steps</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">${errorSteps.length}</div>
+    <div class="label">Findings</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">${totalDuration}s</div>
+    <div class="label">Duration</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">${stepsRef.current.filter(s => s.status === "done").length}</div>
+    <div class="label">Completed</div>
+  </div>
+</div>
 
-    const blob = new Blob([html], { type: "text/html" });
+<h2>Executive Summary</h2>
+<div class="summary-box">${mdToHtml(summary || "No summary available.")}</div>
+
+<h2>Findings &amp; Anomalies</h2>
+${findingsHtml}
+
+<h2>Detailed Agent Steps</h2>
+${stepsHtml}
+
+<div class="footer">
+  Emma Computer-Use Agent · Bug Bounty Report · Generated ${dateStr} at ${timeStr}
+</div>
+
+</body></html>`;
+
     const printWindow = window.open("", "_blank");
     if (printWindow) {
       printWindow.document.write(html);
       printWindow.document.close();
-      // Auto-trigger print dialog (Save as PDF)
       setTimeout(() => printWindow.print(), 500);
     } else {
-      // Fallback: download as HTML
+      const blob = new Blob([html], { type: "text/html" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

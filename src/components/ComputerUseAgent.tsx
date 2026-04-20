@@ -713,7 +713,18 @@ ${stepsHtml}
       URL.revokeObjectURL(url);
       toast.info("Report downloaded as HTML — open and print to PDF");
     }
-  }, [summary]);
+
+    // Always offer the raw video file as a separate download for archival
+    if (videoBlob) {
+      const vUrl = URL.createObjectURL(videoBlob);
+      const va = document.createElement("a");
+      va.href = vUrl;
+      va.download = `bug-bounty-recording-${dateStr}.webm`;
+      va.click();
+      setTimeout(() => URL.revokeObjectURL(vUrl), 1000);
+      toast.success(`Screen recording saved (${(videoBlob.size / 1024).toFixed(0)} KB)`);
+    }
+  }, [summary, buildVideoFromFrames]);
 
   const getStatusIcon = (s: AgentStep["status"]) => {
     switch (s) {

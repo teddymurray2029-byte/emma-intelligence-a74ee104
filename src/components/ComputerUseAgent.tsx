@@ -280,6 +280,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (readiness.ready && readiness.screenshot) {
         await isMeaningfulScreenshot(readiness.screenshot);
         setCurrentScreenshot(readiness.screenshot);
+        recordFrame(readiness.screenshot);
         updateStep(waitStepId, { status: "done", screenshot: readiness.screenshot, reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)` });
       } else {
         throw new Error(readiness.error || "Desktop did not become ready");

@@ -135,7 +135,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskRef = useRef("");
   // Recorded frames for video evidence (base64 PNG + timestamp)
-  const framesRef = useRef<{ base64: string; t: number }[]>([]);
+  const framesRef = useRef<{ base64: string; t: number; reasoning?: string; action?: string }[]>([]);
   // Set true when keepalive recreates sandbox so the loop knows to forget stale action history
   const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
@@ -183,22 +183,22 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([...stepsRef.current]);
   }, []);
 
-  const recordFrame = useCallback((base64: string) => {
+  const recordFrame = useCallback((base64: string, reasoning?: string, action?: string) => {
     if (!base64) return;
     const last = framesRef.current[framesRef.current.length - 1];
-    // Skip duplicate frames (same base64 within 500ms)
-    if (last && last.base64 === base64) return;
-    framesRef.current.push({ base64, t: Date.now() });
+    // Skip duplicate frames (same base64 + same reasoning)
+    if (last && last.base64 === base64 && last.reasoning === reasoning) return;
+    framesRef.current.push({ base64, t: Date.now(), reasoning: reasoning || "", action: action || "" });
     // Cap frames to prevent runaway memory (max 600 frames ~10min @ 1fps)
     if (framesRef.current.length > 600) framesRef.current.shift();
   }, []);
 
-  const refreshLatestScreenshot = useCallback(async (sid: string, token: string, stepId?: number) => {
+  const refreshLatestScreenshot = useCallback(async (sid: string, token: string, stepId?: number, reasoning?: string, action?: string) => {
     try {
       const latest = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken, 20_000);
       if (latest?.screenshot) {
         setCurrentScreenshot(latest.screenshot);
-        recordFrame(latest.screenshot);
+        recordFrame(latest.screenshot, reasoning, action);
         if (stepId) updateStep(stepId, { screenshot: latest.screenshot });
         return latest.screenshot as string;
       }
@@ -283,7 +283,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (readiness.ready && readiness.screenshot) {
         await isMeaningfulScreenshot(readiness.screenshot);
         setCurrentScreenshot(readiness.screenshot);
-        recordFrame(readiness.screenshot);
+        recordFrame(readiness.screenshot, "Desktop ready — agent will start analyzing now.", "boot_desktop");
         updateStep(waitStepId, { status: "done", screenshot: readiness.screenshot, reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)` });
       } else {
         throw new Error(readiness.error || "Desktop did not become ready");
@@ -353,7 +353,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
-          recordFrame(decision.screenshot);
+          // Tag the THINK frame with the reasoning the AI derived from THIS screenshot — guarantees video frame matches the thought.
+          recordFrame(decision.screenshot, decision.reasoning, `think → ${decision.action}`);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
@@ -374,6 +375,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           setStatus("done");
           setIsRunning(false);
           stopKeepalive();
+          if (decision.screenshot) {
+            recordFrame(decision.screenshot, decision.summary || "Task completed successfully!", "complete");
+          }
           addStep({
             action: "complete",
             reasoning: decision.summary || "Task completed successfully!",
@@ -384,6 +388,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         }
 
         let latestStepId: number | undefined;
+        const execReasoning = `${decision.action}: ${decision.reasoning}`;
 
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
@@ -396,7 +401,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
-              recordFrame(execResult.screenshot);
+              // Post-action frame — tag with the action that produced this state
+              recordFrame(execResult.screenshot, `After: ${execReasoning}`, decision.action);
               updateStep(execStepId, { screenshot: execResult.screenshot });
             }
           } catch (e: any) {
@@ -406,7 +412,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
         await new Promise((r) => setTimeout(r, waitTime));
-        await refreshLatestScreenshot(curSid, curToken, latestStepId ?? thinkStepId);
+        await refreshLatestScreenshot(curSid, curToken, latestStepId ?? thinkStepId, `Settled: ${execReasoning}`, decision.action);
       } catch (e: any) {
         updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
         await new Promise((r) => setTimeout(r, 3000));
@@ -443,7 +449,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   };
 
   // Build a WebM video from captured frames using canvas + MediaRecorder
-  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number }[]): Promise<Blob | null> => {
+  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number; reasoning?: string; action?: string }[]): Promise<Blob | null> => {
     if (frames.length === 0) return null;
 
     // Load first frame to determine dimensions
@@ -487,18 +493,74 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     recorder.start();
     // Paint each frame at fixed interval; each frame held for 1/fps seconds
     const frameDurationMs = 1000 / fps;
+
+    // Word-wrap helper for reasoning overlay
+    const wrapText = (text: string, maxWidth: number, font: string): string[] => {
+      ctx.font = font;
+      const words = text.split(/\s+/);
+      const lines: string[] = [];
+      let line = "";
+      for (const w of words) {
+        const test = line ? `${line} ${w}` : w;
+        if (ctx.measureText(test).width > maxWidth && line) {
+          lines.push(line);
+          line = w;
+        } else {
+          line = test;
+        }
+        if (lines.length >= 4) break; // cap at 4 lines
+      }
+      if (line && lines.length < 4) lines.push(line);
+      if (lines.length === 4 && line) lines[3] = lines[3].slice(0, -1) + "…";
+      return lines;
+    };
+
     for (let i = 0; i < frames.length; i++) {
-      const img = await loadImg(frames[i].base64);
+      const frame = frames[i];
+      const img = await loadImg(frame.base64);
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, W, H);
       ctx.drawImage(img, 0, 0, W, H);
-      // Overlay timestamp
-      const ts = new Date(frames[i].t).toLocaleTimeString();
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
-      ctx.fillRect(8, H - 28, 160, 22);
+
+      // === Reasoning overlay (top banner) ===
+      if (frame.reasoning) {
+        const padding = 12;
+        const font = "bold 14px system-ui, -apple-system, sans-serif";
+        const lineHeight = 18;
+        const maxTextWidth = W - padding * 2 - 8;
+        const lines = wrapText(frame.reasoning, maxTextWidth, font);
+        const actionLabel = frame.action ? `▸ ${frame.action.toUpperCase()}` : "";
+        const totalLines = lines.length + (actionLabel ? 1 : 0);
+        const bannerH = padding * 2 + totalLines * lineHeight;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+        ctx.fillRect(0, 0, W, bannerH);
+        ctx.fillStyle = "rgba(99, 102, 241, 0.9)";
+        ctx.fillRect(0, bannerH - 2, W, 2);
+
+        let y = padding + 14;
+        if (actionLabel) {
+          ctx.font = "bold 11px monospace";
+          ctx.fillStyle = "#a5b4fc";
+          ctx.fillText(actionLabel, padding, y);
+          y += lineHeight;
+        }
+        ctx.font = font;
+        ctx.fillStyle = "#fff";
+        for (const line of lines) {
+          ctx.fillText(line, padding, y);
+          y += lineHeight;
+        }
+      }
+
+      // === Timestamp overlay (bottom-left) ===
+      const ts = new Date(frame.t).toLocaleTimeString();
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(8, H - 28, 200, 22);
       ctx.fillStyle = "#fff";
       ctx.font = "12px monospace";
-      ctx.fillText(`${ts}  ${i + 1}/${frames.length}`, 14, H - 12);
+      ctx.fillText(`${ts}  frame ${i + 1}/${frames.length}`, 14, H - 12);
+
       await new Promise((r) => setTimeout(r, frameDurationMs));
     }
     // Hold last frame briefly

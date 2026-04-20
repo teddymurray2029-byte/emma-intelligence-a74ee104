@@ -134,6 +134,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskRef = useRef("");
+  // Recorded frames for video evidence (base64 PNG + timestamp)
+  const framesRef = useRef<{ base64: string; t: number }[]>([]);
+  const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -178,11 +181,22 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([...stepsRef.current]);
   }, []);
 
+  const recordFrame = useCallback((base64: string) => {
+    if (!base64) return;
+    const last = framesRef.current[framesRef.current.length - 1];
+    // Skip duplicate frames (same base64 within 500ms)
+    if (last && last.base64 === base64) return;
+    framesRef.current.push({ base64, t: Date.now() });
+    // Cap frames to prevent runaway memory (max 600 frames ~10min @ 1fps)
+    if (framesRef.current.length > 600) framesRef.current.shift();
+  }, []);
+
   const refreshLatestScreenshot = useCallback(async (sid: string, token: string, stepId?: number) => {
     try {
       const latest = await cuApi("screenshot", { sessionId: sid, envdAccessToken: token }, getToken, 20_000);
       if (latest?.screenshot) {
         setCurrentScreenshot(latest.screenshot);
+        recordFrame(latest.screenshot);
         if (stepId) updateStep(stepId, { screenshot: latest.screenshot });
         return latest.screenshot as string;
       }
@@ -190,7 +204,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       // Best-effort refresh only.
     }
     return null;
-  }, [getToken, updateStep]);
+  }, [getToken, updateStep, recordFrame]);
 
   const stopKeepalive = useCallback(() => {
     if (keepaliveRef.current) {
@@ -232,6 +246,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepIdRef.current = 0;
     abortRef.current = false;
     taskRef.current = task.trim();
+    framesRef.current = [];
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
@@ -265,6 +280,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (readiness.ready && readiness.screenshot) {
         await isMeaningfulScreenshot(readiness.screenshot);
         setCurrentScreenshot(readiness.screenshot);
+        recordFrame(readiness.screenshot);
         updateStep(waitStepId, { status: "done", screenshot: readiness.screenshot, reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)` });
       } else {
         throw new Error(readiness.error || "Desktop did not become ready");
@@ -322,6 +338,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
+          recordFrame(decision.screenshot);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
@@ -356,6 +373,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
+              recordFrame(execResult.screenshot);
               updateStep(execStepId, { screenshot: execResult.screenshot });
             }
           } catch (e: any) {
@@ -401,10 +419,101 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setCurrentScreenshot(null);
   };
 
-  const downloadBugBountyReport = useCallback(() => {
+  // Build a WebM video from captured frames using canvas + MediaRecorder
+  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number }[]): Promise<Blob | null> => {
+    if (frames.length === 0) return null;
+
+    // Load first frame to determine dimensions
+    const loadImg = (b64: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = `data:image/png;base64,${b64}`;
+    });
+
+    const firstImg = await loadImg(frames[0].base64);
+    const W = Math.min(firstImg.width, 1280);
+    const H = Math.round((W / firstImg.width) * firstImg.height);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // Check MediaRecorder support
+    if (typeof MediaRecorder === "undefined") {
+      console.warn("MediaRecorder not supported");
+      return null;
+    }
+
+    const mimeCandidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mimeType) return null;
+
+    const fps = 2; // 2 frames/sec — keeps file small while still showing motion
+    const stream = (canvas as any).captureStream(fps) as MediaStream;
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 800_000 });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    const finished = new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+    });
+
+    recorder.start();
+    // Paint each frame at fixed interval; each frame held for 1/fps seconds
+    const frameDurationMs = 1000 / fps;
+    for (let i = 0; i < frames.length; i++) {
+      const img = await loadImg(frames[i].base64);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(img, 0, 0, W, H);
+      // Overlay timestamp
+      const ts = new Date(frames[i].t).toLocaleTimeString();
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(8, H - 28, 160, 22);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px monospace";
+      ctx.fillText(`${ts}  ${i + 1}/${frames.length}`, 14, H - 12);
+      await new Promise((r) => setTimeout(r, frameDurationMs));
+    }
+    // Hold last frame briefly
+    await new Promise((r) => setTimeout(r, 500));
+    recorder.stop();
+    return finished;
+  }, []);
+
+  const downloadBugBountyReport = useCallback(async () => {
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toLocaleTimeString();
+
+    // Build screen recording video from captured frames
+    let videoBlob: Blob | null = null;
+    let videoDataUrl: string | null = null;
+    const frameCount = framesRef.current.length;
+    if (frameCount > 0) {
+      try {
+        setIsBuildingVideo(true);
+        toast.info(`Building screen recording from ${frameCount} frames...`);
+        videoBlob = await buildVideoFromFrames(framesRef.current);
+        if (videoBlob) {
+          // Convert to base64 data URL for embedding in HTML
+          videoDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(videoBlob!);
+          });
+        }
+      } catch (e) {
+        console.warn("Failed to build video:", e);
+        toast.error("Could not build screen recording — report will still include screenshots");
+      } finally {
+        setIsBuildingVideo(false);
+      }
+    }
 
     // Convert basic markdown to HTML
     const mdToHtml = (text: string) => {
@@ -561,6 +670,22 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 <h2>Executive Summary</h2>
 <div class="summary-box">${mdToHtml(summary || "No summary available.")}</div>
 
+${videoDataUrl ? `
+<h2>📹 Video Evidence</h2>
+<div style="margin:12px 0 24px;padding:12px;background:#0f172a;border-radius:8px;text-align:center;">
+  <video controls preload="metadata" style="max-width:100%;border-radius:6px;background:#000;" src="${videoDataUrl}"></video>
+  <div style="font-size:10px;color:#94a3b8;margin-top:8px;font-family:monospace;">
+    ${frameCount} frames · ${Math.round(frameCount / 2)}s playback @ 2 fps · WebM
+  </div>
+  <div style="font-size:10px;color:#cbd5e1;margin-top:4px;">
+    Note: Video plays in HTML reports. PDF prints will show a placeholder — keep the .webm file for visual evidence.
+  </div>
+</div>
+` : `
+<h2>📹 Video Evidence</h2>
+<p style="color:#94a3b8;font-style:italic;font-size:12px;">No screen recording captured.</p>
+`}
+
 <h2>Findings &amp; Anomalies</h2>
 ${findingsHtml}
 
@@ -588,7 +713,18 @@ ${stepsHtml}
       URL.revokeObjectURL(url);
       toast.info("Report downloaded as HTML — open and print to PDF");
     }
-  }, [summary]);
+
+    // Always offer the raw video file as a separate download for archival
+    if (videoBlob) {
+      const vUrl = URL.createObjectURL(videoBlob);
+      const va = document.createElement("a");
+      va.href = vUrl;
+      va.download = `bug-bounty-recording-${dateStr}.webm`;
+      va.click();
+      setTimeout(() => URL.revokeObjectURL(vUrl), 1000);
+      toast.success(`Screen recording saved (${(videoBlob.size / 1024).toFixed(0)} KB)`);
+    }
+  }, [summary, buildVideoFromFrames]);
 
   const getStatusIcon = (s: AgentStep["status"]) => {
     switch (s) {
@@ -791,8 +927,9 @@ ${stepsHtml}
                       </div>
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <Button variant="secondary" size="sm" className="flex-1 text-xs gap-1.5" onClick={downloadBugBountyReport}>
-                        <FileDown className="h-3 w-3" /> Download Report
+                      <Button variant="secondary" size="sm" className="flex-1 text-xs gap-1.5" onClick={downloadBugBountyReport} disabled={isBuildingVideo}>
+                        {isBuildingVideo ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
+                        {isBuildingVideo ? "Building video..." : `Download Report${framesRef.current.length > 0 ? ` + Video (${framesRef.current.length}f)` : ""}`}
                       </Button>
                       <Button variant="secondary" size="sm" className="flex-1 text-xs" onClick={resetToIdle}>
                         New Task

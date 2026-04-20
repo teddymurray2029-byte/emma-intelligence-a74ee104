@@ -489,6 +489,32 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toLocaleTimeString();
 
+    // Build screen recording video from captured frames
+    let videoBlob: Blob | null = null;
+    let videoDataUrl: string | null = null;
+    const frameCount = framesRef.current.length;
+    if (frameCount > 0) {
+      try {
+        setIsBuildingVideo(true);
+        toast.info(`Building screen recording from ${frameCount} frames...`);
+        videoBlob = await buildVideoFromFrames(framesRef.current);
+        if (videoBlob) {
+          // Convert to base64 data URL for embedding in HTML
+          videoDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(videoBlob!);
+          });
+        }
+      } catch (e) {
+        console.warn("Failed to build video:", e);
+        toast.error("Could not build screen recording — report will still include screenshots");
+      } finally {
+        setIsBuildingVideo(false);
+      }
+    }
+
     // Convert basic markdown to HTML
     const mdToHtml = (text: string) => {
       if (!text) return "";

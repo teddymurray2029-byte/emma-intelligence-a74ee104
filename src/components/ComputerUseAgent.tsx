@@ -373,6 +373,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
+              recordFrame(execResult.screenshot);
               updateStep(execStepId, { screenshot: execResult.screenshot });
             }
           } catch (e: any) {

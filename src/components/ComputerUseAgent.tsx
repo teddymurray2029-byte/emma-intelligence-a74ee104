@@ -493,18 +493,74 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     recorder.start();
     // Paint each frame at fixed interval; each frame held for 1/fps seconds
     const frameDurationMs = 1000 / fps;
+
+    // Word-wrap helper for reasoning overlay
+    const wrapText = (text: string, maxWidth: number, font: string): string[] => {
+      ctx.font = font;
+      const words = text.split(/\s+/);
+      const lines: string[] = [];
+      let line = "";
+      for (const w of words) {
+        const test = line ? `${line} ${w}` : w;
+        if (ctx.measureText(test).width > maxWidth && line) {
+          lines.push(line);
+          line = w;
+        } else {
+          line = test;
+        }
+        if (lines.length >= 4) break; // cap at 4 lines
+      }
+      if (line && lines.length < 4) lines.push(line);
+      if (lines.length === 4 && line) lines[3] = lines[3].slice(0, -1) + "…";
+      return lines;
+    };
+
     for (let i = 0; i < frames.length; i++) {
-      const img = await loadImg(frames[i].base64);
+      const frame = frames[i];
+      const img = await loadImg(frame.base64);
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, W, H);
       ctx.drawImage(img, 0, 0, W, H);
-      // Overlay timestamp
-      const ts = new Date(frames[i].t).toLocaleTimeString();
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
-      ctx.fillRect(8, H - 28, 160, 22);
+
+      // === Reasoning overlay (top banner) ===
+      if (frame.reasoning) {
+        const padding = 12;
+        const font = "bold 14px system-ui, -apple-system, sans-serif";
+        const lineHeight = 18;
+        const maxTextWidth = W - padding * 2 - 8;
+        const lines = wrapText(frame.reasoning, maxTextWidth, font);
+        const actionLabel = frame.action ? `▸ ${frame.action.toUpperCase()}` : "";
+        const totalLines = lines.length + (actionLabel ? 1 : 0);
+        const bannerH = padding * 2 + totalLines * lineHeight;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+        ctx.fillRect(0, 0, W, bannerH);
+        ctx.fillStyle = "rgba(99, 102, 241, 0.9)";
+        ctx.fillRect(0, bannerH - 2, W, 2);
+
+        let y = padding + 14;
+        if (actionLabel) {
+          ctx.font = "bold 11px monospace";
+          ctx.fillStyle = "#a5b4fc";
+          ctx.fillText(actionLabel, padding, y);
+          y += lineHeight;
+        }
+        ctx.font = font;
+        ctx.fillStyle = "#fff";
+        for (const line of lines) {
+          ctx.fillText(line, padding, y);
+          y += lineHeight;
+        }
+      }
+
+      // === Timestamp overlay (bottom-left) ===
+      const ts = new Date(frame.t).toLocaleTimeString();
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(8, H - 28, 200, 22);
       ctx.fillStyle = "#fff";
       ctx.font = "12px monospace";
-      ctx.fillText(`${ts}  ${i + 1}/${frames.length}`, 14, H - 12);
+      ctx.fillText(`${ts}  frame ${i + 1}/${frames.length}`, 14, H - 12);
+
       await new Promise((r) => setTimeout(r, frameDurationMs));
     }
     // Hold last frame briefly

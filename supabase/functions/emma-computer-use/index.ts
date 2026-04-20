@@ -619,6 +619,9 @@ Analyze the screenshot and respond with a JSON object (no markdown, just raw JSO
 }
 
 Rules:
+- THE SCREENSHOT IS GROUND TRUTH. Always trust what you SEE in the current screenshot over what the action history says.
+- If the action history claims you did something (e.g., "filled email field") but the screenshot does NOT show that result (e.g., field is empty, browser is closed, desktop is bare), the prior actions FAILED or the environment was reset. Re-do them from the current visible state.
+- Your reasoning MUST describe what is ACTUALLY VISIBLE in the current screenshot right now, not what you intended in past steps.
 - Think step by step before each action
 - Always verify your actions by looking at the next screenshot
 - If you see a login page and don't have credentials, set done=true and explain you need credentials

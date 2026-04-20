@@ -449,7 +449,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   };
 
   // Build a WebM video from captured frames using canvas + MediaRecorder
-  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number }[]): Promise<Blob | null> => {
+  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number; reasoning?: string; action?: string }[]): Promise<Blob | null> => {
     if (frames.length === 0) return null;
 
     // Load first frame to determine dimensions

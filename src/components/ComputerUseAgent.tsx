@@ -366,12 +366,20 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
 
         if (decision.done) {
-          await refreshLatestScreenshot(curSid, curToken, thinkStepId);
+          // IMPORTANT: do NOT refresh the screenshot here — the desktop may have changed
+          // (e.g., sandbox keepalive reset, browser closed). The AI's summary describes what
+          // it saw in `decision.screenshot`, so attach THAT exact frame to the completion step
+          // to keep visual evidence in sync with the reasoning.
           setSummary(decision.summary || "Task completed.");
           setStatus("done");
           setIsRunning(false);
           stopKeepalive();
-          addStep({ action: "complete", reasoning: decision.summary || "Task completed successfully!", status: "done" });
+          addStep({
+            action: "complete",
+            reasoning: decision.summary || "Task completed successfully!",
+            status: "done",
+            screenshot: decision.screenshot,
+          });
           break;
         }
 

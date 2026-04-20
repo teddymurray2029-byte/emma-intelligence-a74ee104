@@ -134,6 +134,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskRef = useRef("");
+  // Recorded frames for video evidence (base64 PNG + timestamp)
+  const framesRef = useRef<{ base64: string; t: number }[]>([]);
+  const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

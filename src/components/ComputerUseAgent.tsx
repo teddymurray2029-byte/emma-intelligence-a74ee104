@@ -283,7 +283,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (readiness.ready && readiness.screenshot) {
         await isMeaningfulScreenshot(readiness.screenshot);
         setCurrentScreenshot(readiness.screenshot);
-        recordFrame(readiness.screenshot);
+        recordFrame(readiness.screenshot, "Desktop ready — agent will start analyzing now.", "boot_desktop");
         updateStep(waitStepId, { status: "done", screenshot: readiness.screenshot, reasoning: `Desktop ready (${Math.ceil(readiness.waitedMs / 1000)}s)` });
       } else {
         throw new Error(readiness.error || "Desktop did not become ready");
@@ -353,7 +353,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
-          recordFrame(decision.screenshot);
+          // Tag the THINK frame with the reasoning the AI derived from THIS screenshot — guarantees video frame matches the thought.
+          recordFrame(decision.screenshot, decision.reasoning, `think → ${decision.action}`);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
@@ -374,6 +375,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           setStatus("done");
           setIsRunning(false);
           stopKeepalive();
+          if (decision.screenshot) {
+            recordFrame(decision.screenshot, decision.summary || "Task completed successfully!", "complete");
+          }
           addStep({
             action: "complete",
             reasoning: decision.summary || "Task completed successfully!",
@@ -384,6 +388,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         }
 
         let latestStepId: number | undefined;
+        const execReasoning = `${decision.action}: ${decision.reasoning}`;
 
         if (decision.action !== "wait") {
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
@@ -396,7 +401,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
             updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
-              recordFrame(execResult.screenshot);
+              // Post-action frame — tag with the action that produced this state
+              recordFrame(execResult.screenshot, `After: ${execReasoning}`, decision.action);
               updateStep(execStepId, { screenshot: execResult.screenshot });
             }
           } catch (e: any) {
@@ -406,7 +412,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         const waitTime = decision.action === "wait" ? (decision.params?.seconds || 2) * 1000 : 1500;
         await new Promise((r) => setTimeout(r, waitTime));
-        await refreshLatestScreenshot(curSid, curToken, latestStepId ?? thinkStepId);
+        await refreshLatestScreenshot(curSid, curToken, latestStepId ?? thinkStepId, `Settled: ${execReasoning}`, decision.action);
       } catch (e: any) {
         updateStep(thinkStepId, { status: "error", reasoning: `Error: ${e.message}` });
         await new Promise((r) => setTimeout(r, 3000));

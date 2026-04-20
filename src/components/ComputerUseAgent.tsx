@@ -338,6 +338,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
+          recordFrame(decision.screenshot);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 

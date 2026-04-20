@@ -227,11 +227,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           task: taskRef.current,
         }, getToken, 15_000);
         if (res.status === "recreated" && res.sessionId && res.envdAccessToken) {
-          // Sandbox was recreated — update all refs
+          // Sandbox was recreated — update all refs and signal loop to discard stale action history
           console.log(`[keepalive] Sandbox recreated: ${res.sessionId}`);
           setSessionId(res.sessionId);
           setEnvdToken(res.envdAccessToken);
           sessionRef.current = { sid: res.sessionId, token: res.envdAccessToken };
+          sandboxResetRef.current = true;
         }
       } catch (e) {
         console.warn("[keepalive] ping failed:", e);

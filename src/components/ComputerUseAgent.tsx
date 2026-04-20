@@ -136,6 +136,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const taskRef = useRef("");
   // Recorded frames for video evidence (base64 PNG + timestamp)
   const framesRef = useRef<{ base64: string; t: number }[]>([]);
+  // Set true when keepalive recreates sandbox so the loop knows to forget stale action history
+  const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
   useEffect(() => {
@@ -225,11 +227,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           task: taskRef.current,
         }, getToken, 15_000);
         if (res.status === "recreated" && res.sessionId && res.envdAccessToken) {
-          // Sandbox was recreated — update all refs
+          // Sandbox was recreated — update all refs and signal loop to discard stale action history
           console.log(`[keepalive] Sandbox recreated: ${res.sessionId}`);
           setSessionId(res.sessionId);
           setEnvdToken(res.envdAccessToken);
           sessionRef.current = { sid: res.sessionId, token: res.envdAccessToken };
+          sandboxResetRef.current = true;
         }
       } catch (e) {
         console.warn("[keepalive] ping failed:", e);
@@ -310,6 +313,18 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (abortRef.current) {
         addStep({ action: "stopped", reasoning: "Task stopped by user", status: "done" });
         break;
+      }
+
+      // If keepalive recreated the sandbox, the desktop is brand new — discard stale action history
+      // so the AI reasons purely from the actual current screenshot instead of hallucinating prior progress.
+      if (sandboxResetRef.current) {
+        sandboxResetRef.current = false;
+        actionHistory.length = 0;
+        addStep({
+          action: "sandbox_recreated",
+          reasoning: "Sandbox was recreated by keepalive — desktop reset to fresh state. Restarting task from current visible state.",
+          status: "done",
+        });
       }
 
       // Always use latest session credentials (keepalive may have swapped them)

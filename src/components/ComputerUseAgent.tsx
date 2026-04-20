@@ -315,6 +315,18 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         break;
       }
 
+      // If keepalive recreated the sandbox, the desktop is brand new — discard stale action history
+      // so the AI reasons purely from the actual current screenshot instead of hallucinating prior progress.
+      if (sandboxResetRef.current) {
+        sandboxResetRef.current = false;
+        actionHistory.length = 0;
+        addStep({
+          action: "sandbox_recreated",
+          reasoning: "Sandbox was recreated by keepalive — desktop reset to fresh state. Restarting task from current visible state.",
+          status: "done",
+        });
+      }
+
       // Always use latest session credentials (keepalive may have swapped them)
       const currentSession = sessionRef.current;
       const curSid = currentSession?.sid || sid;

@@ -670,6 +670,22 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 <h2>Executive Summary</h2>
 <div class="summary-box">${mdToHtml(summary || "No summary available.")}</div>
 
+${videoDataUrl ? `
+<h2>📹 Video Evidence</h2>
+<div style="margin:12px 0 24px;padding:12px;background:#0f172a;border-radius:8px;text-align:center;">
+  <video controls preload="metadata" style="max-width:100%;border-radius:6px;background:#000;" src="${videoDataUrl}"></video>
+  <div style="font-size:10px;color:#94a3b8;margin-top:8px;font-family:monospace;">
+    ${frameCount} frames · ${Math.round(frameCount / 2)}s playback @ 2 fps · WebM
+  </div>
+  <div style="font-size:10px;color:#cbd5e1;margin-top:4px;">
+    Note: Video plays in HTML reports. PDF prints will show a placeholder — keep the .webm file for visual evidence.
+  </div>
+</div>
+` : `
+<h2>📹 Video Evidence</h2>
+<p style="color:#94a3b8;font-style:italic;font-size:12px;">No screen recording captured.</p>
+`}
+
 <h2>Findings &amp; Anomalies</h2>
 ${findingsHtml}
 

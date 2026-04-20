@@ -246,6 +246,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepIdRef.current = 0;
     abortRef.current = false;
     taskRef.current = task.trim();
+    framesRef.current = [];
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 

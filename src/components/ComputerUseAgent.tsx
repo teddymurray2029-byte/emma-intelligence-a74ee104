@@ -419,7 +419,72 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setCurrentScreenshot(null);
   };
 
-  const downloadBugBountyReport = useCallback(() => {
+  // Build a WebM video from captured frames using canvas + MediaRecorder
+  const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number }[]): Promise<Blob | null> => {
+    if (frames.length === 0) return null;
+
+    // Load first frame to determine dimensions
+    const loadImg = (b64: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = `data:image/png;base64,${b64}`;
+    });
+
+    const firstImg = await loadImg(frames[0].base64);
+    const W = Math.min(firstImg.width, 1280);
+    const H = Math.round((W / firstImg.width) * firstImg.height);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // Check MediaRecorder support
+    if (typeof MediaRecorder === "undefined") {
+      console.warn("MediaRecorder not supported");
+      return null;
+    }
+
+    const mimeCandidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mimeType) return null;
+
+    const fps = 2; // 2 frames/sec — keeps file small while still showing motion
+    const stream = (canvas as any).captureStream(fps) as MediaStream;
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 800_000 });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    const finished = new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+    });
+
+    recorder.start();
+    // Paint each frame at fixed interval; each frame held for 1/fps seconds
+    const frameDurationMs = 1000 / fps;
+    for (let i = 0; i < frames.length; i++) {
+      const img = await loadImg(frames[i].base64);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(img, 0, 0, W, H);
+      // Overlay timestamp
+      const ts = new Date(frames[i].t).toLocaleTimeString();
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(8, H - 28, 160, 22);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px monospace";
+      ctx.fillText(`${ts}  ${i + 1}/${frames.length}`, 14, H - 12);
+      await new Promise((r) => setTimeout(r, frameDurationMs));
+    }
+    // Hold last frame briefly
+    await new Promise((r) => setTimeout(r, 500));
+    recorder.stop();
+    return finished;
+  }, []);
+
+  const downloadBugBountyReport = useCallback(async () => {
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toLocaleTimeString();

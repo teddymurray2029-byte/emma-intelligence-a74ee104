@@ -927,8 +927,9 @@ ${stepsHtml}
                       </div>
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <Button variant="secondary" size="sm" className="flex-1 text-xs gap-1.5" onClick={downloadBugBountyReport}>
-                        <FileDown className="h-3 w-3" /> Download Report
+                      <Button variant="secondary" size="sm" className="flex-1 text-xs gap-1.5" onClick={downloadBugBountyReport} disabled={isBuildingVideo}>
+                        {isBuildingVideo ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
+                        {isBuildingVideo ? "Building video..." : `Download Report${framesRef.current.length > 0 ? ` + Video (${framesRef.current.length}f)` : ""}`}
                       </Button>
                       <Button variant="secondary" size="sm" className="flex-1 text-xs" onClick={resetToIdle}>
                         New Task

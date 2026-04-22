@@ -432,6 +432,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           sessionId: curSid, task: taskDesc, actionHistory,
           userMessage: pendingIntervention || undefined,
           envdAccessToken: curToken,
+          engagement: engagementRef.current,
         }, getToken, 60_000);
 
         // If sandbox_expired, wait for keepalive to recover
@@ -443,7 +444,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
-          // Tag the THINK frame with the reasoning the AI derived from THIS screenshot — guarantees video frame matches the thought.
           recordFrame(decision.screenshot, decision.reasoning, `think → ${decision.action}`);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
@@ -455,6 +455,45 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         });
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
+
+        // === Handle structured finding from AI ===
+        if (decision.action === "report_finding" && decision.finding) {
+          const f = decision.finding;
+          let cvssScore: number | undefined;
+          let severity: Severity = (f.severity as Severity) || "Info";
+          if (f.cvssVector) {
+            const calc = scoreFromVector(f.cvssVector);
+            if (calc) { cvssScore = calc.score; severity = calc.severity; }
+          }
+          const newFinding: Finding = {
+            id: `f-${Date.now()}`,
+            title: f.title || "Untitled finding",
+            severity,
+            category: f.category || "Other",
+            cvssVector: f.cvssVector,
+            cvssScore,
+            affectedUrl: f.affectedUrl,
+            description: f.description || "",
+            reproductionSteps: Array.isArray(f.reproductionSteps) ? f.reproductionSteps : [],
+            remediation: f.remediation,
+            evidenceFrameIndices: [framesRef.current.length - 1].filter((i) => i >= 0),
+            request: f.request,
+            response: f.response,
+            reportedAt: new Date().toISOString(),
+            stepId: thinkStepId,
+          };
+          findingsRef.current = [...findingsRef.current, newFinding];
+          setFindings([...findingsRef.current]);
+          addStep({
+            action: "🐛 finding",
+            reasoning: `[${severity}${cvssScore ? ` · CVSS ${cvssScore}` : ""}] ${newFinding.title} — ${newFinding.description.slice(0, 200)}`,
+            status: "done",
+          });
+          toast.success(`Finding logged: ${newFinding.title} (${severity})`);
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+
 
         if (decision.done) {
           // IMPORTANT: do NOT refresh the screenshot here — the desktop may have changed

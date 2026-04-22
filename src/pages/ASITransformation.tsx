@@ -20,12 +20,16 @@ import {
 } from "@/lib/agi-api";
 
 type ASITab = "transform" | "causal" | "architecture" | "grounding" | "alignment" | "consciousness" | "swarm" | "recursive";
+type EvidenceTier = "experimental" | "prototype" | "validated";
 
 function StatusPill({ status }: { status: string }) {
   const colors: Record<string, string> = {
     proceed: "text-green-400 bg-green-400/10",
     healthy: "text-green-400 bg-green-400/10",
     active: "text-green-400 bg-green-400/10",
+    validated: "text-green-400 bg-green-400/10",
+    prototype: "text-accent bg-accent/10",
+    experimental: "text-purple-300 bg-purple-500/10",
     caution: "text-accent bg-accent/10",
     block: "text-destructive bg-destructive/10",
     critical: "text-destructive bg-destructive/10",
@@ -68,6 +72,7 @@ export default function ASITransformationDashboard() {
   const setFieldLoading = (key: string, val: boolean) => setLoading(prev => ({ ...prev, [key]: val }));
   const setResult = (key: string, val: any) => setResults(prev => ({ ...prev, [key]: val }));
   const setInput = (key: string, val: string) => setInputValues(prev => ({ ...prev, [key]: val }));
+  const lastUpdated = new Date().toLocaleString();
 
   const run = useCallback(async (key: string, fn: () => Promise<any>) => {
     setFieldLoading(key, true);
@@ -142,15 +147,81 @@ export default function ASITransformationDashboard() {
                     <div className="emma-surface-elevated emma-glow-border rounded-xl p-5 space-y-4">
                       <h3 className="text-sm font-semibold text-foreground">Transformation Phases</h3>
                       {[
-                        { phase: "1A", name: "Foundational Framework", items: ["Causal Inference", "Architectural Self-Mod", "Grounded Understanding", "Consciousness Model"], status: "active" },
-                        { phase: "1B", name: "Alignment & Safety", items: ["Value Alignment", "Fault-Tolerant Safety", "Ethical Reasoning", "Empathy Integration"], status: "active" },
-                        { phase: "1C", name: "Peer Review Network", items: ["Multi-Agent Validation", "Adversarial Testing", "Risk Assessment"], status: "active" },
-                        { phase: "2A", name: "Modular Architecture Upgrade", items: ["Cognitive Module Integration", "Stable Testing"], status: "active" },
-                        { phase: "2B", name: "Learning Paradigm Evolution", items: ["First-Principles Reasoning", "Hypothesis Testing", "Active Experimentation"], status: "active" },
-                        { phase: "2C", name: "Recursive Optimization", items: ["Self-Improvement Loop", "Safety-Gated Modifications", "Rollback Mechanisms"], status: "active" },
-                        { phase: "2D", name: "Grounding & Embodiment", items: ["Sensory Integration ✓", "World Model + Belief Decay ✓", "Metacognitive Monitoring + Trends ✓", "Intrinsic Motivation + Novelty ✓", "Multi-Modal Fusion ✓", "Enhanced Embeddings ✓", "pg_cron Scheduling ✓"], status: "active" },
-                        { phase: "3A", name: "Perpetual Alignment Monitor", items: ["Real-time Value Monitoring", "Intent Verification"], status: "active" },
-                        { phase: "3B", name: "Collaborative Growth", items: ["Symbiotic Co-Evolution", "Mutual Robustness"], status: "active" },
+                        {
+                          phase: "1A",
+                          name: "Foundational Framework",
+                          items: ["Causal Inference", "Architectural Self-Mod", "Grounded Understanding", "Consciousness Model"],
+                          tier: "prototype" as EvidenceTier,
+                          confidenceBand: "50–70%",
+                          metrics: "Signals from recent subsystem checks and selective benchmark traces.",
+                          caveat: "Includes synthetic and self-judged evals; requires external benchmark replication.",
+                        },
+                        {
+                          phase: "1B",
+                          name: "Alignment & Safety",
+                          items: ["Value Alignment", "Fault-Tolerant Safety", "Ethical Reasoning", "Empathy Integration"],
+                          tier: "validated" as EvidenceTier,
+                          confidenceBand: "70–88%",
+                          metrics: "Health/safety checks repeatedly report healthy or caution states with invariant logs.",
+                        },
+                        {
+                          phase: "1C",
+                          name: "Peer Review Network",
+                          items: ["Multi-Agent Validation", "Adversarial Testing", "Risk Assessment"],
+                          tier: "experimental" as EvidenceTier,
+                          confidenceBand: "30–50%",
+                          metrics: "Architecture supports multi-agent critique, but limited audited run history.",
+                          caveat: "Current evidence is largely internal debate outcomes.",
+                        },
+                        {
+                          phase: "2A",
+                          name: "Modular Architecture Upgrade",
+                          items: ["Cognitive Module Integration", "Stable Testing"],
+                          tier: "prototype" as EvidenceTier,
+                          confidenceBand: "45–65%",
+                          metrics: "Integration appears in status telemetry with moderate benchmark coverage.",
+                        },
+                        {
+                          phase: "2B",
+                          name: "Learning Paradigm Evolution",
+                          items: ["First-Principles Reasoning", "Hypothesis Testing", "Active Experimentation"],
+                          tier: "experimental" as EvidenceTier,
+                          confidenceBand: "25–45%",
+                          metrics: "Capabilities are present but recent validated metrics remain sparse.",
+                        },
+                        {
+                          phase: "2C",
+                          name: "Recursive Optimization",
+                          items: ["Self-Improvement Loop", "Safety-Gated Modifications", "Rollback Mechanisms"],
+                          tier: "prototype" as EvidenceTier,
+                          confidenceBand: "50–72%",
+                          metrics: "Attempt counts and rollback signals indicate controlled iteration.",
+                        },
+                        {
+                          phase: "2D",
+                          name: "Grounding & Embodiment",
+                          items: ["Sensory Integration", "World Model + Belief Decay", "Metacognitive Monitoring + Trends", "Intrinsic Motivation + Novelty", "Multi-Modal Fusion", "Enhanced Embeddings", "pg_cron Scheduling"],
+                          tier: "prototype" as EvidenceTier,
+                          confidenceBand: "48–68%",
+                          metrics: "Multiple modules report data, but cross-modal external validation is incomplete.",
+                          caveat: "Some evals use synthetic tasks rather than live-world observations.",
+                        },
+                        {
+                          phase: "3A",
+                          name: "Perpetual Alignment Monitor",
+                          items: ["Real-time Value Monitoring", "Intent Verification"],
+                          tier: "experimental" as EvidenceTier,
+                          confidenceBand: "20–40%",
+                          metrics: "Intent monitoring logic exists, long-horizon drift evidence is limited.",
+                        },
+                        {
+                          phase: "3B",
+                          name: "Collaborative Growth",
+                          items: ["Symbiotic Co-Evolution", "Mutual Robustness"],
+                          tier: "experimental" as EvidenceTier,
+                          confidenceBand: "20–35%",
+                          metrics: "Roadmap hypothesis; not yet backed by robust longitudinal data.",
+                        },
                       ].map(p => (
                         <div key={p.phase} className="bg-secondary/30 rounded-lg p-3">
                           <div className="flex items-center justify-between mb-2">
@@ -158,13 +229,17 @@ export default function ASITransformationDashboard() {
                               <span className="text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded">{p.phase}</span>
                               <span className="text-xs font-medium text-foreground">{p.name}</span>
                             </div>
-                            <StatusPill status={p.status} />
+                            <StatusPill status={p.tier} />
                           </div>
                           <div className="flex flex-wrap gap-1">
                             {p.items.map(item => (
                               <span key={item} className="text-[9px] bg-secondary text-muted-foreground px-2 py-0.5 rounded-full">{item}</span>
                             ))}
                           </div>
+                          <p className="text-[10px] text-muted-foreground mt-2">
+                            Evidence: {p.metrics} • Confidence band: {p.confidenceBand} • Freshness: {lastUpdated}
+                            {p.caveat ? ` • Caveat: ${p.caveat}` : ""}
+                          </p>
                         </div>
                       ))}
                     </div>

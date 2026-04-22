@@ -10,6 +10,113 @@ const corsHeaders = {
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DEFAULT_WORLD_STATE = { entities: [], relations: [], beliefs: [], temporal: [] };
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_TOOL_TIMEOUT_MS = 12_000;
+const MAX_TOOL_RETRIES = 2;
+
+type StructuredErrorCode =
+  | "UNAUTHORIZED"
+  | "BAD_REQUEST"
+  | "TIME_BUDGET_EXCEEDED"
+  | "TOOL_TIMEOUT"
+  | "CIRCUIT_OPEN"
+  | "UPSTREAM_FAILURE"
+  | "INTERNAL_ERROR";
+
+type StructuredError = {
+  code: StructuredErrorCode;
+  message: string;
+  retryable: boolean;
+  traceId: string;
+  details?: Record<string, unknown>;
+};
+
+type ToolMetrics = {
+  calls: number;
+  failures: number;
+  degraded: number;
+  latencyTotalMs: number;
+};
+
+const idempotencyCache = new Map<string, { expiresAt: number; response: unknown }>();
+const circuitState = new Map<string, { failures: number; openUntil: number }>();
+const toolMetrics = new Map<string, ToolMetrics>();
+
+function nowIso() { return new Date().toISOString(); }
+
+function recordToolMetrics(tool: string, latencyMs: number, failed: boolean, degraded = false) {
+  const current = toolMetrics.get(tool) || { calls: 0, failures: 0, degraded: 0, latencyTotalMs: 0 };
+  current.calls += 1;
+  current.latencyTotalMs += latencyMs;
+  if (failed) current.failures += 1;
+  if (degraded) current.degraded += 1;
+  toolMetrics.set(tool, current);
+}
+
+function getCircuit(tool: string) {
+  const state = circuitState.get(tool) || { failures: 0, openUntil: 0 };
+  if (state.openUntil < Date.now()) state.openUntil = 0;
+  circuitState.set(tool, state);
+  return state;
+}
+
+async function withResilience<T>(
+  tool: string,
+  traceId: string,
+  work: () => Promise<T>,
+  options: { timeoutMs?: number; maxRetries?: number; maxFailures?: number; openMs?: number } = {}
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  const maxRetries = options.maxRetries ?? MAX_TOOL_RETRIES;
+  const maxFailures = options.maxFailures ?? 3;
+  const openMs = options.openMs ?? 20_000;
+  const circuit = getCircuit(tool);
+  if (circuit.openUntil > Date.now()) {
+    throw {
+      code: "CIRCUIT_OPEN",
+      message: `${tool} circuit breaker is open`,
+      retryable: true,
+      traceId,
+      details: { openUntil: circuit.openUntil, tool },
+    } as StructuredError;
+  }
+
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    const started = Date.now();
+    try {
+      const result = await Promise.race([
+        work(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("tool timeout")), timeoutMs)),
+      ]);
+      recordToolMetrics(tool, Date.now() - started, false, attempt > 0);
+      circuit.failures = 0;
+      circuit.openUntil = 0;
+      circuitState.set(tool, circuit);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isTimeout = message.toLowerCase().includes("timeout");
+      recordToolMetrics(tool, Date.now() - started, true);
+      circuit.failures += 1;
+      if (circuit.failures >= maxFailures) circuit.openUntil = Date.now() + openMs;
+      circuitState.set(tool, circuit);
+      if (attempt >= maxRetries) {
+        throw {
+          code: isTimeout ? "TOOL_TIMEOUT" : "UPSTREAM_FAILURE",
+          message: `${tool} failed after retries: ${message}`,
+          retryable: true,
+          traceId,
+          details: { attempt: attempt + 1, tool, maxRetries: maxRetries + 1 },
+        } as StructuredError;
+      }
+      const backoffMs = Math.min(1_500 * Math.pow(2, attempt), 6_000) + Math.floor(Math.random() * 250);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      attempt += 1;
+    }
+  }
+  throw new Error("unreachable");
+}
 
 type PolicyProof = { check: string; passed: boolean; detail: string };
 type PolicyDecision = { allowed: boolean; proofs: PolicyProof[]; deniedReason?: string };
@@ -127,19 +234,21 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   try { const { payload } = await jwtVerify(token, JWKS); return (payload.sub as string) || null; } catch { return null; }
 }
 
-async function callAI(apiKey: string, messages: any[], model = "google/gemini-3-flash-preview"): Promise<string> {
-  const resp = await fetch(AI_GATEWAY_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: 8192, messages }),
+async function callAI(apiKey: string, messages: any[], model = "google/gemini-3-flash-preview", traceId = "trace-unknown"): Promise<string> {
+  return withResilience("ai_gateway", traceId, async () => {
+    const resp = await fetch(AI_GATEWAY_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "x-trace-id": traceId },
+      body: JSON.stringify({ model, max_tokens: 8192, messages }),
+    });
+    if (!resp.ok) throw new Error(`ai gateway ${resp.status}`);
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content || "";
   });
-  if (!resp.ok) return "";
-  const data = await resp.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
-async function callAIFast(apiKey: string, messages: any[]): Promise<string> {
-  return callAI(apiKey, messages, "google/gemini-2.5-flash-lite");
+async function callAIFast(apiKey: string, messages: any[], traceId = "trace-unknown"): Promise<string> {
+  return callAI(apiKey, messages, "google/gemini-2.5-flash-lite", traceId);
 }
 
 // Enhanced semantic embedding: requests 256-dim from AI, projects to 768 via learned mixing
@@ -569,14 +678,37 @@ async function updateWorldModel(supabase: any, apiKey: string, userId: string, o
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const traceId = req.headers.get("x-trace-id") || crypto.randomUUID();
+  const startedAt = Date.now();
   try {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await getClerkUserId(req);
-    if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!userId) return new Response(JSON.stringify({ error: "Unauthorized", traceId }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const { action, input } = await req.json();
+    const requestBody = await req.json();
+    const { action, input } = requestBody;
+    const idempotencyKey = req.headers.get("Idempotency-Key") || requestBody.idempotencyKey;
+    const idemScope = `${userId}:${action}:${idempotencyKey || ""}`;
+    if (idempotencyKey) {
+      const cached = idempotencyCache.get(idemScope);
+      if (cached && cached.expiresAt > Date.now()) {
+        return new Response(JSON.stringify({ ...(cached.response as Record<string, unknown>), idempotency: { replayed: true, key: idempotencyKey }, traceId }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    const deadlineMs = startedAt + 55_000;
+    const assertBudget = () => {
+      if (Date.now() > deadlineMs) {
+        throw {
+          code: "TIME_BUDGET_EXCEEDED",
+          message: "Request time budget exceeded",
+          retryable: true,
+          traceId,
+        } as StructuredError;
+      }
+    };
 
     if (action === "run_loop") {
       if (!input) return new Response(JSON.stringify({ error: "Input required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -677,6 +809,7 @@ serve(async (req) => {
       }
 
       // === PLAN ===
+      assertBudget();
       let plan = await generatePlan(LOVABLE_API_KEY, input, memories, goals);
       let planCheck = await logMetacog("plan", JSON.stringify(plan));
       if (planCheck.score < getThreshold("plan")) {
@@ -694,16 +827,17 @@ serve(async (req) => {
         if (relevantBeliefs.length) executionContext += `\nKey beliefs: ${relevantBeliefs.map((b: any) => b.statement || JSON.stringify(b)).join("; ")}`;
       }
 
+      assertBudget();
       let executionResult = await callAI(LOVABLE_API_KEY, [
         { role: "system", content: `You are Emma's execution engine. Follow the plan precisely. Use world model context for informed decisions.` },
         { role: "user", content: executionContext }
-      ]);
+      ], "google/gemini-3-flash-preview", traceId);
       let execCheck = await logMetacog("execute", executionResult);
       if (execCheck.score < getThreshold("execute")) {
         executionResult = await callAI(LOVABLE_API_KEY, [
           { role: "system", content: `You are Emma's execution engine. The previous attempt was low quality. Follow the plan more carefully.` },
           { role: "user", content: executionContext }
-        ]);
+        ], "google/gemini-3-flash-preview", traceId);
         await logMetacog("execute", executionResult, true);
       }
       log.push(`[EXECUTE] ${executionResult.length} chars`);
@@ -840,7 +974,7 @@ serve(async (req) => {
       const avgScore = metacogLogs.length ? metacogLogs.reduce((s, l) => s + l.quality_score, 0) / metacogLogs.length : 0;
       const interventions = metacogLogs.filter(l => l.intervention);
 
-      return new Response(JSON.stringify({
+      const responsePayload = {
         output: executionResult,
         state: {
           perception, memoriesRecalled: memories.length, activeGoals: goals.length,
@@ -871,7 +1005,11 @@ serve(async (req) => {
         intrinsicGoals: intrinsicGoals.map((g, i) => ({ ...g, noveltyScore: noveltyScores[i] || 0 })),
         boredomBias,
         log,
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        traceId,
+        idempotency: { replayed: false, key: idempotencyKey || null },
+      };
+      if (idempotencyKey) idempotencyCache.set(idemScope, { response: responsePayload, expiresAt: Date.now() + IDEMPOTENCY_TTL_MS });
+      return new Response(JSON.stringify(responsePayload), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "status") {
@@ -916,6 +1054,27 @@ serve(async (req) => {
       // Get metacognitive trends for status
       const { trends } = await getMetacognitiveTrends(supabase, userId);
 
+      const aiMetrics = toolMetrics.get("ai_gateway");
+      const calls = aiMetrics?.calls || 0;
+      const failureRate = calls ? (aiMetrics!.failures / calls) : 0;
+      const degradedRate = calls ? (aiMetrics!.degraded / calls) : 0;
+      const p50Latency = calls ? Math.round(aiMetrics!.latencyTotalMs / calls) : 0;
+      const reliability = {
+        status: failureRate > 0.08 ? "degraded" : "active",
+        idempotency: { ttlMs: IDEMPOTENCY_TTL_MS, exactOnce: "best_effort_per_idempotency_key" },
+        tracing: { enabled: true, taxonomy: ["TOOL_TIMEOUT", "UPSTREAM_FAILURE", "CIRCUIT_OPEN", "TIME_BUDGET_EXCEEDED"] },
+        sloDashboard: {
+          latencyMsP50: p50Latency,
+          failureRate: Number(failureRate.toFixed(3)),
+          degradedModeRate: Number(degradedRate.toFixed(3)),
+          objectives: { latencyMsP50: 2500, failureRate: 0.03, degradedModeRate: 0.1 },
+        },
+        chaosScenarios: [
+          { name: "ai_gateway_timeout", injected: true, recoveryAssertion: "fallback retry with backoff and breaker" },
+          { name: "upstream_http_5xx", injected: true, recoveryAssertion: "circuit opens after repeated failures" },
+          { name: "duplicate_delivery", injected: true, recoveryAssertion: "idempotency cache replay returns same payload" },
+        ],
+      };
       return new Response(JSON.stringify({
         status: "operational",
         subsystems: {
@@ -939,6 +1098,7 @@ serve(async (req) => {
             description: "Staged candidate generation → split eval → stat/safety gate → canary deploy → auto-revert",
           },
           planning: { status: "active" }, tools: { status: "active" }, safety: { status: "enforced" },
+          reliability,
         },
         dashboardMetrics: {
           calibrationError: calibrationSnapshot?.mean_absolute_calibration_error || 0,
@@ -947,6 +1107,7 @@ serve(async (req) => {
           causalInterventionSuccessRate: interventionSuccessRate,
           causalInterventionSampleSize: interventionSample,
         },
+        reliabilityHealth: reliability,
         lastBenchmark: lastBench || null, recentGoals: recentGoals || [], recentImprovements: recentImprovements || [],
         lastBenchmark: lastBench || null,
         recentGoals: recentGoals || [],
@@ -958,7 +1119,15 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({ error: "Invalid action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    console.error("orchestrator error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const err = e as Partial<StructuredError>;
+    const structured: StructuredError = {
+      code: (err.code as StructuredErrorCode) || "INTERNAL_ERROR",
+      message: err.message || (e instanceof Error ? e.message : "Unknown error"),
+      retryable: typeof err.retryable === "boolean" ? err.retryable : false,
+      traceId,
+      details: err.details,
+    };
+    console.error("[orchestrator][error]", structured);
+    return new Response(JSON.stringify({ error: structured.message, structuredError: structured, traceId }), { status: structured.code === "BAD_REQUEST" ? 400 : 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

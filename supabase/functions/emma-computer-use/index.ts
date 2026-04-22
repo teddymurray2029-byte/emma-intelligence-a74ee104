@@ -1087,7 +1087,7 @@ serve(async (req) => {
           });
         }
 
-        const decision = await aiReason(screenshotBase64, task, actionHistory || [], userMessage);
+        const decision = await aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement);
         return json({ ...decision, screenshot: screenshotBase64 });
       }
 

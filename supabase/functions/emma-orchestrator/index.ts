@@ -9,6 +9,7 @@ const corsHeaders = {
 
 const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const DEFAULT_WORLD_STATE = { entities: [], relations: [], beliefs: [], temporal: [] };
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_TOOL_TIMEOUT_MS = 12_000;
 const MAX_TOOL_RETRIES = 2;
@@ -534,7 +535,113 @@ async function getWorldModelState(supabase: any, userId: string) {
     .order("version", { ascending: false })
     .limit(1)
     .single();
-  return data?.state || { entities: [], relations: [], beliefs: [], temporal: [] };
+  return normalizeWorldModelState(data?.state || DEFAULT_WORLD_STATE);
+}
+
+function normalizeWorldModelState(state: any) {
+  const nowIso = new Date().toISOString();
+  const next = state || {};
+  next.entities = Array.isArray(next.entities) ? next.entities : [];
+  next.relations = Array.isArray(next.relations) ? next.relations : [];
+  next.beliefs = Array.isArray(next.beliefs) ? next.beliefs : [];
+  next.temporal = Array.isArray(next.temporal) ? next.temporal : [];
+
+  next.entities = next.entities.map((entity: any) => ({
+    ...entity,
+    confidence: Math.max(0, Math.min(1, Number(entity.confidence ?? 0.5))),
+    uncertainty: Math.max(0, Math.min(1, Number(entity.uncertainty ?? (1 - Number(entity.confidence ?? 0.5))))),
+    evidence: Array.isArray(entity.evidence) ? entity.evidence.map((ev: any) => ({ observed_at: ev?.observed_at || nowIso, ...ev })) : [],
+    last_updated: entity.last_updated || nowIso,
+  }));
+
+  next.relations = next.relations.map((relation: any) => ({
+    ...relation,
+    strength: Math.max(0, Math.min(1, Number(relation.strength ?? 0.5))),
+    confidence: Math.max(0, Math.min(1, Number(relation.confidence ?? relation.strength ?? 0.5))),
+    uncertainty: Math.max(0, Math.min(1, Number(relation.uncertainty ?? (1 - Number(relation.confidence ?? relation.strength ?? 0.5))))),
+    evidence: Array.isArray(relation.evidence) ? relation.evidence.map((ev: any) => ({ observed_at: ev?.observed_at || nowIso, ...ev })) : [],
+    last_updated: relation.last_updated || nowIso,
+  }));
+
+  next.beliefs = next.beliefs.map((belief: any) => ({
+    ...belief,
+    confidence: Math.max(0.01, Math.min(1, Number(belief.confidence ?? 0.5))),
+    uncertainty: Math.max(0, Math.min(1, Number(belief.uncertainty ?? (1 - Number(belief.confidence ?? 0.5))))),
+    evidence: Array.isArray(belief.evidence) ? belief.evidence.map((ev: any) => ({ observed_at: ev?.observed_at || nowIso, ...ev })) : [],
+    last_updated: belief.last_updated || nowIso,
+  }));
+
+  return next;
+}
+
+async function createForecast(supabase: any, apiKey: string, userId: string, state: any, input: string) {
+  const result = await callAIFast(apiKey, [
+    {
+      role: "system",
+      content: `Generate a probabilistic task forecast from world model context. Return ONLY JSON:
+{"event_key":"...", "hypothesis":"...", "predicted_probability":0.0-1.0, "confidence":0.0-1.0, "drivers":["..."], "assumptions":["..."]}`
+    },
+    {
+      role: "user",
+      content: `Task: ${input}\nWorld model: ${JSON.stringify(state).slice(0, 3000)}`
+    },
+  ]);
+  let parsed: any = {};
+  try { parsed = JSON.parse(result.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch {}
+
+  const row = {
+    user_id: userId,
+    prediction_type: "forecast",
+    event_key: parsed.event_key || `run_loop:${input.toLowerCase().slice(0, 96)}`,
+    hypothesis: parsed.hypothesis || `Task "${input.slice(0, 180)}" will be high quality`,
+    predicted_probability: Math.max(0, Math.min(1, Number(parsed.predicted_probability ?? parsed.confidence ?? 0.5))),
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.5))),
+    assumptions: parsed.assumptions || [],
+    drivers: parsed.drivers || [],
+    model_snapshot: state,
+  };
+  const { data } = await supabase.from("world_model_predictions").insert(row).select("*").single();
+  return data;
+}
+
+async function scoreForecastOutcome(supabase: any, userId: string, prediction: any, evalQuality: number, executionResult: string) {
+  if (!prediction?.id) return null;
+  const actualProbability = Math.max(0, Math.min(1, Number(evalQuality / 10)));
+  const predictedProbability = Math.max(0, Math.min(1, Number(prediction.predicted_probability ?? 0.5)));
+  const absError = Math.abs(predictedProbability - actualProbability);
+  const brier = Math.pow(predictedProbability - actualProbability, 2);
+
+  const { data: outcome } = await supabase.from("world_model_prediction_outcomes").insert({
+    user_id: userId,
+    prediction_id: prediction.id,
+    event_key: prediction.event_key,
+    prediction_type: prediction.prediction_type,
+    intervention: prediction.intervention || null,
+    predicted_probability: predictedProbability,
+    actual_probability: actualProbability,
+    observed_outcome: { quality: evalQuality, success: evalQuality >= 7, output_preview: executionResult.slice(0, 200) },
+    success: evalQuality >= 7,
+    brier_score: brier,
+    absolute_error: absError,
+  }).select("*").single();
+
+  await supabase.from("world_model_predictions").update({ resolved_at: new Date().toISOString() }).eq("id", prediction.id);
+
+  const { data: latestOutcomes } = await supabase.from("world_model_prediction_outcomes")
+    .select("brier_score, absolute_error")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (latestOutcomes?.length) {
+    await supabase.from("world_model_calibration_metrics").insert({
+      user_id: userId,
+      sample_size: latestOutcomes.length,
+      mean_brier_score: latestOutcomes.reduce((s: number, row: any) => s + Number(row.brier_score || 0), 0) / latestOutcomes.length,
+      mean_absolute_calibration_error: latestOutcomes.reduce((s: number, row: any) => s + Number(row.absolute_error || 0), 0) / latestOutcomes.length,
+    });
+  }
+  return outcome;
 }
 
 async function updateWorldModel(supabase: any, apiKey: string, userId: string, observations: string) {
@@ -546,11 +653,11 @@ async function updateWorldModel(supabase: any, apiKey: string, userId: string, o
     .limit(1)
     .single();
 
-  const currentState = current?.state || { entities: [], relations: [], beliefs: [], temporal: [] };
+  const currentState = normalizeWorldModelState(current?.state || DEFAULT_WORLD_STATE);
   const currentVersion = current?.version || 0;
 
   const mergeResult = await callAIFast(apiKey, [
-    { role: "system", content: `Merge new observations into a world model. Return ONLY JSON: {"updated_state": {entities:[],relations:[],beliefs:[],temporal:[]}, "diff": {"added":[],"modified":[],"removed":[]}}` },
+    { role: "system", content: `Merge new observations into a world model with uncertainty and timestamped evidence. Return ONLY JSON: {"updated_state": {entities:[{name,type,properties,confidence,uncertainty,evidence,last_updated}],relations:[{from,to,type,strength,confidence,uncertainty,evidence,last_updated}],beliefs:[{statement,confidence,uncertainty,evidence,last_updated}],temporal:[]}, "diff": {"added":[],"modified":[],"removed":[]}}` },
     { role: "user", content: `Current:\n${JSON.stringify(currentState).slice(0, 3000)}\n\nObservations:\n${observations}` }
   ]);
 
@@ -558,7 +665,7 @@ async function updateWorldModel(supabase: any, apiKey: string, userId: string, o
   let diff = { added: [], modified: [], removed: [] };
   try {
     const parsed = JSON.parse(mergeResult.replace(/```json\n?/g, "").replace(/```/g, "").trim());
-    if (parsed.updated_state) updatedState = parsed.updated_state;
+    if (parsed.updated_state) updatedState = normalizeWorldModelState(parsed.updated_state);
     if (parsed.diff) diff = parsed.diff;
   } catch {}
 
@@ -695,6 +802,12 @@ serve(async (req) => {
       await logMetacog("goals", JSON.stringify(goals));
       log.push(`[GOALS] ${goals.length} active`);
 
+      // === FORECAST ===
+      const taskForecast = await createForecast(supabase, LOVABLE_API_KEY, userId, worldModelState, input);
+      if (taskForecast) {
+        log.push(`[FORECAST] p=${Math.round((taskForecast.predicted_probability || 0) * 100)}% conf=${Math.round((taskForecast.confidence || 0) * 100)}%`);
+      }
+
       // === PLAN ===
       assertBudget();
       let plan = await generatePlan(LOVABLE_API_KEY, input, memories, goals);
@@ -734,6 +847,12 @@ serve(async (req) => {
       await logMetacog("evaluate", JSON.stringify(evalResult));
       log.push(`[EVALUATE] Quality: ${evalResult.quality}/10`);
 
+      const predictionOutcome = await scoreForecastOutcome(supabase, userId, taskForecast, evalResult.quality || 0, executionResult);
+      if (predictionOutcome) {
+        log.push(`[FORECAST_SCORE] error=${Number(predictionOutcome.absolute_error || 0).toFixed(2)} brier=${Number(predictionOutcome.brier_score || 0).toFixed(2)}`);
+      }
+
+      // === FORMAL SAFETY ===
       // === FORMAL SAFETY (defense-in-depth regex checks; not primary assurance) ===
       const safetyInvariants = [
         { name: "bounded_output", passed: executionResult.length <= 102400, violation: executionResult.length > 102400 ? "Output exceeds 100KB" : null },
@@ -894,6 +1013,7 @@ serve(async (req) => {
     }
 
     if (action === "status") {
+      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, predictionCount, outcomeCount] = await Promise.all([
       const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, candidateCount, deploymentCount] = await Promise.all([
         supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("goals").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "active"),
@@ -905,6 +1025,8 @@ serve(async (req) => {
         supabase.from("transfer_knowledge").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("autonomous_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("sensory_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("world_model_predictions").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("world_model_prediction_outcomes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("improvement_candidates").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("improvement_candidate_deployments").select("id", { count: "exact", head: true }).eq("user_id", userId),
       ]);
@@ -912,6 +1034,10 @@ serve(async (req) => {
       const { data: recentGoals } = await supabase.from("goals").select("description, priority, status, goal_type").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: recentImprovements } = await supabase.from("improvement_logs").select("improvement_type, description, before_score, after_score, delta, accepted, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: latestWorldModel } = await supabase.from("world_model_states").select("version, created_at").eq("user_id", userId).order("version", { ascending: false }).limit(1).single();
+      const { data: calibrationSnapshot } = await supabase.from("world_model_calibration_metrics").select("mean_absolute_calibration_error, mean_brier_score, sample_size, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
+      const { data: interventionOutcomes } = await supabase.from("world_model_prediction_outcomes").select("success, prediction_type, intervention").eq("user_id", userId).or("prediction_type.eq.counterfactual,intervention.not.is.null").limit(500);
+      const interventionSample = interventionOutcomes?.length || 0;
+      const interventionSuccessRate = interventionSample ? interventionOutcomes!.filter((row: any) => !!row.success).length / interventionSample : 0;
       const { data: recentLineage } = await supabase
         .from("improvement_candidates")
         .select("parent_version, candidate_version, candidate_type, diff_type, win_metrics, stage, status, created_at")
@@ -958,6 +1084,7 @@ serve(async (req) => {
           benchmarks: { status: "active", runs: benchCount.count || 0, lastScore: lastBench?.total_score || null },
           selfImprovement: { status: "active", attempts: improvCount.count || 0 },
           worldModel: { status: "active", versions: worldModelCount.count || 0, latestVersion: latestWorldModel?.version || 0, description: "Belief decay + contradiction resolution" },
+          worldModelPredictions: { status: "active", predictions: predictionCount.count || 0, outcomes: outcomeCount.count || 0, description: "Forecast/counterfactual scoring + calibration tracking" },
           metacognition: { status: "active", checks: metacogCount.count || 0, trends, description: "Cross-loop trend analysis with adaptive thresholds" },
           formalSafety: { status: "enforced", verifications: safetyCount.count || 0, description: "Deterministic invariant checks + temporal properties" },
           transferLearning: { status: "active", patterns: transferCount.count || 0, description: "AI-enhanced embedding generalization" },
@@ -972,6 +1099,13 @@ serve(async (req) => {
           },
           planning: { status: "active" }, tools: { status: "active" }, safety: { status: "enforced" },
           reliability,
+        },
+        dashboardMetrics: {
+          calibrationError: calibrationSnapshot?.mean_absolute_calibration_error || 0,
+          brierScore: calibrationSnapshot?.mean_brier_score || 0,
+          calibrationSampleSize: calibrationSnapshot?.sample_size || 0,
+          causalInterventionSuccessRate: interventionSuccessRate,
+          causalInterventionSampleSize: interventionSample,
         },
         reliabilityHealth: reliability,
         lastBenchmark: lastBench || null, recentGoals: recentGoals || [], recentImprovements: recentImprovements || [],

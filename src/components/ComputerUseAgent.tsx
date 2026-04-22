@@ -173,6 +173,28 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
 
+  // === Engagement & findings ===
+  const [showEngagementForm, setShowEngagementForm] = useState(false);
+  const [engagement, setEngagement] = useState<Engagement>({
+    name: "",
+    type: "bug_bounty",
+    inScope: [],
+    outOfScope: [],
+    intensity: "passive",
+    authorized: false,
+    allowExploitation: false,
+    scopeLockEnabled: true,
+  });
+  const [scopeText, setScopeText] = useState("");
+  const [outScopeText, setOutScopeText] = useState("");
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const findingsRef = useRef<Finding[]>([]);
+  const engagementRef = useRef<Engagement>(engagement);
+  const engagementStartRef = useRef<string>("");
+
+  useEffect(() => { engagementRef.current = engagement; }, [engagement]);
+  useEffect(() => { findingsRef.current = findings; }, [findings]);
+
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
@@ -181,9 +203,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskRef = useRef("");
-  // Recorded frames for video evidence (base64 PNG + timestamp)
   const framesRef = useRef<{ base64: string; t: number; reasoning?: string; action?: string }[]>([]);
-  // Set true when keepalive recreates sandbox so the loop knows to forget stale action history
   const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 

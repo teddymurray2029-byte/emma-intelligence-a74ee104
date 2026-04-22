@@ -31,6 +31,10 @@ interface SubsystemStatus {
 interface SystemStatusData {
   status: string;
   subsystems: Record<string, SubsystemStatus>;
+  reliabilityHealth?: {
+    status: string;
+    sloDashboard?: { latencyMsP50: number; failureRate: number; degradedModeRate: number };
+  };
   lastBenchmark: any;
   recentGoals: any[];
   recentImprovements: any[];
@@ -296,6 +300,11 @@ export default function AGIDashboard() {
                     <span className="text-xs font-mono text-primary">
                       {assessment.filter(a => a.status === "implemented").length}/{assessment.length} fully implemented
                     </span>
+                    {systemStatus?.reliabilityHealth?.sloDashboard && (
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        · Reliability SLO: p50 {systemStatus.reliabilityHealth.sloDashboard.latencyMsP50}ms / fail {(systemStatus.reliabilityHealth.sloDashboard.failureRate * 100).toFixed(1)}%
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -830,6 +839,9 @@ interface AssessmentItem {
 
 function buildAssessment(systemStatus: SystemStatusData | null, health: HealthData | null): AssessmentItem[] {
   const s = systemStatus?.subsystems || {};
+  const reliability = (s.reliability as any) || systemStatus?.reliabilityHealth;
+  const reliabilitySlo = reliability?.sloDashboard;
+  const reliabilityGood = !!reliabilitySlo && reliabilitySlo.failureRate <= 0.03 && reliabilitySlo.degradedModeRate <= 0.1;
   return [
     {
       category: "Core Cognition",
@@ -945,6 +957,13 @@ function buildAssessment(systemStatus: SystemStatusData | null, health: HealthDa
       category: "Observability",
       status: "implemented",
       detail: "Structured logs per cognitive phase. Decision traces. Benchmark history. Improvement logs.",
+    },
+    {
+      category: "Reliability Engineering",
+      status: reliability ? (reliabilityGood ? "implemented" : "partial") : "missing",
+      detail: reliability
+        ? `Idempotency + retries + breakers + tracing active. Failure rate ${(reliabilitySlo?.failureRate * 100 || 0).toFixed(1)}%, degraded ${(reliabilitySlo?.degradedModeRate * 100 || 0).toFixed(1)}%.`
+        : "Awaiting reliability health telemetry from orchestrator.",
     },
     {
       category: "Local Execution",

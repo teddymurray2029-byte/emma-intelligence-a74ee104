@@ -582,12 +582,67 @@ async function waitForDesktopReady(sandbox: SandboxSession): Promise<{
   };
 }
 
+type EngagementContext = {
+  name?: string;
+  type?: string;        // bug_bounty | pentest | ctf | personal
+  inScope?: string[];
+  outOfScope?: string[];
+  intensity?: string;   // passive | active | exploitation
+  authorized?: boolean;
+  allowExploitation?: boolean;
+};
+
+function normalizeHost(input: string): string {
+  return input.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+}
+
+function hostMatchesPattern(host: string, pattern: string): boolean {
+  const p = normalizeHost(pattern);
+  if (!p) return false;
+  if (p.startsWith("*.")) {
+    const base = p.slice(2);
+    return host === base || host.endsWith(`.${base}`);
+  }
+  return host === p;
+}
+
+function scopeAllowed(url: string, eng?: EngagementContext): { allowed: boolean; reason: string } {
+  if (!eng || !eng.inScope || eng.inScope.length === 0) {
+    return { allowed: true, reason: "no scope defined" };
+  }
+  let host: string;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return { allowed: false, reason: "invalid URL" }; }
+
+  for (const p of eng.outOfScope || []) {
+    if (hostMatchesPattern(host, p)) return { allowed: false, reason: `'${host}' is explicitly out-of-scope (${p})` };
+  }
+  for (const p of eng.inScope) {
+    if (hostMatchesPattern(host, p)) return { allowed: true, reason: `matches in-scope pattern ${p}` };
+  }
+  return { allowed: false, reason: `'${host}' is not in the allowed scope` };
+}
+
+const DESTRUCTIVE_PATTERNS = [
+  /\bDROP\s+TABLE\b/i, /\bDROP\s+DATABASE\b/i, /\bTRUNCATE\s+TABLE\b/i,
+  /\bDELETE\s+FROM\b/i, /\brm\s+-rf\s+\//i, /\b:\(\)\{\s*:\|:&\s*\}/,
+  /\bshutdown\b|\breboot\b/i, /\bmkfs\b|\bdd\s+if=/i,
+];
+
+function isDestructive(text: string): { destructive: boolean; matched?: string } {
+  if (!text) return { destructive: false };
+  for (const re of DESTRUCTIVE_PATTERNS) {
+    if (re.test(text)) return { destructive: true, matched: re.source };
+  }
+  return { destructive: false };
+}
+
 async function aiReason(
   screenshotBase64: string,
   task: string,
   actionHistory: { action: string; reasoning: string }[],
-  userMessage?: string
-): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string }> {
+  userMessage?: string,
+  engagement?: EngagementContext,
+): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -597,40 +652,63 @@ async function aiReason(
 
   const userIntervention = userMessage ? `\n\nUser intervention message: "${userMessage}"` : "";
 
-  const systemPrompt = `You are Emma, a computer-use AI agent controlling a virtual desktop. You can see screenshots and must decide what action to take next.
+  const engagementBlock = engagement ? `
 
-Your task: ${task}${historyText}${userIntervention}
+ENGAGEMENT CONTEXT (you are operating as a security tester):
+- Engagement: ${engagement.name || "unnamed"} (${engagement.type || "unspecified"})
+- Test intensity: ${engagement.intensity || "passive"}
+- Exploitation allowed: ${engagement.allowExploitation ? "yes (PoC only — never destructive)" : "NO — passive/active probing only"}
+- Authorization on file: ${engagement.authorized ? "yes" : "NO — refuse to test if uncertain"}
+- In-scope hosts: ${(engagement.inScope || []).join(", ") || "(none defined)"}
+- Out-of-scope hosts: ${(engagement.outOfScope || []).join(", ") || "(none)"}
 
-Analyze the screenshot and respond with a JSON object (no markdown, just raw JSON):
+You MUST:
+- Only navigate to URLs whose host is in the in-scope list. The system will block out-of-scope navigation.
+- Refuse destructive actions: DROP/DELETE/TRUNCATE SQL, mass email sends, real payments, account deletions, file system wipes.
+- Use ONLY proof-of-concept payloads (e.g. <script>alert(1)</script>, ' OR 1=1 --, benign IDOR reads). Never exfiltrate real user data.
+- When you discover a vulnerability, emit a "report_finding" action with a structured finding object — do NOT just describe it in reasoning.
+` : "";
+
+  const systemPrompt = `You are Emma, a computer-use AI agent operating a virtual Linux desktop for security testing and bug-bounty research.
+
+Your task: ${task}${engagementBlock}${historyText}${userIntervention}
+
+Respond with a JSON object (no markdown, just raw JSON):
 {
-  "reasoning": "Brief explanation of what you see and why you're taking this action",
-  "action": "one of: click, double_click, type, hotkey, scroll, move_mouse, wait, open_url, done",
+  "reasoning": "What you ACTUALLY see in the screenshot + why this action",
+  "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
   "params": {
-    // For click/double_click/move_mouse: {"x": number, "y": number}
-    // For type: {"text": "string to type"}
-    // For hotkey: {"keys": ["ctrl", "a"]}
-    // For scroll: {"x": number, "y": number, "direction": "up" or "down", "amount": 3}
-    // For open_url: {"url": "https://..."}
-    // For wait: {"seconds": 2}
-    // For done: {}
+    // click/double_click/move_mouse: {"x": number, "y": number}
+    // type: {"text": "string"}
+    // hotkey: {"keys": ["ctrl","a"]}
+    // scroll: {"x":number,"y":number,"direction":"up"|"down","amount":3}
+    // open_url: {"url":"https://..."}
+    // wait: {"seconds": 2}
+    // report_finding: {} (the actual finding goes in the top-level "finding" field)
+    // done: {}
   },
   "done": false,
-  "summary": "Only when done=true, provide a complete summary of what was accomplished"
+  "summary": "Only when done=true — what you accomplished + total findings",
+  "finding": {
+    // ONLY when action == "report_finding". Required fields:
+    "title": "Reflected XSS in /search q parameter",
+    "severity": "Critical|High|Medium|Low|Info",
+    "category": "XSS|SQLi|IDOR|Auth|SSRF|CSRF|InfoDisclosure|RCE|Other",
+    "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+    "affectedUrl": "https://target.com/search?q=...",
+    "description": "Plain-English explanation of impact",
+    "reproductionSteps": ["Visit URL", "Inject payload", "Observe alert"],
+    "remediation": "Encode output / use parameterised queries / etc."
+  }
 }
 
 Rules:
-- THE SCREENSHOT IS GROUND TRUTH. Always trust what you SEE in the current screenshot over what the action history says.
-- If the action history claims you did something (e.g., "filled email field") but the screenshot does NOT show that result (e.g., field is empty, browser is closed, desktop is bare), the prior actions FAILED or the environment was reset. Re-do them from the current visible state.
-- Your reasoning MUST describe what is ACTUALLY VISIBLE in the current screenshot right now, not what you intended in past steps.
-- Think step by step before each action
-- Always verify your actions by looking at the next screenshot
-- If you see a login page and don't have credentials, set done=true and explain you need credentials
-- If asked to do something dangerous or clearly unethical, refuse and set done=true
-- Coordinates are relative to a 1024x768 screen resolution
-- Be precise with click coordinates — aim for the center of buttons/links
-- After typing, sometimes you need to press Enter (use hotkey)
-- For web navigation, use open_url to go directly to websites
-- Maximum 50 actions per task — if you hit the limit, summarize progress and set done=true`;
+- THE SCREENSHOT IS GROUND TRUTH. Trust what you see, not what history claims.
+- Coordinates target a 1024x768 screen — click button centres precisely.
+- For web navigation, prefer open_url over manual address-bar typing.
+- After typing, often press Enter via hotkey.
+- When you find a vulnerability, IMMEDIATELY emit a report_finding action with a complete finding object before continuing.
+- Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
@@ -785,13 +863,25 @@ serve(async (req) => {
       }
 
       case "execute": {
-        const { sessionId, actionType, params, envdAccessToken } = body;
+        const { sessionId, actionType, params, envdAccessToken, engagement } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
         let result: any = { success: true };
 
+        // === Scope guardrail: block out-of-scope navigation ===
         if (actionType === "open_url") {
+          const scope = scopeAllowed(params?.url || "", engagement);
+          if (!scope.allowed) {
+            try { const { base64 } = await captureScreenshotData(sandbox); result.screenshot = base64; } catch {}
+            return json({
+              success: false,
+              blocked: true,
+              error: `Scope violation — ${scope.reason}`,
+              guardrail: "scope",
+              ...result,
+            });
+          }
           await runCommand(
             sandbox, "bash",
             ["-c", `xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
@@ -799,6 +889,30 @@ serve(async (req) => {
           );
         } else if (actionType === "wait") {
           result = { success: true, waited: params.seconds || 2 };
+        } else if (actionType === "type") {
+          // === Destructive payload guard ===
+          const dest = isDestructive(params?.text || "");
+          if (dest.destructive && !engagement?.allowExploitation) {
+            try { const { base64 } = await captureScreenshotData(sandbox); result.screenshot = base64; } catch {}
+            return json({
+              success: false,
+              blocked: true,
+              error: `Destructive payload blocked (matched: ${dest.matched}). Enable "Allow exploitation" in engagement settings to bypass.`,
+              guardrail: "destructive_payload",
+              ...result,
+            });
+          }
+          const xdoCmd = buildXdotoolCommand(actionType, params);
+          if (xdoCmd) {
+            try {
+              const cmdResult = await runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15);
+              if (cmdResult.exitCode !== 0) {
+                result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
+              }
+            } catch (e) {
+              result = { success: false, error: e instanceof Error ? e.message : "Command execution failed" };
+            }
+          }
         } else {
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
@@ -815,7 +929,7 @@ serve(async (req) => {
 
         // Always capture a post-action screenshot so frontend stays in sync
         try {
-          await new Promise((r) => setTimeout(r, 500)); // brief delay for UI to update
+          await new Promise((r) => setTimeout(r, 500));
           const { base64: screenshot } = await captureScreenshotData(sandbox);
           result.screenshot = screenshot;
         } catch (e) {
@@ -823,6 +937,61 @@ serve(async (req) => {
         }
 
         return json(result);
+      }
+
+      case "recon": {
+        const { sessionId, envdAccessToken, tool, target, engagement } = body;
+        if (!sessionId || !tool || !target) return json({ error: "Missing sessionId/tool/target" }, 400);
+
+        const urlTarget = target.startsWith("http") ? target : `https://${target}`;
+        if (tool !== "dns_lookup" && tool !== "whois") {
+          const scope = scopeAllowed(urlTarget, engagement);
+          if (!scope.allowed) return json({ error: `Scope violation — ${scope.reason}`, guardrail: "scope" }, 403);
+        }
+
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const safe = JSON.stringify(target);
+        const safeUrl = JSON.stringify(urlTarget);
+        let cmd = "";
+        switch (tool) {
+          case "dns_lookup":       cmd = `dig +short ${safe} ANY 2>&1 || host ${safe}`; break;
+          case "whois":            cmd = `whois ${safe} 2>&1 | head -60`; break;
+          case "http_headers":     cmd = `curl -sSI --max-time 15 ${safeUrl}`; break;
+          case "robots_txt":       cmd = `curl -sS --max-time 10 ${safeUrl}/robots.txt | head -100`; break;
+          case "sitemap_fetch":    cmd = `curl -sS --max-time 10 ${safeUrl}/sitemap.xml | head -200`; break;
+          case "tech_fingerprint": cmd = `curl -sSI --max-time 15 ${safeUrl} | grep -iE 'server|x-powered-by|x-aspnet|x-generator|via'`; break;
+          default: return json({ error: `Unknown recon tool: ${tool}` }, 400);
+        }
+        try {
+          const r = await runCommand(sandbox, "bash", ["-c", cmd], 25);
+          return json({ tool, target, output: (r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : "")).slice(0, 4000), exitCode: r.exitCode });
+        } catch (e) {
+          return json({ error: e instanceof Error ? e.message : "Recon failed" }, 500);
+        }
+      }
+
+      case "http_capture": {
+        const { sessionId, envdAccessToken, url, method = "GET", headers = {}, requestBody, engagement } = body;
+        if (!sessionId || !url) return json({ error: "Missing sessionId/url" }, 400);
+        const scope = scopeAllowed(url, engagement);
+        if (!scope.allowed) return json({ error: `Scope violation — ${scope.reason}`, guardrail: "scope" }, 403);
+
+        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const headerArgs = Object.entries(headers as Record<string, string>)
+          .map(([k, v]) => `-H ${JSON.stringify(`${k}: ${v}`)}`).join(" ");
+        const bodyArg = requestBody ? `--data ${JSON.stringify(requestBody)}` : "";
+        const cmd = `curl -sS -i -X ${JSON.stringify(method)} --max-time 25 ${headerArgs} ${bodyArg} ${JSON.stringify(url)}`;
+        try {
+          const r = await runCommand(sandbox, "bash", ["-c", cmd], 30);
+          const raw = r.stdout || r.stderr || "";
+          const splitIdx = raw.indexOf("\r\n\r\n");
+          const responseHeaders = splitIdx >= 0 ? raw.slice(0, splitIdx) : raw;
+          const responseBody = splitIdx >= 0 ? raw.slice(splitIdx + 4) : "";
+          const requestText = `${method} ${url}\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join("\n")}${requestBody ? `\n\n${requestBody}` : ""}`;
+          return json({ url, method, request: requestText, responseHeaders, responseBody: responseBody.slice(0, 4000) });
+        } catch (e) {
+          return json({ error: e instanceof Error ? e.message : "Capture failed" }, 500);
+        }
       }
 
       case "keepalive": {
@@ -862,7 +1031,7 @@ serve(async (req) => {
       }
 
       case "think": {
-        const { sessionId, task, actionHistory, userMessage, envdAccessToken } = body;
+        const { sessionId, task, actionHistory, userMessage, envdAccessToken, engagement } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
 
         const sandbox = await getSandbox(sessionId, envdAccessToken);
@@ -918,7 +1087,7 @@ serve(async (req) => {
           });
         }
 
-        const decision = await aiReason(screenshotBase64, task, actionHistory || [], userMessage);
+        const decision = await aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement);
         return json({ ...decision, screenshot: screenshotBase64 });
       }
 

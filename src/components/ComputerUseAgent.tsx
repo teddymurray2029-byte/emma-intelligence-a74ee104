@@ -2,13 +2,20 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
   Eye, MousePointer, RotateCcw, Timer,
-  Keyboard, Globe, FileDown,
+  Keyboard, Globe, FileDown, Shield, ShieldAlert, ShieldCheck, Bug, FileJson, FileText, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Progress } from "@/components/ui/progress";
+import { scoreFromVector, severityFromScore, SEVERITY_COLORS, type Severity } from "@/lib/cvss";
+import { parseScopeList, isUrlInScope } from "@/lib/scope";
+import { findingsToMarkdown, findingsToJson, downloadBlob, type FindingExport, type EngagementExport } from "@/lib/report-export";
 
 const BOOT_TIMEOUT_SECONDS = 90;
 const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;
@@ -19,9 +26,49 @@ interface AgentStep {
   reasoning: string;
   screenshot?: string;
   timestamp: string;
-  status: "pending" | "executing" | "done" | "error";
+  status: "pending" | "executing" | "done" | "error" | "blocked";
   params?: any;
+  guardrail?: string;
 }
+
+type EngagementType = "bug_bounty" | "pentest" | "ctf" | "personal";
+type IntensityLevel = "passive" | "active" | "exploitation";
+
+interface Engagement {
+  name: string;
+  type: EngagementType;
+  inScope: string[];
+  outOfScope: string[];
+  intensity: IntensityLevel;
+  authorized: boolean;
+  allowExploitation: boolean;
+  scopeLockEnabled: boolean;
+}
+
+interface Finding {
+  id: string;
+  title: string;
+  severity: Severity;
+  category: string;
+  cvssVector?: string;
+  cvssScore?: number;
+  affectedUrl?: string;
+  description: string;
+  reproductionSteps: string[];
+  remediation?: string;
+  evidenceFrameIndices: number[];
+  request?: string;
+  response?: string;
+  reportedAt: string;
+  stepId: number;
+}
+
+const ENGAGEMENT_TYPE_LABELS: Record<EngagementType, string> = {
+  bug_bounty: "Bug Bounty",
+  pentest: "Authorized Pentest",
+  ctf: "CTF / Lab",
+  personal: "Personal Target",
+};
 
 type CuApiErrorPayload = {
   error?: string;
@@ -126,6 +173,28 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [bootElapsed, setBootElapsed] = useState(0);
   const [isBooting, setIsBooting] = useState(false);
 
+  // === Engagement & findings ===
+  const [showEngagementForm, setShowEngagementForm] = useState(false);
+  const [engagement, setEngagement] = useState<Engagement>({
+    name: "",
+    type: "bug_bounty",
+    inScope: [],
+    outOfScope: [],
+    intensity: "passive",
+    authorized: false,
+    allowExploitation: false,
+    scopeLockEnabled: true,
+  });
+  const [scopeText, setScopeText] = useState("");
+  const [outScopeText, setOutScopeText] = useState("");
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const findingsRef = useRef<Finding[]>([]);
+  const engagementRef = useRef<Engagement>(engagement);
+  const engagementStartRef = useRef<string>("");
+
+  useEffect(() => { engagementRef.current = engagement; }, [engagement]);
+  useEffect(() => { findingsRef.current = findings; }, [findings]);
+
   const abortRef = useRef(false);
   const stepIdRef = useRef(0);
   const stepsRef = useRef<AgentStep[]>([]);
@@ -134,9 +203,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const bootTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskRef = useRef("");
-  // Recorded frames for video evidence (base64 PNG + timestamp)
   const framesRef = useRef<{ base64: string; t: number; reasoning?: string; action?: string }[]>([]);
-  // Set true when keepalive recreates sandbox so the loop knows to forget stale action history
   const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
@@ -250,6 +317,29 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     abortRef.current = false;
     taskRef.current = task.trim();
     framesRef.current = [];
+    setFindings([]);
+    findingsRef.current = [];
+    engagementStartRef.current = new Date().toISOString();
+
+    // Parse scope text into engagement
+    const parsedEng: Engagement = {
+      ...engagement,
+      inScope: parseScopeList(scopeText),
+      outOfScope: parseScopeList(outScopeText),
+    };
+    setEngagement(parsedEng);
+    engagementRef.current = parsedEng;
+
+    if (parsedEng.scopeLockEnabled && parsedEng.inScope.length === 0) {
+      toast.error("Scope lock is on but no in-scope hosts defined. Add at least one or disable scope lock.");
+      setStatus("idle");
+      return;
+    }
+    if (!parsedEng.authorized) {
+      toast.error("You must confirm authorization before starting an engagement.");
+      setStatus("idle");
+      return;
+    }
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 
@@ -342,6 +432,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           sessionId: curSid, task: taskDesc, actionHistory,
           userMessage: pendingIntervention || undefined,
           envdAccessToken: curToken,
+          engagement: engagementRef.current,
         }, getToken, 60_000);
 
         // If sandbox_expired, wait for keepalive to recover
@@ -353,7 +444,6 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
 
         if (decision.screenshot) {
           setCurrentScreenshot(decision.screenshot);
-          // Tag the THINK frame with the reasoning the AI derived from THIS screenshot — guarantees video frame matches the thought.
           recordFrame(decision.screenshot, decision.reasoning, `think → ${decision.action}`);
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
@@ -365,6 +455,45 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         });
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
+
+        // === Handle structured finding from AI ===
+        if (decision.action === "report_finding" && decision.finding) {
+          const f = decision.finding;
+          let cvssScore: number | undefined;
+          let severity: Severity = (f.severity as Severity) || "Info";
+          if (f.cvssVector) {
+            const calc = scoreFromVector(f.cvssVector);
+            if (calc) { cvssScore = calc.score; severity = calc.severity; }
+          }
+          const newFinding: Finding = {
+            id: `f-${Date.now()}`,
+            title: f.title || "Untitled finding",
+            severity,
+            category: f.category || "Other",
+            cvssVector: f.cvssVector,
+            cvssScore,
+            affectedUrl: f.affectedUrl,
+            description: f.description || "",
+            reproductionSteps: Array.isArray(f.reproductionSteps) ? f.reproductionSteps : [],
+            remediation: f.remediation,
+            evidenceFrameIndices: [framesRef.current.length - 1].filter((i) => i >= 0),
+            request: f.request,
+            response: f.response,
+            reportedAt: new Date().toISOString(),
+            stepId: thinkStepId,
+          };
+          findingsRef.current = [...findingsRef.current, newFinding];
+          setFindings([...findingsRef.current]);
+          addStep({
+            action: "🐛 finding",
+            reasoning: `[${severity}${cvssScore ? ` · CVSS ${cvssScore}` : ""}] ${newFinding.title} — ${newFinding.description.slice(0, 200)}`,
+            status: "done",
+          });
+          toast.success(`Finding logged: ${newFinding.title} (${severity})`);
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+
 
         if (decision.done) {
           // IMPORTANT: do NOT refresh the screenshot here — the desktop may have changed
@@ -391,17 +520,44 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         const execReasoning = `${decision.action}: ${decision.reasoning}`;
 
         if (decision.action !== "wait") {
+          // Client-side scope pre-check for open_url
+          if (decision.action === "open_url" && engagementRef.current.scopeLockEnabled) {
+            const check = isUrlInScope(decision.params?.url || "", {
+              inScope: engagementRef.current.inScope,
+              outOfScope: engagementRef.current.outOfScope,
+            });
+            if (!check.allowed) {
+              addStep({
+                action: "🚫 scope_block",
+                reasoning: `Blocked navigation to ${decision.params?.url} — ${check.reason}`,
+                status: "blocked",
+                guardrail: "scope",
+              });
+              actionHistory.push({ action: "scope_block", reasoning: `Blocked: ${check.reason}` });
+              await new Promise((r) => setTimeout(r, 1000));
+              continue;
+            }
+          }
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           latestStepId = execStepId;
           try {
             const execResult = await cuApi("execute", {
               sessionId: curSid, actionType: decision.action,
               params: decision.params, envdAccessToken: curToken,
+              engagement: engagementRef.current,
             }, getToken, 30_000);
-            updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
+            if (execResult?.blocked) {
+              updateStep(execStepId, {
+                status: "blocked",
+                reasoning: `🚫 ${execResult.error}`,
+                guardrail: execResult.guardrail,
+              });
+              actionHistory.push({ action: "blocked", reasoning: execResult.error });
+            } else {
+              updateStep(execStepId, { status: "done", reasoning: `${decision.action} executed` });
+            }
             if (execResult?.screenshot) {
               setCurrentScreenshot(execResult.screenshot);
-              // Post-action frame — tag with the action that produced this state
               recordFrame(execResult.screenshot, `After: ${execReasoning}`, decision.action);
               updateStep(execStepId, { screenshot: execResult.screenshot });
             }
@@ -446,7 +602,61 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
+    setFindings([]);
+    findingsRef.current = [];
   };
+
+  const buildEngagementExport = (): EngagementExport => ({
+    name: engagementRef.current.name || "Untitled engagement",
+    type: engagementRef.current.type,
+    inScope: engagementRef.current.inScope,
+    outOfScope: engagementRef.current.outOfScope,
+    intensity: engagementRef.current.intensity,
+    authorized: engagementRef.current.authorized,
+    task: taskRef.current,
+    startedAt: engagementStartRef.current || new Date().toISOString(),
+    endedAt: new Date().toISOString(),
+  });
+
+  const findingsAsExport = (): FindingExport[] => findingsRef.current.map((f) => ({
+    id: f.id, title: f.title, severity: f.severity, category: f.category,
+    cvssVector: f.cvssVector, cvssScore: f.cvssScore, affectedUrl: f.affectedUrl,
+    description: f.description, reproductionSteps: f.reproductionSteps,
+    remediation: f.remediation, evidenceFrameIndices: f.evidenceFrameIndices,
+    request: f.request, response: f.response, reportedAt: f.reportedAt,
+  }));
+
+  const exportMarkdown = () => {
+    const md = findingsToMarkdown(buildEngagementExport(), findingsAsExport(), summary || "");
+    downloadBlob(md, `bug-bounty-${new Date().toISOString().slice(0, 10)}.md`, "text/markdown");
+    toast.success("Markdown report downloaded");
+  };
+
+  const exportJson = () => {
+    const j = findingsToJson(buildEngagementExport(), findingsAsExport(), summary || "");
+    downloadBlob(j, `bug-bounty-${new Date().toISOString().slice(0, 10)}.json`, "application/json");
+    toast.success("JSON report downloaded");
+  };
+
+  const stopAndWipe = useCallback(async () => {
+    abortRef.current = true;
+    stopKeepalive();
+    if (sessionId) {
+      try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
+    }
+    framesRef.current = [];
+    findingsRef.current = [];
+    setFindings([]);
+    setSteps([]);
+    setSummary(null);
+    setCurrentScreenshot(null);
+    setSessionId(null);
+    setEnvdToken(null);
+    sessionRef.current = null;
+    setIsRunning(false);
+    setStatus("idle");
+    toast.success("Sandbox destroyed and local evidence wiped");
+  }, [sessionId, envdToken, getToken, stopKeepalive]);
 
   // Build a WebM video from captured frames using canvas + MediaRecorder
   const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number; reasoning?: string; action?: string }[]): Promise<Blob | null> => {
@@ -816,6 +1026,7 @@ ${stepsHtml}
       case "executing": return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
       case "done": return <CheckCircle2 className="h-3 w-3 text-green-500" />;
       case "error": return <AlertCircle className="h-3 w-3 text-destructive" />;
+      case "blocked": return <ShieldAlert className="h-3 w-3 text-amber-500" />;
       default: return <div className="h-3 w-3 rounded-full bg-muted" />;
     }
   };
@@ -879,14 +1090,71 @@ ${stepsHtml}
             <Input
               value={task}
               onChange={(e) => setTask(e.target.value)}
-              placeholder='e.g. "Research the top 3 AI coding tools and compare them"'
+              placeholder='e.g. "Test target.com for reflected XSS in the search field"'
               className="text-xs"
-              onKeyDown={(e) => { if (e.key === "Enter") startSession(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && engagement.authorized) startSession(); }}
             />
-            <Button onClick={startSession} size="sm" className="gap-1.5 px-4">
+            <Button onClick={() => setShowEngagementForm((v) => !v)} size="sm" variant="outline" className="gap-1.5 px-3">
+              <Shield className="h-3.5 w-3.5" /> Scope
+            </Button>
+            <Button onClick={startSession} size="sm" className="gap-1.5 px-4" disabled={!engagement.authorized}>
               <Play className="h-3.5 w-3.5" /> Start
             </Button>
           </div>
+
+          {showEngagementForm && (
+            <div className="space-y-2 p-3 rounded-md border border-border bg-muted/30">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Engagement name</Label>
+                  <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="Acme Corp Q1 Pentest" className="h-7 text-xs" />
+                </div>
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Type</Label>
+                  <select value={engagement.type} onChange={(e) => setEngagement({ ...engagement, type: e.target.value as EngagementType })} className="h-7 w-full text-xs rounded-md border border-input bg-background px-2">
+                    {Object.entries(ENGAGEMENT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">In-scope hosts (one per line, supports *.example.com)</Label>
+                <Textarea value={scopeText} onChange={(e) => setScopeText(e.target.value)} placeholder="example.com&#10;*.example.com" className="text-[11px] font-mono min-h-[60px]" />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Out-of-scope (overrides in-scope)</Label>
+                <Textarea value={outScopeText} onChange={(e) => setOutScopeText(e.target.value)} placeholder="admin.example.com" className="text-[11px] font-mono min-h-[40px]" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Test intensity</Label>
+                  <select value={engagement.intensity} onChange={(e) => setEngagement({ ...engagement, intensity: e.target.value as IntensityLevel })} className="h-7 w-full text-xs rounded-md border border-input bg-background px-2">
+                    <option value="passive">Passive recon only</option>
+                    <option value="active">Active probing</option>
+                    <option value="exploitation">Exploitation PoC</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5 pt-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[10px]">Scope lock</Label>
+                    <Switch checked={engagement.scopeLockEnabled} onCheckedChange={(v) => setEngagement({ ...engagement, scopeLockEnabled: v })} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[10px]">Allow exploitation</Label>
+                    <Switch checked={engagement.allowExploitation} onCheckedChange={(v) => setEngagement({ ...engagement, allowExploitation: v })} />
+                  </div>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-[11px] text-foreground cursor-pointer pt-1">
+                <input type="checkbox" checked={engagement.authorized} onChange={(e) => setEngagement({ ...engagement, authorized: e.target.checked })} className="mt-0.5" />
+                <span>I confirm I have written authorization to test these targets.</span>
+              </label>
+              {engagement.authorized && (
+                <div className="flex items-center gap-1.5 text-[10px] text-green-500">
+                  <ShieldCheck className="h-3 w-3" /> Authorized engagement ready
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {[
               "Research AI tools and make a comparison table",

@@ -602,7 +602,61 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setSteps([]);
     setSummary(null);
     setCurrentScreenshot(null);
+    setFindings([]);
+    findingsRef.current = [];
   };
+
+  const buildEngagementExport = (): EngagementExport => ({
+    name: engagementRef.current.name || "Untitled engagement",
+    type: engagementRef.current.type,
+    inScope: engagementRef.current.inScope,
+    outOfScope: engagementRef.current.outOfScope,
+    intensity: engagementRef.current.intensity,
+    authorized: engagementRef.current.authorized,
+    task: taskRef.current,
+    startedAt: engagementStartRef.current || new Date().toISOString(),
+    endedAt: new Date().toISOString(),
+  });
+
+  const findingsAsExport = (): FindingExport[] => findingsRef.current.map((f) => ({
+    id: f.id, title: f.title, severity: f.severity, category: f.category,
+    cvssVector: f.cvssVector, cvssScore: f.cvssScore, affectedUrl: f.affectedUrl,
+    description: f.description, reproductionSteps: f.reproductionSteps,
+    remediation: f.remediation, evidenceFrameIndices: f.evidenceFrameIndices,
+    request: f.request, response: f.response, reportedAt: f.reportedAt,
+  }));
+
+  const exportMarkdown = () => {
+    const md = findingsToMarkdown(buildEngagementExport(), findingsAsExport(), summary || "");
+    downloadBlob(md, `bug-bounty-${new Date().toISOString().slice(0, 10)}.md`, "text/markdown");
+    toast.success("Markdown report downloaded");
+  };
+
+  const exportJson = () => {
+    const j = findingsToJson(buildEngagementExport(), findingsAsExport(), summary || "");
+    downloadBlob(j, `bug-bounty-${new Date().toISOString().slice(0, 10)}.json`, "application/json");
+    toast.success("JSON report downloaded");
+  };
+
+  const stopAndWipe = useCallback(async () => {
+    abortRef.current = true;
+    stopKeepalive();
+    if (sessionId) {
+      try { await cuApi("stop_session", { sessionId, envdAccessToken: envdToken }, getToken, 10_000); } catch {}
+    }
+    framesRef.current = [];
+    findingsRef.current = [];
+    setFindings([]);
+    setSteps([]);
+    setSummary(null);
+    setCurrentScreenshot(null);
+    setSessionId(null);
+    setEnvdToken(null);
+    sessionRef.current = null;
+    setIsRunning(false);
+    setStatus("idle");
+    toast.success("Sandbox destroyed and local evidence wiped");
+  }, [sessionId, envdToken, getToken, stopKeepalive]);
 
   // Build a WebM video from captured frames using canvas + MediaRecorder
   const buildVideoFromFrames = useCallback(async (frames: { base64: string; t: number; reasoning?: string; action?: string }[]): Promise<Blob | null> => {

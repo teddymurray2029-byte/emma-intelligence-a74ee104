@@ -26,9 +26,49 @@ interface AgentStep {
   reasoning: string;
   screenshot?: string;
   timestamp: string;
-  status: "pending" | "executing" | "done" | "error";
+  status: "pending" | "executing" | "done" | "error" | "blocked";
   params?: any;
+  guardrail?: string;
 }
+
+type EngagementType = "bug_bounty" | "pentest" | "ctf" | "personal";
+type IntensityLevel = "passive" | "active" | "exploitation";
+
+interface Engagement {
+  name: string;
+  type: EngagementType;
+  inScope: string[];
+  outOfScope: string[];
+  intensity: IntensityLevel;
+  authorized: boolean;
+  allowExploitation: boolean;
+  scopeLockEnabled: boolean;
+}
+
+interface Finding {
+  id: string;
+  title: string;
+  severity: Severity;
+  category: string;
+  cvssVector?: string;
+  cvssScore?: number;
+  affectedUrl?: string;
+  description: string;
+  reproductionSteps: string[];
+  remediation?: string;
+  evidenceFrameIndices: number[];
+  request?: string;
+  response?: string;
+  reportedAt: string;
+  stepId: number;
+}
+
+const ENGAGEMENT_TYPE_LABELS: Record<EngagementType, string> = {
+  bug_bounty: "Bug Bounty",
+  pentest: "Authorized Pentest",
+  ctf: "CTF / Lab",
+  personal: "Personal Target",
+};
 
 type CuApiErrorPayload = {
   error?: string;

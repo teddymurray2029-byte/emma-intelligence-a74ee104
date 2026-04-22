@@ -317,6 +317,29 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     abortRef.current = false;
     taskRef.current = task.trim();
     framesRef.current = [];
+    setFindings([]);
+    findingsRef.current = [];
+    engagementStartRef.current = new Date().toISOString();
+
+    // Parse scope text into engagement
+    const parsedEng: Engagement = {
+      ...engagement,
+      inScope: parseScopeList(scopeText),
+      outOfScope: parseScopeList(outScopeText),
+    };
+    setEngagement(parsedEng);
+    engagementRef.current = parsedEng;
+
+    if (parsedEng.scopeLockEnabled && parsedEng.inScope.length === 0) {
+      toast.error("Scope lock is on but no in-scope hosts defined. Add at least one or disable scope lock.");
+      setStatus("idle");
+      return;
+    }
+    if (!parsedEng.authorized) {
+      toast.error("You must confirm authorization before starting an engagement.");
+      setStatus("idle");
+      return;
+    }
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 

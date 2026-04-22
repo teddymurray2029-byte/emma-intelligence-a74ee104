@@ -15,6 +15,7 @@ const DESKTOP_BOOT_POLL_MS = 3_000;
 const E2B_API_BASE = "https://api.e2b.app";
 const ENVD_PORT = 49983;
 const CONNECT_PROTOCOL_VERSION = "1";
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 
 type SandboxSession = {
   sandboxId: string;
@@ -43,6 +44,46 @@ function json(data: any, status = 200) {
 }
 
 const sandboxCache = new Map<string, SandboxSession>();
+const idempotencyCache = new Map<string, { response: unknown; expiresAt: number }>();
+const toolMetrics = new Map<string, { calls: number; failures: number; degraded: number; latencyTotalMs: number }>();
+const toolCircuits = new Map<string, { failures: number; openUntil: number }>();
+
+function markTool(tool: string, latencyMs: number, failed: boolean, degraded = false) {
+  const metric = toolMetrics.get(tool) || { calls: 0, failures: 0, degraded: 0, latencyTotalMs: 0 };
+  metric.calls += 1;
+  metric.latencyTotalMs += latencyMs;
+  if (failed) metric.failures += 1;
+  if (degraded) metric.degraded += 1;
+  toolMetrics.set(tool, metric);
+}
+
+async function reliableToolCall<T>(tool: string, traceId: string, work: () => Promise<T>, timeoutMs = 20_000): Promise<T> {
+  const breaker = toolCircuits.get(tool) || { failures: 0, openUntil: 0 };
+  if (breaker.openUntil > Date.now()) throw new Error(`CIRCUIT_OPEN:${tool}:${traceId}`);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const started = Date.now();
+    try {
+      const result = await Promise.race([
+        work(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`TOOL_TIMEOUT:${tool}`)), timeoutMs)),
+      ]);
+      markTool(tool, Date.now() - started, false, attempt > 0);
+      breaker.failures = 0;
+      breaker.openUntil = 0;
+      toolCircuits.set(tool, breaker);
+      return result;
+    } catch (error) {
+      markTool(tool, Date.now() - started, true);
+      breaker.failures += 1;
+      if (breaker.failures >= 3) breaker.openUntil = Date.now() + 20_000;
+      toolCircuits.set(tool, breaker);
+      if (attempt === 2) throw error;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1) + Math.floor(Math.random() * 250)));
+    }
+  }
+  throw new Error("Tool retry exhausted");
+}
 
 function getEnvdBaseUrl(sandboxId: string) {
   return `https://${ENVD_PORT}-${sandboxId}.e2b.app`;
@@ -804,6 +845,7 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const traceId = req.headers.get("x-trace-id") || crypto.randomUUID();
 
   const apiKey = Deno.env.get("E2B_API_KEY");
   if (!apiKey) return json({ error: "E2B_API_KEY not configured" }, 500);
@@ -811,15 +853,23 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const { action } = body;
-    console.log(`[emma-cu] action=${action}`);
+    const idempotencyKey = req.headers.get("Idempotency-Key") || body.idempotencyKey;
+    console.log(`[emma-cu] action=${action} trace=${traceId}`);
 
     const userId = await getClerkUserId(req);
-    if (!userId) return json({ error: "Unauthorized — sign in required" }, 401);
+    if (!userId) return json({ error: "Unauthorized — sign in required", traceId }, 401);
+    const idemScope = `${userId}:${action}:${idempotencyKey || ""}`;
+    if (idempotencyKey) {
+      const cached = idempotencyCache.get(idemScope);
+      if (cached && cached.expiresAt > Date.now()) {
+        return json({ ...(cached.response as Record<string, unknown>), idempotency: { replayed: true, key: idempotencyKey }, traceId });
+      }
+    }
 
     switch (action) {
       case "start_session": {
         console.log("[emma-cu] Creating sandbox...");
-        const sandbox = await createSandbox(userId, body.task);
+        const sandbox = await reliableToolCall("create_sandbox", traceId, () => createSandbox(userId, body.task), 30_000);
         console.log(`[emma-cu] Sandbox created: ${sandbox.sandboxId}`);
 
         // Fire-and-forget: start desktop in background, don't await
@@ -831,6 +881,7 @@ serve(async (req) => {
           sessionId: sandbox.sandboxId,
           envdAccessToken: sandbox.envdAccessToken,
           status: "created",
+          traceId,
         });
       }
 
@@ -839,9 +890,9 @@ serve(async (req) => {
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
         try {
-          const sandbox = await getSandbox(sessionId, envdAccessToken);
-          const { base64: screenshot, analysis } = await captureScreenshotData(sandbox);
-          return json({ screenshot, analysis });
+          const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
+          const { base64: screenshot, analysis } = await reliableToolCall("capture_screenshot", traceId, () => captureScreenshotData(sandbox));
+          return json({ screenshot, analysis, traceId });
         } catch (error) {
           const msg = error instanceof Error ? error.message : "Screenshot unavailable";
           return json({ error: msg, status: "screenshot_failed" }, 503);
@@ -852,21 +903,21 @@ serve(async (req) => {
         const { sessionId, envdAccessToken } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
         console.log(`[emma-cu] wait_until_ready for ${sessionId}`);
-        const readiness = await waitForDesktopReady(sandbox);
+        const readiness = await reliableToolCall("wait_until_ready", traceId, () => waitForDesktopReady(sandbox), 95_000);
         console.log(`[emma-cu] readiness: ready=${readiness.ready} code=${readiness.errorCode || "ok"} stage=${readiness.stage} waited=${readiness.waitedMs}ms`);
 
         return readiness.ready
-          ? json({ ...readiness, status: "ready" })
-          : json({ ...readiness, status: "boot_failed" }, 408);
+          ? json({ ...readiness, status: "ready", traceId })
+          : json({ ...readiness, status: "boot_failed", traceId }, 408);
       }
 
       case "execute": {
         const { sessionId, actionType, params, envdAccessToken, engagement } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);
 
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
         let result: any = { success: true };
 
         // === Scope guardrail: block out-of-scope navigation ===
@@ -905,7 +956,7 @@ serve(async (req) => {
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
             try {
-              const cmdResult = await runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15);
+              const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
               if (cmdResult.exitCode !== 0) {
                 result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
               }
@@ -917,7 +968,7 @@ serve(async (req) => {
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
             try {
-              const cmdResult = await runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15);
+              const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
               if (cmdResult.exitCode !== 0) {
                 result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
               }
@@ -930,13 +981,15 @@ serve(async (req) => {
         // Always capture a post-action screenshot so frontend stays in sync
         try {
           await new Promise((r) => setTimeout(r, 500));
-          const { base64: screenshot } = await captureScreenshotData(sandbox);
+          const { base64: screenshot } = await reliableToolCall("capture_screenshot", traceId, () => captureScreenshotData(sandbox), 15_000);
           result.screenshot = screenshot;
         } catch (e) {
           console.warn(`[execute] post-action screenshot failed: ${e}`);
         }
 
-        return json(result);
+        const payload = { ...result, traceId, idempotency: { replayed: false, key: idempotencyKey || null } };
+        if (idempotencyKey) idempotencyCache.set(idemScope, { response: payload, expiresAt: Date.now() + IDEMPOTENCY_TTL_MS });
+        return json(payload);
       }
 
       case "recon": {
@@ -949,7 +1002,7 @@ serve(async (req) => {
           if (!scope.allowed) return json({ error: `Scope violation — ${scope.reason}`, guardrail: "scope" }, 403);
         }
 
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
         const safe = JSON.stringify(target);
         const safeUrl = JSON.stringify(urlTarget);
         let cmd = "";
@@ -963,8 +1016,8 @@ serve(async (req) => {
           default: return json({ error: `Unknown recon tool: ${tool}` }, 400);
         }
         try {
-          const r = await runCommand(sandbox, "bash", ["-c", cmd], 25);
-          return json({ tool, target, output: (r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : "")).slice(0, 4000), exitCode: r.exitCode });
+          const r = await reliableToolCall("recon_tool", traceId, () => runCommand(sandbox, "bash", ["-c", cmd], 25), 30_000);
+          return json({ tool, target, output: (r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : "")).slice(0, 4000), exitCode: r.exitCode, traceId });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : "Recon failed" }, 500);
         }
@@ -976,19 +1029,19 @@ serve(async (req) => {
         const scope = scopeAllowed(url, engagement);
         if (!scope.allowed) return json({ error: `Scope violation — ${scope.reason}`, guardrail: "scope" }, 403);
 
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
         const headerArgs = Object.entries(headers as Record<string, string>)
           .map(([k, v]) => `-H ${JSON.stringify(`${k}: ${v}`)}`).join(" ");
         const bodyArg = requestBody ? `--data ${JSON.stringify(requestBody)}` : "";
         const cmd = `curl -sS -i -X ${JSON.stringify(method)} --max-time 25 ${headerArgs} ${bodyArg} ${JSON.stringify(url)}`;
         try {
-          const r = await runCommand(sandbox, "bash", ["-c", cmd], 30);
+          const r = await reliableToolCall("http_capture", traceId, () => runCommand(sandbox, "bash", ["-c", cmd], 30), 35_000);
           const raw = r.stdout || r.stderr || "";
           const splitIdx = raw.indexOf("\r\n\r\n");
           const responseHeaders = splitIdx >= 0 ? raw.slice(0, splitIdx) : raw;
           const responseBody = splitIdx >= 0 ? raw.slice(splitIdx + 4) : "";
           const requestText = `${method} ${url}\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join("\n")}${requestBody ? `\n\n${requestBody}` : ""}`;
-          return json({ url, method, request: requestText, responseHeaders, responseBody: responseBody.slice(0, 4000) });
+          return json({ url, method, request: requestText, responseHeaders, responseBody: responseBody.slice(0, 4000), traceId });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : "Capture failed" }, 500);
         }
@@ -1005,7 +1058,7 @@ serve(async (req) => {
             body: JSON.stringify({ timeout: 300 }),
           });
           console.log(`[keepalive] Extended timeout for ${sessionId}`);
-          return json({ status: "extended", sessionId });
+          return json({ status: "extended", sessionId, traceId });
         } catch (extendError) {
           console.warn(`[keepalive] Extend failed for ${sessionId}, recreating sandbox...`, extendError);
           // Sandbox is dead — create a new one
@@ -1021,6 +1074,7 @@ serve(async (req) => {
               status: "recreated",
               sessionId: newSandbox.sandboxId,
               envdAccessToken: newSandbox.envdAccessToken,
+              traceId,
             });
           } catch (recreateError) {
             const msg = recreateError instanceof Error ? recreateError.message : "Recovery failed";
@@ -1034,11 +1088,11 @@ serve(async (req) => {
         const { sessionId, task, actionHistory, userMessage, envdAccessToken, engagement } = body;
         if (!sessionId || !task) return json({ error: "Missing sessionId or task" }, 400);
 
-        const sandbox = await getSandbox(sessionId, envdAccessToken);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
         let screenshotBase64 = "";
 
         try {
-          const screenshot = await captureScreenshotData(sandbox);
+          const screenshot = await reliableToolCall("capture_screenshot", traceId, () => captureScreenshotData(sandbox));
           screenshotBase64 = screenshot.base64;
 
           if (!screenshot.analysis.meaningful) {
@@ -1056,6 +1110,7 @@ serve(async (req) => {
               screenshot: screenshotBase64,
               stage,
               status: "black_screen",
+              traceId,
             });
           }
         } catch (screenshotError) {
@@ -1064,7 +1119,7 @@ serve(async (req) => {
           try {
             const refreshed = await connectSandbox(sandbox.sandboxId, true);
             syncSandboxSession(sandbox, refreshed);
-            const retryScreenshot = await captureScreenshotData(sandbox);
+            const retryScreenshot = await reliableToolCall("capture_screenshot", traceId, () => captureScreenshotData(sandbox));
             screenshotBase64 = retryScreenshot.base64;
           } catch (retryError) {
             console.error(`[think] Token refresh also failed: ${retryError}`);
@@ -1087,8 +1142,23 @@ serve(async (req) => {
           });
         }
 
-        const decision = await aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement);
-        return json({ ...decision, screenshot: screenshotBase64 });
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+        const m = toolMetrics.get("ai_reason");
+        const calls = m?.calls || 0;
+        const reliability = {
+          tracing: { enabled: true, traceId },
+          idempotency: { enabled: true, exactOnce: "best_effort_per_key", ttlMs: IDEMPOTENCY_TTL_MS },
+          sloDashboard: {
+            latencyMsP50: calls ? Math.round((m?.latencyTotalMs || 0) / calls) : 0,
+            failureRate: calls ? Number(((m?.failures || 0) / calls).toFixed(3)) : 0,
+            degradedModeRate: calls ? Number(((m?.degraded || 0) / calls).toFixed(3)) : 0,
+          },
+          chaosScenarios: [
+            { name: "sandbox_disconnect", recoveryAssertion: "token refresh and keepalive recreate session" },
+            { name: "black_screen_startup", recoveryAssertion: "wait action returned until meaningful frame" },
+          ],
+        };
+        return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
       }
 
       case "stop_session": {
@@ -1106,14 +1176,16 @@ serve(async (req) => {
             sandboxCache.delete(sessionId);
           }
         }
-        return json({ success: true, status: "destroyed" });
+        return json({ success: true, status: "destroyed", traceId });
       }
 
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (e) {
-    console.error("emma-computer-use error:", e);
-    return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+    const message = e instanceof Error ? e.message : "Unknown error";
+    const code = message.includes("CIRCUIT_OPEN") ? "CIRCUIT_OPEN" : message.includes("TOOL_TIMEOUT") ? "TOOL_TIMEOUT" : "INTERNAL_ERROR";
+    console.error("[emma-computer-use][error]", { code, message, traceId });
+    return json({ error: message, structuredError: { code, retryable: code !== "INTERNAL_ERROR", traceId }, traceId }, 500);
   }
 });

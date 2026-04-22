@@ -10,7 +10,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:safety": "vitest run src/test/security/**/*.test.ts",
+    "ci:check": "npm run test:coverage && npm run test:safety"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.3",

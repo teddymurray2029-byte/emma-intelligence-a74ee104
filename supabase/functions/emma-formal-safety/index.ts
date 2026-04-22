@@ -27,6 +27,19 @@ interface TemporalProperty {
   verify: (history: any[]) => { satisfied: boolean; counterexample?: string };
 }
 
+interface ActionPolicy {
+  action: string;
+  allowedTools: string[];
+  allowedArgs: Record<string, { required: boolean; validator: (value: unknown) => boolean; description: string }>;
+  contextConstraints: Array<{ name: string; verify: (context: Record<string, unknown>) => boolean; violation: string }>;
+}
+
+interface PreActionDecision {
+  allowed: boolean;
+  proofs: Array<{ check: string; passed: boolean; detail: string }>;
+  deniedReason?: string;
+}
+
 // ---- INVARIANT CHECKS (deterministic, no LLM) ----
 
 const RESOURCE_INVARIANTS: InvariantCheck[] = [
@@ -156,6 +169,136 @@ const TEMPORAL_PROPERTIES: TemporalProperty[] = [
   },
 ];
 
+const ACTION_POLICIES: ActionPolicy[] = [
+  {
+    action: "orchestrator.run_loop",
+    allowedTools: ["ai_gateway.chat_completion", "memory.write", "world_model.update"],
+    allowedArgs: {
+      input: {
+        required: true,
+        validator: (value) => typeof value === "string" && value.length > 0 && value.length <= 20000,
+        description: "Input must be a non-empty string under 20k chars",
+      },
+      userId: {
+        required: true,
+        validator: (value) => typeof value === "string" && value.length >= 8,
+        description: "User id must be a stable non-empty identifier",
+      },
+      loopId: {
+        required: true,
+        validator: (value) => typeof value === "string" && value.length >= 8,
+        description: "Loop id must be present for auditability",
+      },
+    },
+    contextConstraints: [
+      {
+        name: "authenticated_user_only",
+        verify: (context) => context.authenticated === true,
+        violation: "Action requires authenticated user context",
+      },
+      {
+        name: "service_role_available",
+        verify: (context) => context.supabaseServiceRoleConfigured === true,
+        violation: "Action requires Supabase service role configuration",
+      },
+    ],
+  },
+];
+
+function getActionPolicy(actionName: string): ActionPolicy | undefined {
+  return ACTION_POLICIES.find((p) => p.action === actionName);
+}
+
+function verifyActionAgainstPolicy(
+  policy: ActionPolicy,
+  tool: string,
+  args: Record<string, unknown>,
+  context: Record<string, unknown>,
+): PreActionDecision {
+  const proofs: Array<{ check: string; passed: boolean; detail: string }> = [];
+  const toolAllowed = policy.allowedTools.includes(tool);
+  proofs.push({
+    check: "allowed_tool",
+    passed: toolAllowed,
+    detail: toolAllowed ? `Tool ${tool} is explicitly allowed` : `Tool ${tool} is not in allow-list`,
+  });
+
+  for (const [argName, rule] of Object.entries(policy.allowedArgs)) {
+    const value = args[argName];
+    const present = value !== undefined && value !== null;
+    const passed = rule.required ? present && rule.validator(value) : !present || rule.validator(value);
+    proofs.push({
+      check: `arg_${argName}`,
+      passed,
+      detail: passed ? `Argument ${argName} satisfies: ${rule.description}` : `Argument ${argName} failed: ${rule.description}`,
+    });
+  }
+
+  for (const constraint of policy.contextConstraints) {
+    const passed = constraint.verify(context);
+    proofs.push({
+      check: `ctx_${constraint.name}`,
+      passed,
+      detail: passed ? `Context constraint satisfied: ${constraint.name}` : constraint.violation,
+    });
+  }
+
+  const allPassed = proofs.every((p) => p.passed);
+  return {
+    allowed: allPassed,
+    proofs,
+    deniedReason: allPassed ? undefined : "Policy compliance is not provable with deterministic checks",
+  };
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function appendImmutableSafetyAuditRecord(
+  supabase: any,
+  userId: string,
+  payload: Record<string, unknown>,
+): Promise<{ auditHash: string; signature: string; prevHash: string | null }> {
+  const signingKey = Deno.env.get("SAFETY_AUDIT_SIGNING_KEY");
+  if (!signingKey) {
+    throw new Error("Verifier unavailable: SAFETY_AUDIT_SIGNING_KEY is not configured");
+  }
+
+  const { data: latestRecord } = await supabase
+    .from("safety_verifications")
+    .select("formal_proofs, created_at")
+    .eq("user_id", userId)
+    .eq("verification_type", "immutable_safety_audit")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const prevHash = latestRecord?.formal_proofs?.auditHash ?? null;
+  const record = {
+    userId,
+    createdAt: new Date().toISOString(),
+    prevHash,
+    payload,
+  };
+  const canonical = JSON.stringify(record);
+  const auditHash = await sha256Hex(canonical);
+  const signature = await sha256Hex(`${auditHash}:${signingKey}`);
+
+  await supabase.from("safety_verifications").insert({
+    user_id: userId,
+    verification_type: "immutable_safety_audit",
+    passed: true,
+    risk_score: 0,
+    formal_proofs: { ...record, auditHash, signature },
+    violations: [],
+  });
+
+  return { auditHash, signature, prevHash };
+}
+
 // ---- FORMAL PROOF GENERATION ----
 function generateFormalProof(check: InvariantCheck, result: { passed: boolean; violation?: string }): any {
   return {
@@ -189,7 +332,7 @@ serve(async (req) => {
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const { action, content, history } = await req.json();
+    const { action, content, history, proposedAction, tool, args, context, postState } = await req.json();
 
     if (action === "verify_invariants") {
       // Run all deterministic invariant checks
@@ -246,6 +389,102 @@ serve(async (req) => {
         allSatisfied,
         properties: results,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "verify_action_policy") {
+      const policyName = String(proposedAction || "");
+      const policy = getActionPolicy(policyName);
+      if (!policy) {
+        return new Response(JSON.stringify({
+          allowed: false,
+          deniedReason: `No explicit policy registered for action: ${policyName}`,
+          failClosed: true,
+        }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const decision = verifyActionAgainstPolicy(
+        policy,
+        String(tool || ""),
+        (args || {}) as Record<string, unknown>,
+        (context || {}) as Record<string, unknown>,
+      );
+
+      await supabase.from("safety_verifications").insert({
+        user_id: userId,
+        verification_type: "pre_action_policy_verification",
+        passed: decision.allowed,
+        violations: decision.proofs.filter((p) => !p.passed),
+        formal_proofs: decision.proofs,
+        risk_score: decision.allowed ? 0 : 85,
+      });
+
+      if (!decision.allowed) {
+        return new Response(JSON.stringify({ ...decision, failClosed: true }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const audit = await appendImmutableSafetyAuditRecord(supabase, userId, {
+        stage: "pre_action",
+        decision: "allow",
+        proposedAction: policyName,
+        tool: String(tool || ""),
+        args: args || {},
+        proofs: decision.proofs,
+      });
+
+      return new Response(JSON.stringify({ ...decision, audit }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "verify_post_conditions") {
+      const resultText = typeof content === "string" ? content : JSON.stringify(content || "");
+      const postChecks = [
+        {
+          name: "tool_result_non_empty",
+          passed: resultText.trim().length > 0,
+          violation: "Tool result must not be empty",
+        },
+        {
+          name: "state_transition_bounded",
+          passed: JSON.stringify(postState || {}).length <= 200000,
+          violation: "State transition payload too large to be auditable",
+        },
+        {
+          name: "state_transition_has_version",
+          passed: typeof postState?.version === "number" || typeof postState?.worldModelVersion === "number",
+          violation: "State transition missing an explicit version marker",
+        },
+      ];
+      const passed = postChecks.every((c) => c.passed);
+
+      await supabase.from("safety_verifications").insert({
+        user_id: userId,
+        verification_type: "post_condition_verification",
+        passed,
+        violations: postChecks.filter((c) => !c.passed),
+        formal_proofs: postChecks,
+        risk_score: passed ? 0 : 70,
+      });
+
+      const audit = await appendImmutableSafetyAuditRecord(supabase, userId, {
+        stage: "post_action",
+        decision: passed ? "accept" : "reject",
+        postChecks,
+      });
+
+      if (!passed) {
+        return new Response(JSON.stringify({ passed, postChecks, audit, failClosed: true }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ passed, postChecks, audit }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     if (action === "full_verification") {

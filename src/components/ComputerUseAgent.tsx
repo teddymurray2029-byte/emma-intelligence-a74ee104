@@ -2,13 +2,20 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Play, Square, Send, Monitor, Camera, Loader2, AlertCircle, CheckCircle2,
   Eye, MousePointer, RotateCcw, Timer,
-  Keyboard, Globe, FileDown,
+  Keyboard, Globe, FileDown, Shield, ShieldAlert, ShieldCheck, Bug, FileJson, FileText, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Progress } from "@/components/ui/progress";
+import { scoreFromVector, severityFromScore, SEVERITY_COLORS, type Severity } from "@/lib/cvss";
+import { parseScopeList, isUrlInScope } from "@/lib/scope";
+import { findingsToMarkdown, findingsToJson, downloadBlob, type FindingExport, type EngagementExport } from "@/lib/report-export";
 
 const BOOT_TIMEOUT_SECONDS = 90;
 const CU_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-computer-use`;

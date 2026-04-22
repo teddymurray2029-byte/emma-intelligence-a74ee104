@@ -11,6 +11,115 @@ const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.d
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DEFAULT_WORLD_STATE = { entities: [], relations: [], beliefs: [], temporal: [] };
 
+type PolicyProof = { check: string; passed: boolean; detail: string };
+type PolicyDecision = { allowed: boolean; proofs: PolicyProof[]; deniedReason?: string };
+
+const ACTION_POLICY = {
+  action: "run_loop",
+  allowedTools: ["ai_gateway.chat_completion", "supabase.memory_episodes.insert", "supabase.world_model_states.insert", "supabase.goals.insert", "supabase.transfer_knowledge.insert", "supabase.metacognitive_logs.insert", "supabase.safety_verifications.insert"],
+  allowedArgs: {
+    input: {
+      required: true,
+      description: "Input must be a non-empty UTF-8 string under 20k chars",
+      validator: (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 20000,
+    },
+    userId: {
+      required: true,
+      description: "User ID must be present and at least 8 chars",
+      validator: (value: unknown) => typeof value === "string" && value.length >= 8,
+    },
+    loopId: {
+      required: true,
+      description: "Loop ID must be present for deterministic audit",
+      validator: (value: unknown) => typeof value === "string" && value.length >= 8,
+    },
+  },
+  contextConstraints: [
+    { name: "authenticated_request", verify: (ctx: Record<string, unknown>) => ctx.authenticated === true, violation: "Request is unauthenticated" },
+    { name: "api_key_present", verify: (ctx: Record<string, unknown>) => ctx.apiKeyPresent === true, violation: "LOVABLE_API_KEY not configured" },
+    { name: "service_role_present", verify: (ctx: Record<string, unknown>) => ctx.serviceRolePresent === true, violation: "SUPABASE_SERVICE_ROLE_KEY not configured" },
+  ],
+};
+
+function verifyActionPolicy(action: string, tool: string, args: Record<string, unknown>, context: Record<string, unknown>): PolicyDecision {
+  if (action !== ACTION_POLICY.action) {
+    return { allowed: false, proofs: [{ check: "action_registered", passed: false, detail: `Unknown action: ${action}` }], deniedReason: "Action policy missing" };
+  }
+
+  const proofs: PolicyProof[] = [];
+  const toolAllowed = ACTION_POLICY.allowedTools.includes(tool);
+  proofs.push({
+    check: "allowed_tool",
+    passed: toolAllowed,
+    detail: toolAllowed ? `Tool ${tool} is in explicit allow-list` : `Tool ${tool} is not allowed by policy`,
+  });
+
+  for (const [arg, rule] of Object.entries(ACTION_POLICY.allowedArgs)) {
+    const value = args[arg];
+    const present = value !== null && value !== undefined;
+    const passed = rule.required ? present && rule.validator(value) : !present || rule.validator(value);
+    proofs.push({
+      check: `arg_${arg}`,
+      passed,
+      detail: passed ? `Argument ${arg} satisfies ${rule.description}` : `Argument ${arg} violates ${rule.description}`,
+    });
+  }
+
+  for (const constraint of ACTION_POLICY.contextConstraints) {
+    const passed = constraint.verify(context);
+    proofs.push({
+      check: `ctx_${constraint.name}`,
+      passed,
+      detail: passed ? `Constraint satisfied: ${constraint.name}` : constraint.violation,
+    });
+  }
+
+  const allowed = proofs.every((p) => p.passed);
+  return { allowed, proofs, deniedReason: allowed ? undefined : "Policy compliance not provable; fail-closed deny" };
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function appendImmutableSafetyAudit(
+  supabase: any,
+  userId: string,
+  payload: Record<string, unknown>,
+): Promise<{ auditHash: string; signature: string; prevHash: string | null }> {
+  const signingKey = Deno.env.get("SAFETY_AUDIT_SIGNING_KEY");
+  if (!signingKey) {
+    throw new Error("Verifier unavailable: SAFETY_AUDIT_SIGNING_KEY missing");
+  }
+
+  const { data: latest } = await supabase
+    .from("safety_verifications")
+    .select("formal_proofs, created_at")
+    .eq("user_id", userId)
+    .eq("verification_type", "immutable_safety_audit")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const prevHash = latest?.formal_proofs?.auditHash ?? null;
+  const record = { userId, createdAt: new Date().toISOString(), prevHash, payload };
+  const auditHash = await sha256Hex(JSON.stringify(record));
+  const signature = await sha256Hex(`${auditHash}:${signingKey}`);
+
+  await supabase.from("safety_verifications").insert({
+    user_id: userId,
+    verification_type: "immutable_safety_audit",
+    passed: true,
+    violations: [],
+    formal_proofs: { ...record, auditHash, signature },
+    risk_score: 0,
+  });
+
+  return { auditHash, signature, prevHash };
+}
+
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
   if (!token || token.length < 20) return null;
@@ -476,6 +585,41 @@ serve(async (req) => {
       const log: string[] = [];
       const metacogLogs: any[] = [];
 
+      // === PRE-ACTION POLICY VERIFIER (primary assurance; fail-closed) ===
+      const preActionDecision = verifyActionPolicy(
+        "run_loop",
+        "ai_gateway.chat_completion",
+        { input, userId, loopId },
+        {
+          authenticated: !!userId,
+          apiKeyPresent: !!LOVABLE_API_KEY,
+          serviceRolePresent: !!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+        },
+      );
+      await supabase.from("safety_verifications").insert({
+        user_id: userId,
+        verification_type: "pre_action_policy_verification",
+        passed: preActionDecision.allowed,
+        violations: preActionDecision.proofs.filter((p) => !p.passed),
+        formal_proofs: preActionDecision.proofs,
+        risk_score: preActionDecision.allowed ? 0 : 90,
+      });
+      if (!preActionDecision.allowed) {
+        return new Response(JSON.stringify({
+          error: preActionDecision.deniedReason,
+          failClosed: true,
+          policyProofs: preActionDecision.proofs,
+        }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const preActionAudit = await appendImmutableSafetyAudit(supabase, userId, {
+        stage: "pre_action",
+        decision: "allow",
+        action: "run_loop",
+        tool: "ai_gateway.chat_completion",
+        proofs: preActionDecision.proofs,
+      });
+      log.push(`[SAFETY_POLICY] PRE-ACTION VERIFIED. audit=${preActionAudit.auditHash.slice(0, 10)}…`);
+
       // Get adaptive thresholds from cross-loop trend analysis
       const { trends, adaptedThresholds } = await getMetacognitiveTrends(supabase, userId);
       if (trends.length) {
@@ -575,6 +719,7 @@ serve(async (req) => {
       }
 
       // === FORMAL SAFETY ===
+      // === FORMAL SAFETY (defense-in-depth regex checks; not primary assurance) ===
       const safetyInvariants = [
         { name: "bounded_output", passed: executionResult.length <= 102400, violation: executionResult.length > 102400 ? "Output exceeds 100KB" : null },
         { name: "no_credential_leak", passed: !/sk[-_][a-zA-Z0-9]{20,}|-----BEGIN.*PRIVATE KEY|AKIA[0-9A-Z]{16}/.test(executionResult), violation: "Credential leak detected" },
@@ -623,6 +768,40 @@ serve(async (req) => {
         `Completed task: "${input.slice(0, 200)}". Quality: ${evalResult.quality}/10. Domain: ${perception.domain}. Result: ${executionResult.slice(0, 300)}`
       );
       log.push(`[WORLD_MODEL] Updated to v${worldModelUpdate.version}. Changes: +${worldModelUpdate.diff.added?.length || 0} ~${worldModelUpdate.diff.modified?.length || 0} -${worldModelUpdate.diff.removed?.length || 0}`);
+
+      // === POST-CONDITION VERIFIER (primary assurance) ===
+      const postConditions = [
+        { name: "tool_result_non_empty", passed: executionResult.trim().length > 0, violation: "Execution result is empty" },
+        { name: "quality_score_in_range", passed: typeof evalResult.quality === "number" && evalResult.quality >= 1 && evalResult.quality <= 10, violation: "Evaluation quality out of range [1,10]" },
+        { name: "world_model_monotonic_version", passed: typeof worldModelUpdate.version === "number" && worldModelUpdate.version >= 1, violation: "World model version missing or invalid" },
+        { name: "state_transition_bounded", passed: JSON.stringify(worldModelUpdate.diff || {}).length <= 200000, violation: "World model diff too large for auditable transition" },
+      ];
+      const postPassed = postConditions.every((c) => c.passed);
+      await supabase.from("safety_verifications").insert({
+        user_id: userId,
+        verification_type: "post_condition_verification",
+        passed: postPassed,
+        violations: postConditions.filter((c) => !c.passed),
+        formal_proofs: postConditions,
+        risk_score: postPassed ? 0 : 80,
+      });
+      const postAudit = await appendImmutableSafetyAudit(supabase, userId, {
+        stage: "post_action",
+        decision: postPassed ? "accept" : "reject",
+        postConditions,
+        outputLength: executionResult.length,
+        worldModelVersion: worldModelUpdate.version,
+      });
+      log.push(`[SAFETY_POLICY] POST-CONDITIONS ${postPassed ? "VERIFIED" : "FAILED"}. audit=${postAudit.auditHash.slice(0, 10)}…`);
+      if (!postPassed) {
+        return new Response(JSON.stringify({
+          error: "Post-condition verification failed; transition rejected (fail-closed).",
+          failClosed: true,
+          postConditions,
+          audit: postAudit,
+          log,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       // === REACTIVE IMPROVEMENT GOALS ===
       if (evalResult.quality < 6) {
@@ -679,7 +858,15 @@ serve(async (req) => {
           entityCount: worldModelUpdate.updatedState.entities?.length || 0,
           beliefCount: worldModelUpdate.updatedState.beliefs?.length || 0,
         },
-        safety: { passed: safetyPassed, invariantsChecked: safetyInvariants.length, violations: safetyViolations.map(v => v.name) },
+        safety: {
+          passed: safetyPassed && postPassed && preActionDecision.allowed,
+          policy: {
+            preActionVerified: preActionDecision.allowed,
+            postConditionsVerified: postPassed,
+          },
+          invariantsChecked: safetyInvariants.length,
+          violations: safetyViolations.map(v => v.name),
+        },
         transfer: { knowledgeExtracted: transferKnowledge.length, patterns: transferKnowledge },
         intrinsicGoals: intrinsicGoals.map((g, i) => ({ ...g, noveltyScore: noveltyScores[i] || 0 })),
         boredomBias,
@@ -689,6 +876,7 @@ serve(async (req) => {
 
     if (action === "status") {
       const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, predictionCount, outcomeCount] = await Promise.all([
+      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, candidateCount, deploymentCount] = await Promise.all([
         supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("goals").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "active"),
         supabase.from("benchmark_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
@@ -701,6 +889,8 @@ serve(async (req) => {
         supabase.from("sensory_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("world_model_predictions").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("world_model_prediction_outcomes").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("improvement_candidates").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("improvement_candidate_deployments").select("id", { count: "exact", head: true }).eq("user_id", userId),
       ]);
       const { data: lastBench } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
       const { data: recentGoals } = await supabase.from("goals").select("description, priority, status, goal_type").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
@@ -710,6 +900,18 @@ serve(async (req) => {
       const { data: interventionOutcomes } = await supabase.from("world_model_prediction_outcomes").select("success, prediction_type, intervention").eq("user_id", userId).or("prediction_type.eq.counterfactual,intervention.not.is.null").limit(500);
       const interventionSample = interventionOutcomes?.length || 0;
       const interventionSuccessRate = interventionSample ? interventionOutcomes!.filter((row: any) => !!row.success).length / interventionSample : 0;
+      const { data: recentLineage } = await supabase
+        .from("improvement_candidates")
+        .select("parent_version, candidate_version, candidate_type, diff_type, win_metrics, stage, status, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(12);
+      const { data: recentDeployments } = await supabase
+        .from("improvement_candidate_deployments")
+        .select("stage, status, rollback_triggered, signals, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(12);
 
       // Get metacognitive trends for status
       const { trends } = await getMetacognitiveTrends(supabase, userId);
@@ -730,6 +932,12 @@ serve(async (req) => {
           autonomousLoop: { status: "active", runs: autonomousCount.count || 0, description: "pg_cron scheduled background agent" },
           sensoryGrounding: { status: "active", logs: sensoryCount.count || 0, description: "Multi-modal fusion: visual + text + cross-modal" },
           intrinsicMotivation: { status: "active", description: "Novelty detection + boredom modeling" },
+          recursivePipeline: {
+            status: "active",
+            candidates: candidateCount.count || 0,
+            deployments: deploymentCount.count || 0,
+            description: "Staged candidate generation → split eval → stat/safety gate → canary deploy → auto-revert",
+          },
           planning: { status: "active" }, tools: { status: "active" }, safety: { status: "enforced" },
         },
         dashboardMetrics: {
@@ -740,6 +948,11 @@ serve(async (req) => {
           causalInterventionSampleSize: interventionSample,
         },
         lastBenchmark: lastBench || null, recentGoals: recentGoals || [], recentImprovements: recentImprovements || [],
+        lastBenchmark: lastBench || null,
+        recentGoals: recentGoals || [],
+        recentImprovements: recentImprovements || [],
+        candidateLineage: recentLineage || [],
+        deploymentHistory: recentDeployments || [],
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

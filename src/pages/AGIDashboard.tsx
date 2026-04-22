@@ -34,6 +34,16 @@ interface SystemStatusData {
   lastBenchmark: any;
   recentGoals: any[];
   recentImprovements: any[];
+  candidateLineage?: {
+    parent_version: number;
+    candidate_version: number;
+    candidate_type: string;
+    diff_type: string;
+    stage: string;
+    status: string;
+    win_metrics?: { significantWin?: boolean; noSafetyRegression?: boolean; gatePassed?: boolean };
+    created_at: string;
+  }[];
 }
 
 interface HealthData {
@@ -273,6 +283,30 @@ export default function AGIDashboard() {
                     </div>
                   </div>
                 )}
+
+
+                {systemStatus?.candidateLineage?.length ? (
+                  <div className="emma-surface-elevated emma-glow-border rounded-xl p-5">
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
+                      <GitBranch className="h-4 w-4 text-accent" />
+                      Improvement Lineage
+                    </h3>
+                    <div className="space-y-2">
+                      {systemStatus.candidateLineage.slice(0, 8).map((node, i) => (
+                        <div key={`${node.candidate_version}-${i}`} className="bg-secondary/50 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-foreground font-medium">v{node.parent_version} → v{node.candidate_version} · {node.candidate_type}</p>
+                            <StatusBadge status={node.status === "deployed" ? "active" : node.status === "rejected" ? "critical" : "degraded"} />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">diff: {node.diff_type} · stage: {node.stage}</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            win: {node.win_metrics?.significantWin ? "yes" : "no"} · safety: {node.win_metrics?.noSafetyRegression ? "ok" : "regressed"} · gate: {node.win_metrics?.gatePassed ? "pass" : "fail"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {/* Completion Assessment */}
                 <div className="emma-surface-elevated emma-glow-border rounded-xl p-5">

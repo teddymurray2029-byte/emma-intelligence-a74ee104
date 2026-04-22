@@ -570,7 +570,7 @@ serve(async (req) => {
     }
 
     if (action === "status") {
-      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount] = await Promise.all([
+      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, candidateCount, deploymentCount] = await Promise.all([
         supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("goals").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "active"),
         supabase.from("benchmark_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
@@ -581,11 +581,25 @@ serve(async (req) => {
         supabase.from("transfer_knowledge").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("autonomous_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("sensory_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("improvement_candidates").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("improvement_candidate_deployments").select("id", { count: "exact", head: true }).eq("user_id", userId),
       ]);
       const { data: lastBench } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
       const { data: recentGoals } = await supabase.from("goals").select("description, priority, status, goal_type").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: recentImprovements } = await supabase.from("improvement_logs").select("improvement_type, description, before_score, after_score, delta, accepted, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: latestWorldModel } = await supabase.from("world_model_states").select("version, created_at").eq("user_id", userId).order("version", { ascending: false }).limit(1).single();
+      const { data: recentLineage } = await supabase
+        .from("improvement_candidates")
+        .select("parent_version, candidate_version, candidate_type, diff_type, win_metrics, stage, status, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(12);
+      const { data: recentDeployments } = await supabase
+        .from("improvement_candidate_deployments")
+        .select("stage, status, rollback_triggered, signals, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(12);
 
       // Get metacognitive trends for status
       const { trends } = await getMetacognitiveTrends(supabase, userId);
@@ -605,9 +619,19 @@ serve(async (req) => {
           autonomousLoop: { status: "active", runs: autonomousCount.count || 0, description: "pg_cron scheduled background agent" },
           sensoryGrounding: { status: "active", logs: sensoryCount.count || 0, description: "Multi-modal fusion: visual + text + cross-modal" },
           intrinsicMotivation: { status: "active", description: "Novelty detection + boredom modeling" },
+          recursivePipeline: {
+            status: "active",
+            candidates: candidateCount.count || 0,
+            deployments: deploymentCount.count || 0,
+            description: "Staged candidate generation → split eval → stat/safety gate → canary deploy → auto-revert",
+          },
           planning: { status: "active" }, tools: { status: "active" }, safety: { status: "enforced" },
         },
-        lastBenchmark: lastBench || null, recentGoals: recentGoals || [], recentImprovements: recentImprovements || [],
+        lastBenchmark: lastBench || null,
+        recentGoals: recentGoals || [],
+        recentImprovements: recentImprovements || [],
+        candidateLineage: recentLineage || [],
+        deploymentHistory: recentDeployments || [],
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

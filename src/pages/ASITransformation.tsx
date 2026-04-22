@@ -634,7 +634,7 @@ export default function ASITransformationDashboard() {
                     )}
 
                     {results.analyze && (
-                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="emma-surface-elevated rounded-xl p-4">
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="emma-surface-elevated rounded-xl p-4 space-y-3">
                         <p className="text-[10px] font-mono text-accent mb-2">IMPROVEMENT PROPOSAL</p>
                         <p className="text-xs text-foreground mb-2">{results.analyze.proposal?.proposal}</p>
                         <p className="text-[10px] text-green-400">Expected: {results.analyze.proposal?.expectedImpact}</p>
@@ -642,6 +642,25 @@ export default function ASITransformationDashboard() {
                         <div className="bg-secondary/50 rounded-lg p-2 mt-2">
                           <p className="text-[10px] font-mono text-green-400">+ {results.analyze.proposal?.newPromptFragment?.slice(0, 300)}</p>
                         </div>
+
+                        {results.analyze.pipeline && (
+                          <div className="bg-secondary/40 rounded-lg p-3 space-y-1">
+                            <p className="text-[10px] font-mono text-primary">STAGED PIPELINE</p>
+                            <p className="text-[10px] text-muted-foreground">1) candidates: {results.analyze.pipeline.stage1_generateCandidates?.candidateCount || 0}</p>
+                            <p className="text-[10px] text-muted-foreground">2) split eval: train/validation/holdout completed</p>
+                            <p className="text-[10px] text-muted-foreground">3) stat+safety gate: {results.analyze.pipeline.stage3_statsAndSafetyGate?.gatePassed ? "PASS" : "FAIL"}</p>
+                            <p className="text-[10px] text-muted-foreground">4) canary: {results.analyze.pipeline.stage4_canary?.status || "blocked"}</p>
+                            <p className="text-[10px] text-muted-foreground">5) auto-revert: {results.analyze.pipeline.stage5_autoRevert?.enabled ? "enabled" : "disabled"}</p>
+                          </div>
+                        )}
+
+                        {results.analyze.lineage && (
+                          <div className="bg-secondary/40 rounded-lg p-3">
+                            <p className="text-[10px] font-mono text-accent mb-1">LINEAGE NODE</p>
+                            <p className="text-[10px] text-muted-foreground">v{results.analyze.lineage.parent_version} → v{results.analyze.lineage.candidate_version} · {results.analyze.lineage.candidate_type} · {results.analyze.lineage.diff_type}</p>
+                            <p className="text-[10px] text-muted-foreground">win={results.analyze.lineage.win_metrics?.significantWin ? "yes" : "no"} safety={results.analyze.lineage.win_metrics?.noSafetyRegression ? "ok" : "regressed"}</p>
+                          </div>
+                        )}
                       </motion.div>
                     )}
                   </div>

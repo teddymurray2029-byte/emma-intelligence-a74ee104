@@ -467,6 +467,29 @@ async function readSandboxFile(sandbox: SandboxSession, path: string): Promise<U
   }
 }
 
+async function writeSandboxFile(sandbox: SandboxSession, path: string, content: string): Promise<void> {
+  const attempt = async () => {
+    const form = new FormData();
+    form.append("file", new Blob([content], { type: "application/octet-stream" }), path.split("/").pop() || "file");
+    const response = await fetch(`${getEnvdBaseUrl(sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`, {
+      method: "POST",
+      headers: { "X-Access-Token": sandbox.envdAccessToken },
+      body: form,
+    });
+    if (!response.ok) {
+      throw new Error(`E2B file upload failed [${response.status}]: ${await response.text()}`);
+    }
+  };
+  try {
+    await attempt();
+  } catch (error) {
+    if (!isEnvdAuthError(error)) throw error;
+    const refreshed = await connectSandbox(sandbox.sandboxId, true);
+    syncSandboxSession(sandbox, refreshed);
+    await attempt();
+  }
+}
+
 async function getSandbox(sandboxId: string, envdAccessToken?: string | null): Promise<SandboxSession> {
   if (envdAccessToken) {
     const cached = sandboxCache.get(sandboxId);

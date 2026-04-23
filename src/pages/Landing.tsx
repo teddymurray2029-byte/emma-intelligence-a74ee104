@@ -396,7 +396,7 @@ export default function Landing() {
         open={paywallOpen}
         onClose={() => setPaywallOpen(false)}
         onPaid={() => { setPaywallOpen(false); navigate("/app"); }}
-        userEmail={user?.primaryEmailAddress?.emailAddress}
+        userEmail={(user as any)?.email}
         getToken={getToken}
       />
     </div>

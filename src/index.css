@@ -2,72 +2,123 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 @import 'highlight.js/styles/github-dark.css';
 
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 20% 92%;
+    /* ─── Core surface palette (deep ink with cool teal undertone) ─── */
+    --background: 224 47% 5%;
+    --foreground: 210 25% 94%;
 
-    --card: 222 40% 9%;
-    --card-foreground: 210 20% 92%;
+    --card: 224 40% 8%;
+    --card-foreground: 210 25% 94%;
 
-    --popover: 222 40% 9%;
-    --popover-foreground: 210 20% 92%;
+    --popover: 224 40% 7%;
+    --popover-foreground: 210 25% 94%;
 
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 6%;
+    /* Primary: vivid azure with slightly higher chroma */
+    --primary: 217 95% 62%;
+    --primary-foreground: 224 47% 5%;
+    --primary-glow: 210 100% 70%;
 
-    --secondary: 222 30% 14%;
-    --secondary-foreground: 210 20% 85%;
+    --secondary: 224 28% 13%;
+    --secondary-foreground: 210 22% 88%;
 
-    --muted: 222 25% 12%;
-    --muted-foreground: 215 15% 48%;
+    --muted: 224 24% 11%;
+    --muted-foreground: 215 16% 56%;
 
-    --accent: 35 90% 55%;
-    --accent-foreground: 222 47% 6%;
+    /* Accent: warm amber, slightly desaturated for harmony */
+    --accent: 35 92% 58%;
+    --accent-foreground: 224 47% 5%;
 
-    --destructive: 0 70% 55%;
+    --success: 142 70% 45%;
+    --success-foreground: 224 47% 5%;
+    --warning: 38 95% 55%;
+    --warning-foreground: 224 47% 5%;
+    --destructive: 0 72% 56%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 222 20% 16%;
-    --input: 222 25% 14%;
-    --ring: 217 91% 60%;
+    --border: 224 22% 15%;
+    --input: 224 24% 13%;
+    --ring: 217 95% 62%;
 
     --radius: 0.75rem;
 
-    --emma-blue: 217 91% 60%;
+    /* ─── Brand palette ─── */
+    --emma-blue: 217 95% 62%;
     --emma-blue-dim: 217 70% 35%;
-    --emma-amber: 35 90% 55%;
-    --emma-purple: 260 60% 60%;
-    --emma-surface: 222 40% 7%;
-    --emma-surface-elevated: 222 35% 11%;
-    --emma-gradient: linear-gradient(135deg, hsl(217 91% 60%), hsl(260 60% 60%));
-    --emma-text-gradient: linear-gradient(135deg, hsl(217 91% 65%), hsl(260 60% 70%) 50%, hsl(35 90% 65%));
-    --emma-amber-gradient: linear-gradient(135deg, hsl(35 90% 55%), hsl(25 85% 50%));
-    --emma-border-glow: 0 0 15px hsl(217 91% 60% / 0.12);
-    --emma-shadow: 0 8px 32px hsl(217 91% 60% / 0.06);
-    --emma-shadow-elevated:
-      0 1px 0 hsl(0 0% 100% / 0.06) inset,
-      0 0 0 1px hsl(217 91% 60% / 0.08),
-      0 30px 60px -20px hsl(222 80% 2% / 0.7),
-      0 18px 30px -15px hsl(217 91% 60% / 0.18);
-    --emma-shadow-glass:
-      0 1px 0 hsl(0 0% 100% / 0.08) inset,
-      0 -1px 0 hsl(0 0% 100% / 0.02) inset,
-      0 0 0 1px hsl(0 0% 100% / 0.04),
-      0 24px 48px -12px hsl(222 80% 2% / 0.6);
-    --emma-conic: conic-gradient(from 180deg at 50% 50%, hsl(217 91% 60% / 0.4), hsl(260 60% 60% / 0.4), hsl(35 90% 55% / 0.3), hsl(217 91% 60% / 0.4));
+    --emma-cyan: 190 95% 58%;
+    --emma-amber: 35 92% 58%;
+    --emma-purple: 262 70% 64%;
+    --emma-pink: 330 80% 65%;
 
-    --sidebar-background: 222 40% 7%;
-    --sidebar-foreground: 210 20% 85%;
-    --sidebar-primary: 217 91% 60%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 222 25% 14%;
-    --sidebar-accent-foreground: 210 20% 85%;
-    --sidebar-border: 222 20% 14%;
-    --sidebar-ring: 217 91% 60%;
+    /* Layered surface system (5 elevations) */
+    --emma-surface: 224 42% 6%;
+    --emma-surface-elevated: 224 36% 9%;
+    --emma-surface-overlay: 224 32% 12%;
+    --emma-surface-sunken: 224 50% 4%;
+
+    /* Gradients */
+    --emma-gradient: linear-gradient(135deg, hsl(217 95% 62%) 0%, hsl(262 70% 64%) 60%, hsl(330 80% 65%) 100%);
+    --emma-gradient-cool: linear-gradient(135deg, hsl(190 95% 58%) 0%, hsl(217 95% 62%) 100%);
+    --emma-gradient-warm: linear-gradient(135deg, hsl(35 92% 58%) 0%, hsl(15 90% 60%) 100%);
+    --emma-text-gradient: linear-gradient(135deg, hsl(190 95% 70%) 0%, hsl(217 95% 70%) 35%, hsl(262 70% 75%) 65%, hsl(330 80% 75%) 100%);
+    --emma-amber-gradient: linear-gradient(135deg, hsl(35 92% 58%), hsl(25 88% 52%));
+    --emma-mesh: radial-gradient(at 20% 10%, hsl(217 95% 62% / 0.18) 0px, transparent 50%),
+                 radial-gradient(at 80% 0%, hsl(262 70% 64% / 0.15) 0px, transparent 50%),
+                 radial-gradient(at 80% 80%, hsl(190 95% 58% / 0.12) 0px, transparent 50%),
+                 radial-gradient(at 20% 90%, hsl(35 92% 58% / 0.1) 0px, transparent 50%);
+
+    /* Glows */
+    --emma-glow-sm: 0 0 12px hsl(217 95% 62% / 0.25);
+    --emma-glow-md: 0 0 24px hsl(217 95% 62% / 0.3);
+    --emma-glow-lg: 0 0 48px hsl(217 95% 62% / 0.35);
+    --emma-border-glow: 0 0 20px hsl(217 95% 62% / 0.15);
+
+    /* Shadows — layered for tactile depth */
+    --emma-shadow:
+      0 4px 12px hsl(224 80% 2% / 0.35),
+      0 1px 0 hsl(0 0% 100% / 0.04) inset;
+    --emma-shadow-elevated:
+      0 1px 0 hsl(0 0% 100% / 0.07) inset,
+      0 0 0 1px hsl(217 95% 62% / 0.08),
+      0 24px 48px -16px hsl(224 80% 2% / 0.7),
+      0 12px 24px -12px hsl(217 95% 62% / 0.18);
+    --emma-shadow-glass:
+      0 1px 0 hsl(0 0% 100% / 0.09) inset,
+      0 -1px 0 hsl(0 0% 100% / 0.02) inset,
+      0 0 0 1px hsl(0 0% 100% / 0.05),
+      0 24px 48px -12px hsl(224 80% 2% / 0.6);
+    --emma-shadow-deep:
+      0 2px 0 hsl(0 0% 100% / 0.06) inset,
+      0 0 0 1px hsl(217 95% 62% / 0.1),
+      0 40px 80px -20px hsl(224 80% 2% / 0.85),
+      0 20px 40px -16px hsl(262 70% 30% / 0.4);
+
+    /* Conic glow (for hero / premium cards) */
+    --emma-conic: conic-gradient(from 180deg at 50% 50%,
+      hsl(217 95% 62% / 0.45),
+      hsl(262 70% 64% / 0.45),
+      hsl(330 80% 65% / 0.35),
+      hsl(35 92% 58% / 0.3),
+      hsl(190 95% 58% / 0.4),
+      hsl(217 95% 62% / 0.45));
+
+    /* Easing curves */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    /* Sidebar */
+    --sidebar-background: 224 42% 6%;
+    --sidebar-foreground: 210 22% 87%;
+    --sidebar-primary: 217 95% 62%;
+    --sidebar-primary-foreground: 224 47% 5%;
+    --sidebar-accent: 224 26% 13%;
+    --sidebar-accent-foreground: 210 22% 88%;
+    --sidebar-border: 224 22% 13%;
+    --sidebar-ring: 217 95% 62%;
   }
 }
 
@@ -76,39 +127,99 @@
     @apply border-border;
   }
 
+  html {
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% -10%, hsl(217 95% 62% / 0.06), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, hsl(262 70% 64% / 0.05), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  /* Selection */
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  /* Focus rings — consistent across the app */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring) / 0.7);
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) - 4px);
+  }
+
+  /* Smoother headings */
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
   }
 }
 
 @layer utilities {
+  /* ─── Text gradients ─── */
   .emma-glow-text {
+    background: var(--emma-text-gradient);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: emmaGradientShift 8s ease infinite;
+  }
+  .emma-glow-text-static {
     background: var(--emma-text-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
+  /* ─── Borders & glows ─── */
   .emma-glow-border {
-    border: 1px solid hsl(var(--emma-blue) / 0.15);
+    border: 1px solid hsl(var(--emma-blue) / 0.18);
     box-shadow: var(--emma-border-glow);
   }
+  .emma-glow-sm { box-shadow: var(--emma-glow-sm); }
+  .emma-glow-md { box-shadow: var(--emma-glow-md); }
+  .emma-glow-lg { box-shadow: var(--emma-glow-lg); }
 
+  /* ─── Surfaces ─── */
   .emma-surface { background: hsl(var(--emma-surface)); }
   .emma-surface-elevated { background: hsl(var(--emma-surface-elevated)); }
+  .emma-surface-overlay { background: hsl(var(--emma-surface-overlay)); }
+  .emma-surface-sunken { background: hsl(var(--emma-surface-sunken)); }
+
   .emma-gradient-bg { background: var(--emma-gradient); }
+  .emma-gradient-cool-bg { background: var(--emma-gradient-cool); }
+  .emma-gradient-warm-bg { background: var(--emma-gradient-warm); }
+  .emma-mesh-bg { background: var(--emma-mesh); }
+
+  .emma-shadow { box-shadow: var(--emma-shadow); }
   .emma-shadow-elevated { box-shadow: var(--emma-shadow-elevated); }
   .emma-shadow-glass { box-shadow: var(--emma-shadow-glass); }
+  .emma-shadow-deep { box-shadow: var(--emma-shadow-deep); }
 
-  /* Glass card with inner highlight + soft outer shadow */
+  /* ─── Glass card with inner highlight + soft outer shadow ─── */
   .emma-glass {
     background:
-      linear-gradient(180deg, hsl(0 0% 100% / 0.04) 0%, hsl(0 0% 100% / 0.01) 50%, transparent 100%),
-      hsl(var(--card) / 0.55);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
-    border: 1px solid hsl(0 0% 100% / 0.06);
+      linear-gradient(180deg, hsl(0 0% 100% / 0.05) 0%, hsl(0 0% 100% / 0.015) 50%, transparent 100%),
+      hsl(var(--card) / 0.6);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid hsl(0 0% 100% / 0.07);
     box-shadow: var(--emma-shadow-glass);
+  }
+
+  .emma-glass-strong {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.07) 0%, hsl(0 0% 100% / 0.02) 50%, transparent 100%),
+      hsl(var(--card) / 0.75);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    box-shadow: var(--emma-shadow-deep);
   }
 
   /* Subtle top edge highlight (gloss) */
@@ -118,7 +229,7 @@
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.18), hsl(0 0% 100% / 0) 30%);
+    background: linear-gradient(180deg, hsl(0 0% 100% / 0.2), hsl(0 0% 100% / 0) 30%);
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
             mask-composite: exclude;
@@ -137,10 +248,10 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(115deg, transparent 30%, hsl(0 0% 100% / 0.08) 45%, hsl(0 0% 100% / 0.18) 50%, hsl(0 0% 100% / 0.08) 55%, transparent 70%);
+    background: linear-gradient(115deg, transparent 30%, hsl(0 0% 100% / 0.08) 45%, hsl(0 0% 100% / 0.2) 50%, hsl(0 0% 100% / 0.08) 55%, transparent 70%);
     background-size: 200% 100%;
     background-position: 200% 0;
-    transition: background-position 0.9s ease;
+    transition: background-position 0.9s var(--ease-out-expo);
     pointer-events: none;
     mix-blend-mode: screen;
     opacity: 0;
@@ -158,16 +269,56 @@
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
-    opacity: 0.035;
+    opacity: 0.04;
     mix-blend-mode: overlay;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  /* Shimmer sweep on buttons / loading skeletons */
+  .emma-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .emma-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 35%, hsl(0 0% 100% / 0.15) 50%, transparent 65%);
+    background-size: 200% 100%;
+    animation: emmaShimmer 2.4s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Hover-lift utility */
+  .emma-hover-lift {
+    transition: transform 0.35s var(--ease-out-expo), box-shadow 0.35s var(--ease-out-expo);
+  }
+  .emma-hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--emma-shadow-elevated);
+  }
+
+  /* Animated pulse ring (for status indicators) */
+  .emma-ping-ring {
+    position: relative;
+  }
+  .emma-ping-ring::before {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    border: 2px solid hsl(var(--primary) / 0.6);
+    animation: emmaPing 1.6s var(--ease-out-expo) infinite;
   }
 
   .emma-pulse { animation: emmaPulse 3s ease-in-out infinite; }
   .emma-typing-dot { animation: emmaTypingDot 1.4s ease-in-out infinite; }
   .emma-float { animation: emmaFloat 6s ease-in-out infinite; }
+  .emma-fade-in { animation: emmaFadeIn 0.5s var(--ease-out-expo) both; }
+  .emma-scale-in { animation: emmaScaleIn 0.35s var(--ease-spring) both; }
 }
 
+/* ─── Keyframes ─── */
 @keyframes emmaPulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
@@ -192,16 +343,52 @@
   100% { background-position: 200% 0; }
 }
 
+@keyframes emmaGradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes emmaPing {
+  0% { transform: scale(0.8); opacity: 0.9; }
+  80%, 100% { transform: scale(2.2); opacity: 0; }
+}
+
+@keyframes emmaFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes emmaScaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Scrollbar — refined ─── */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(var(--emma-surface));
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: hsl(var(--border));
-  border-radius: 3px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
+  background: hsl(var(--muted-foreground) / 0.6);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
 }

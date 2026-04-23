@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CreditCard, Shield, Zap, Lock } from "lucide-react";
+import { CreditCard, Shield, Zap, Lock, Bitcoin } from "lucide-react";
 import { generateFingerprint, markLocalPaid, FREE_LIMIT } from "@/lib/fingerprint";
 import { toast } from "sonner";
 

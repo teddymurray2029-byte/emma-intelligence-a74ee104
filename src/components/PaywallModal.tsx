@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CreditCard, Shield, Zap, Lock } from "lucide-react";
+import { CreditCard, Shield, Zap, Lock, Bitcoin } from "lucide-react";
 import { generateFingerprint, markLocalPaid, FREE_LIMIT } from "@/lib/fingerprint";
 import { toast } from "sonner";
 
@@ -84,6 +84,10 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
               <Lock className="h-4 w-4 mt-0.5 text-primary shrink-0" />
               <span>One-time payment, lifetime access</span>
             </div>
+            <div className="flex items-start gap-3 text-sm">
+              <Bitcoin className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+              <span>Pay with card or Bitcoin</span>
+            </div>
           </div>
 
           {!userEmail && (
@@ -109,7 +113,7 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
           </Button>
 
           <p className="text-[10px] text-center text-muted-foreground">
-            Secure payment via Stripe. One-time charge, no subscription.
+            Secure payment via Stripe — card or Bitcoin. One-time charge, no subscription.
           </p>
         </div>
       </DialogContent>

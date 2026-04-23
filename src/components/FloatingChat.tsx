@@ -51,7 +51,7 @@ export function FloatingChat({ getToken, onApplyToFile }: FloatingChatProps) {
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 24, y: 24 });
   const dragState = useRef<{ dx: number; dy: number; dragging: boolean }>({ dx: 0, dy: 0, dragging: false });
 
-  useEffect(() => onIdeContext(setCtx), []);
+  useEffect(() => { const off = onIdeContext(setCtx); return () => { off(); }; }, []);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, busy, logs]);

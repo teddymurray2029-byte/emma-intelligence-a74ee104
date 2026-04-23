@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
 import { Loader2, Power, Trash2, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { configureSandbox, ensureSession, shellExec, getSandboxStatus, onSandboxStatus, stopSession, type SessionStatus } from "@/lib/sandbox";
+import { pushTerminal } from "@/lib/ide-context";
 
 interface TerminalProps {
   getToken: () => Promise<string | null>;

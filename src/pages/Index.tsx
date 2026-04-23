@@ -333,6 +333,10 @@ export default function Index() {
           userEmail={user?.email}
           getToken={getToken}
         />
+        <FloatingChat
+          getToken={getToken}
+          onApplyToFile={(p, c) => (window as any).__emmaApplyToFile?.(p, c)}
+        />
       </div>
     </SidebarProvider>
   );

@@ -104,7 +104,7 @@ export function ProjectIDE({ getToken }: ProjectIDEProps) {
         <ResizablePanel defaultSize={80} minSize={40}>
           <ResizablePanelGroup direction="vertical">
             <ResizablePanel defaultSize={75} minSize={30}>
-              <CodeEditor ref={editorRef} />
+              <CodeEditor ref={editorRef} getToken={getToken} />
             </ResizablePanel>
             <ResizableHandle />
             <ResizablePanel defaultSize={25} minSize={15}>

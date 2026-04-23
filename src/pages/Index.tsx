@@ -17,6 +17,7 @@ import { InspectorPanel } from "@/components/InspectorPanel";
 import { PaywallModal } from "@/components/PaywallModal";
 import { ProjectIDE } from "@/components/ProjectIDE";
 import { ComputerUseAgent } from "@/components/ComputerUseAgent";
+import { FloatingChat } from "@/components/FloatingChat";
 import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
@@ -47,7 +48,11 @@ export default function Index() {
   const { messages, load: loadMessages, saveMessage, addLocal, updateLastAssistant, setMessages } = useMessages(activeConvId, getToken);
   const [isLoading, setIsLoading] = useState(false);
   const [showRight, setShowRight] = useState(true);
-  const [mode, setMode] = useState<EmmaMode>("chat");
+  const [mode, setMode] = useState<EmmaMode>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const m = params.get("mode") as EmmaMode | null;
+    return m || "projects";
+  });
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("standard");
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [showPaywall, setShowPaywall] = useState(false);

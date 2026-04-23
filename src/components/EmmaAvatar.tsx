@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import emmaLogo from "@/assets/emma-logo.png";
 
 export function EmmaAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   const dims = { sm: 28, md: 36, lg: 56 };
@@ -11,17 +12,12 @@ export function EmmaAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
         animate={{ scale: [1, 1.15, 1], opacity: [0.15, 0.3, 0.15] }}
         transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
       />
-      <div
-        className="relative rounded-full emma-gradient-bg flex items-center justify-center"
+      <img
+        src={emmaLogo}
+        alt="Emma"
+        className="relative rounded-full object-cover"
         style={{ width: s, height: s }}
-      >
-        <span
-          className="font-mono font-bold text-primary-foreground"
-          style={{ fontSize: s * 0.32 }}
-        >
-          E
-        </span>
-      </div>
+      />
     </div>
   );
 }

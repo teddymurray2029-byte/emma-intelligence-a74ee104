@@ -51,13 +51,25 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
         emma: {
           blue: "hsl(var(--emma-blue))",
           "blue-dim": "hsl(var(--emma-blue-dim))",
+          cyan: "hsl(var(--emma-cyan))",
           amber: "hsl(var(--emma-amber))",
           purple: "hsl(var(--emma-purple))",
+          pink: "hsl(var(--emma-pink))",
           surface: "hsl(var(--emma-surface))",
           "surface-elevated": "hsl(var(--emma-surface-elevated))",
+          "surface-overlay": "hsl(var(--emma-surface-overlay))",
+          "surface-sunken": "hsl(var(--emma-surface-sunken))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
 import { Loader2, Power, Trash2, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { configureSandbox, ensureSession, shellExec, getSandboxStatus, onSandboxStatus, stopSession, type SessionStatus } from "@/lib/sandbox";
+import { pushTerminal } from "@/lib/ide-context";
 
 interface TerminalProps {
   getToken: () => Promise<string | null>;
@@ -69,9 +70,11 @@ export function Terminal({ getToken, cwd }: TerminalProps) {
         if (r.stdout) append({ kind: "out", text: r.stdout.replace(/\n$/, "") });
         if (r.stderr) append({ kind: "err", text: r.stderr.replace(/\n$/, "") });
         if (r.exitCode !== 0 && !r.stdout && !r.stderr) append({ kind: "err", text: `[exit ${r.exitCode}]` });
+        pushTerminal({ command: trimmed, stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode, at: Date.now() });
       }
     } catch (e: any) {
       append({ kind: "err", text: `✗ ${e?.message || "Command failed"}` });
+      pushTerminal({ command: trimmed, stdout: "", stderr: e?.message || "Command failed", exitCode: 1, at: Date.now() });
     } finally {
       setRunning(false);
       setTimeout(() => inputRef.current?.focus(), 10);

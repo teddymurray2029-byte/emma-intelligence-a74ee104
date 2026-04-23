@@ -58,12 +58,27 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => { configureSandbox(getToken); }, [getToken]);
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(files)); }, [files]);
 
+  // Broadcast the active file as IDE context for the floating chat.
+  useEffect(() => {
+    if (!active) return;
+    import("@/lib/ide-context").then(({ setIdeContext }) => {
+      setIdeContext({ activeFile: { path: active.name, language: active.language, content: active.content } });
+    });
+  }, [active?.name, active?.content, active?.language]);
+
   useImperativeHandle(ref, () => ({
     openCode: (code, language, name) => {
       const ext = language === "typescript" ? "tsx" : language === "javascript" ? "js" : language === "python" ? "py" : language;
       const fileName = name || `snippet_${files.length}.${ext}`;
-      setFiles((prev) => [...prev, { name: fileName, language, content: code }]);
-      setActiveIdx(files.length);
+      // If a tab with the same name already exists, just focus it and update content
+      const existingIdx = files.findIndex(f => f.name === fileName);
+      if (existingIdx >= 0) {
+        setFiles(prev => prev.map((f, i) => i === existingIdx ? { ...f, content: code } : f));
+        setActiveIdx(existingIdx);
+      } else {
+        setFiles((prev) => [...prev, { name: fileName, language, content: code }]);
+        setActiveIdx(files.length);
+      }
       toast.success(`Opened: ${fileName}`);
     },
   }));

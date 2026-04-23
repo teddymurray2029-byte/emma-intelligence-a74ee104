@@ -85,34 +85,66 @@ export function ProjectIDE({ getToken }: ProjectIDEProps) {
   }, [files, handleFilesChange]);
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      <ResizablePanelGroup direction="horizontal">
-        {/* Project list + File explorer */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
-          <ResizablePanelGroup direction="vertical">
-            <ResizablePanel defaultSize={35} minSize={20}>
-              <ProjectManager activeProject={activeProject} onSelectProject={setActiveProject} getToken={getToken} />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={65} minSize={30}>
-              <FileExplorer files={files} onFileSelect={handleFileSelect} onFilesChange={handleFilesChange} selectedFile={selectedFile} />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        {/* Editor + Git */}
-        <ResizablePanel defaultSize={80} minSize={40}>
-          <ResizablePanelGroup direction="vertical">
-            <ResizablePanel defaultSize={75} minSize={30}>
-              <CodeEditor ref={editorRef} getToken={getToken} />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={25} minSize={15}>
-              <GitPanel project={activeProject} files={files} onFilesChange={handleFilesChange} onRepoConnect={handleRepoConnect} getToken={getToken} />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+    <div className="flex h-full bg-background">
+      <ActivityBar />
+      <div className="flex-1 min-w-0">
+        <ResizablePanelGroup direction="horizontal">
+          <ResizablePanel defaultSize={22} minSize={15} maxSize={40}>
+            <ResizablePanelGroup direction="vertical">
+              <ResizablePanel defaultSize={38} minSize={20}>
+                <ProjectManager activeProject={activeProject} onSelectProject={setActiveProject} getToken={getToken} />
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel defaultSize={62} minSize={30}>
+                <FileExplorer files={files} onFileSelect={handleFileSelect} onFilesChange={handleFilesChange} selectedFile={selectedFile} />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={78} minSize={40}>
+            <ResizablePanelGroup direction="vertical">
+              <ResizablePanel defaultSize={75} minSize={30}>
+                <CodeEditor ref={editorRef} getToken={getToken} />
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel defaultSize={25} minSize={15}>
+                <GitPanel project={activeProject} files={files} onFilesChange={handleFilesChange} onRepoConnect={handleRepoConnect} getToken={getToken} />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    </div>
+  );
+}
+
+function ActivityBar() {
+  const items = [
+    { id: "explorer", label: "Explorer", active: true,
+      icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg> },
+    { id: "search", label: "Search",
+      icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg> },
+    { id: "scm", label: "Source Control",
+      icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M8 18h6a4 4 0 0 0 4-4v-2"/></svg> },
+    { id: "ext", label: "Extensions",
+      icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6"/></svg> },
+  ];
+  return (
+    <div className="w-11 bg-card border-r border-border flex flex-col items-center py-2 gap-1">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          title={it.label}
+          className={`relative w-9 h-9 flex items-center justify-center rounded-md transition-all ${
+            it.active
+              ? "text-foreground bg-secondary/60"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+          }`}
+        >
+          {it.active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-primary" />}
+          {it.icon}
+        </button>
+      ))}
     </div>
   );
 }

@@ -11,9 +11,10 @@ type Tab = "ide" | "agents" | "bench" | "memory";
 interface RightPanelProps {
   isProcessing?: boolean;
   editorRef?: React.RefObject<CodeEditorHandle | null>;
+  getToken: () => Promise<string | null>;
 }
 
-export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps) {
+export function RightPanel({ isProcessing = false, editorRef, getToken }: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("ide");
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
@@ -46,7 +47,7 @@ export function RightPanel({ isProcessing = false, editorRef }: RightPanelProps)
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "ide" && <CodeEditor ref={editorRef} />}
+        {tab === "ide" && <CodeEditor ref={editorRef} getToken={getToken} />}
         {tab === "agents" && <AgentSwarm isProcessing={isProcessing} />}
         {tab === "bench" && (
           <ScrollArea className="h-full">

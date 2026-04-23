@@ -1184,6 +1184,50 @@ serve(async (req) => {
         return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
       }
 
+      case "shell_exec": {
+        const { sessionId, envdAccessToken, command, cwd, timeout } = body;
+        if (!sessionId || !command) return json({ error: "Missing sessionId/command" }, 400);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
+        const wrapped = cwd ? `cd ${JSON.stringify(cwd)} && ${command}` : command;
+        const r = await reliableToolCall(
+          "shell_exec",
+          traceId,
+          () => runCommand(sandbox, "bash", ["-lc", wrapped], Math.min(Math.max(timeout || 30, 1), 120)),
+          (Math.min(Math.max(timeout || 30, 1), 120) + 10) * 1000,
+        );
+        return json({ exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, traceId });
+      }
+
+      case "fs_read": {
+        const { sessionId, envdAccessToken, path } = body;
+        if (!sessionId || !path) return json({ error: "Missing sessionId/path" }, 400);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
+        const bytes = await reliableToolCall("fs_read", traceId, () => readSandboxFile(sandbox, path));
+        return json({ content: new TextDecoder().decode(bytes), traceId });
+      }
+
+      case "fs_write": {
+        const { sessionId, envdAccessToken, path, content } = body;
+        if (!sessionId || !path) return json({ error: "Missing sessionId/path" }, 400);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
+        await reliableToolCall("fs_write", traceId, () => writeSandboxFile(sandbox, path, content || ""));
+        return json({ success: true, traceId });
+      }
+
+      case "sync_project": {
+        const { sessionId, envdAccessToken, projectName, files } = body;
+        if (!sessionId || !files) return json({ error: "Missing sessionId/files" }, 400);
+        const sandbox = await reliableToolCall("get_sandbox", traceId, () => getSandbox(sessionId, envdAccessToken));
+        const projectDir = `/home/user/${(projectName || "project").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+        await runCommand(sandbox, "bash", ["-lc", `mkdir -p ${JSON.stringify(projectDir)} && rm -rf ${JSON.stringify(projectDir)}/* 2>/dev/null || true`], 10);
+        for (const f of files as { path: string; content: string }[]) {
+          const dir = `${projectDir}/${f.path.split("/").slice(0, -1).join("/")}`;
+          if (dir !== projectDir) await runCommand(sandbox, "bash", ["-lc", `mkdir -p ${JSON.stringify(dir)}`], 5);
+          await writeSandboxFile(sandbox, `${projectDir}/${f.path}`, f.content);
+        }
+        return json({ success: true, projectDir, fileCount: files.length, traceId });
+      }
+
       case "stop_session": {
         const { sessionId } = body;
         if (!sessionId) return json({ error: "Missing sessionId" }, 400);

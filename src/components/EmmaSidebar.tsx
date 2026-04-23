@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import type { Conversation } from "@/hooks/useConversations";
+import emmaLogo from "@/assets/emma-logo.png";
 
 interface EmmaSidebarProps {
   conversations: Conversation[];

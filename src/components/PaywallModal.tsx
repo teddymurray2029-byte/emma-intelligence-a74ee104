@@ -113,7 +113,7 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
           </Button>
 
           <p className="text-[10px] text-center text-muted-foreground">
-            Secure payment via Stripe. One-time charge, no subscription.
+            Secure payment via Stripe — card or Bitcoin. One-time charge, no subscription.
           </p>
         </div>
       </DialogContent>

@@ -84,6 +84,10 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
               <Lock className="h-4 w-4 mt-0.5 text-primary shrink-0" />
               <span>One-time payment, lifetime access</span>
             </div>
+            <div className="flex items-start gap-3 text-sm">
+              <Bitcoin className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+              <span>Pay with card or Bitcoin</span>
+            </div>
           </div>
 
           {!userEmail && (

@@ -103,11 +103,11 @@ export function ProjectIDE({ getToken }: ProjectIDEProps) {
           <ResizablePanel defaultSize={22} minSize={15} maxSize={40}>
             {sideTab === "explorer" && (
               <ResizablePanelGroup direction="vertical">
-                <ResizablePanel defaultSize={38} minSize={20}>
+                <ResizablePanel defaultSize={28} minSize={10} maxSize={70} collapsible collapsedSize={6}>
                   <ProjectManager activeProject={activeProject} onSelectProject={setActiveProject} getToken={getToken} />
                 </ResizablePanel>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={62} minSize={30}>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={72} minSize={30}>
                   <FileExplorer files={files} onFileSelect={handleFileSelect} onFilesChange={handleFilesChange} selectedFile={selectedFile} />
                 </ResizablePanel>
               </ResizablePanelGroup>

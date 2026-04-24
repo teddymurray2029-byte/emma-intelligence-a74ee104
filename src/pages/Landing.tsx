@@ -42,11 +42,11 @@ const MODES = [
 ];
 
 const FAQ = [
-  { q: "What does the yearly plan include?", a: "Unlimited messages across every mode — chat, research, build, voice, data, code execution, computer use, image generation. No per-message caps, no overage fees." },
+  { q: "What does the membership include?", a: "Unlimited messages across every mode — chat, research, build, voice, data, code execution, computer use, image generation. No per-message caps, no overage fees. One flat price: $12/month." },
   { q: "How does Emma differ from ChatGPT or Claude?", a: "Emma is an autonomous AGI system, not a chatbot. She runs a self-improvement loop every 15 minutes, benchmarks herself, modifies her own prompts and edge functions, and commits the diffs to GitHub. She also has a formal safety verifier and a multi-agent swarm." },
   { q: "Is my data private?", a: "Yes. Each user's conversations, memory, projects, and files are isolated by row-level security. Emma never trains on your data." },
-  { q: "How do I pay?", a: "One Cash App payment to $mycashdirect2022. Include the unique reference code shown at checkout in the payment note. Access unlocks instantly." },
-  { q: "Refunds?", a: "Cancel anytime within 7 days for a full refund. After that, the year is yours to use without limits." },
+  { q: "How do I pay?", a: "Send $12 via Cash App to $mycashdirect2022 each month. Include the unique reference code shown at checkout in the payment note. Access unlocks instantly." },
+  { q: "Can I cancel?", a: "Yes — cancel anytime by simply not renewing the next month. No contracts, no auto-charges. You're always in control." },
 ];
 
 /* --- Tilt + spotlight card --- */
@@ -245,7 +245,7 @@ export default function Landing() {
             variant="outline"
             className="h-14 px-8 text-base font-semibold emma-glass border-white/10 hover:border-primary/40 hover:bg-card/60"
           >
-            Get Yearly Access — $79
+            Get Membership — $12/month
           </Button>
         </motion.div>
 
@@ -273,7 +273,7 @@ export default function Landing() {
               { v: "16+", l: "Capabilities" },
               { v: "15min", l: "Self-Improve Cycle" },
               { v: "8", l: "Operating Modes" },
-              { v: "∞", l: "Yearly Messages" },
+              { v: "∞", l: "Monthly Messages" },
             ].map((s) => (
               <div key={s.l} className="relative bg-background/40 p-6 group">
                 <div className="text-3xl sm:text-4xl font-bold emma-glow-text tracking-tight">{s.v}</div>
@@ -453,7 +453,7 @@ export default function Landing() {
             </div>
           </TiltCard>
 
-          {/* Yearly — premium */}
+          {/* Membership — premium */}
           <TiltCard>
             <div className="relative p-8 rounded-3xl overflow-hidden h-full emma-gloss emma-noise"
               style={{
@@ -481,19 +481,19 @@ export default function Landing() {
               </div>
 
               <div className="relative">
-                <div className="text-sm font-medium text-primary mb-2 uppercase tracking-wider">Yearly</div>
+                <div className="text-sm font-medium text-primary mb-2 uppercase tracking-wider">Membership</div>
                 <div className="flex items-baseline gap-1 mb-1">
-                  <span className="text-6xl font-bold tracking-tighter emma-glow-text">$79</span>
-                  <span className="text-muted-foreground ml-2">/ year</span>
+                  <span className="text-6xl font-bold tracking-tighter emma-glow-text">$12</span>
+                  <span className="text-muted-foreground ml-2">/ month</span>
                 </div>
-                <div className="text-sm text-muted-foreground mb-6">~$6.58/mo · billed once · cancel within 7 days</div>
+                <div className="text-sm text-muted-foreground mb-6">Flat $12/month · cancel anytime · no contracts</div>
                 <Button
                   onClick={() => setPaywallOpen(true)}
                   className="w-full mb-6 h-12 text-base font-semibold relative overflow-hidden group shadow-[0_10px_30px_-8px_hsl(var(--primary)/0.7),0_0_0_1px_hsl(0_0%_100%/0.1)_inset]"
                 >
                   <span className="relative z-10 flex items-center justify-center">
                     <Zap className="h-4 w-4 mr-2" />
-                    Unlock Emma for a Year
+                    Unlock Emma — $12/month
                   </span>
                   <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
                 </Button>
@@ -505,8 +505,8 @@ export default function Landing() {
                     { i: Code2, t: "Project IDE with code execution" },
                     { i: Mic, t: "Voice conversations (ElevenLabs)" },
                     { i: ImageIcon, t: "Premium image generation" },
-                    { i: Database, t: "Lifetime memory + project storage" },
-                    { i: Lock, t: "Pay once via Cash App — no subscription" },
+                    { i: Database, t: "Persistent memory + project storage" },
+                    { i: Lock, t: "Pay monthly via Cash App — cancel anytime" },
                   ].map((x) => (
                     <li key={x.t} className="flex items-start gap-2">
                       <x.i className="h-4 w-4 text-primary mt-0.5 shrink-0 drop-shadow-[0_0_4px_hsl(var(--primary)/0.6)]" />
@@ -567,7 +567,7 @@ export default function Landing() {
             <span className="emma-glow-text">by the message.</span>
           </h2>
           <p className="mt-6 text-lg text-muted-foreground max-w-xl mx-auto">
-            One payment. Every capability. A full year of an AGI that improves itself while it works for you.
+            One flat price. Every capability. $12/month for an AGI that improves itself while it works for you.
           </p>
           <div className="mt-10 flex flex-col sm:flex-row gap-3 justify-center">
             <Button onClick={goApp} size="lg" variant="outline" className="h-14 px-8 emma-glass border-white/10">
@@ -580,7 +580,7 @@ export default function Landing() {
             >
               <span className="relative z-10 flex items-center">
                 <Zap className="h-5 w-5 mr-2" />
-                Get Yearly Access — $79
+                Get Membership — $12/month
               </span>
               <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
             </Button>

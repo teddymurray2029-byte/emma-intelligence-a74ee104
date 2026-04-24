@@ -200,14 +200,16 @@ export function FileExplorer({ files, onFileSelect, onFilesChange, selectedFile 
           <Button size="icon" className="h-6 w-6" onClick={handleCreateFile}><Plus className="h-3 w-3" /></Button>
         </div>
       )}
-      <ScrollArea className="flex-1">
-        {tree.length === 0 ? (
-          <div className="p-4 text-xs text-muted-foreground text-center">No files yet. Create one above.</div>
-        ) : (
-          tree.map((node) => (
-            <TreeItem key={node.path} node={node} depth={0} selectedFile={selectedFile} expanded={expanded} onToggle={onToggle} onSelect={onFileSelect} onDelete={handleDelete} onRename={handleRename} />
-          ))
-        )}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="py-1 min-w-max">
+          {tree.length === 0 ? (
+            <div className="p-4 text-xs text-muted-foreground text-center">No files yet. Create one above.</div>
+          ) : (
+            tree.map((node) => (
+              <TreeItem key={node.path} node={node} depth={0} selectedFile={selectedFile} expanded={expanded} onToggle={onToggle} onSelect={onFileSelect} onDelete={handleDelete} onRename={handleRename} />
+            ))
+          )}
+        </div>
       </ScrollArea>
     </div>
   );

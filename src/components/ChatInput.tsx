@@ -85,7 +85,7 @@ export function ChatInput({ onSend, disabled, userId }: ChatInputProps) {
 
   return (
     <div
-      className="emma-glow-border rounded-2xl emma-surface-elevated p-2 flex items-end gap-1.5"
+      className="emma-glass rounded-2xl p-2 flex items-end gap-1.5 border border-white/[0.06] focus-within:border-primary/40 focus-within:shadow-[0_0_0_3px_hsl(var(--primary)/0.12),0_18px_40px_-16px_hsl(var(--primary)/0.35)] transition-all duration-200"
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
     >
@@ -115,8 +115,8 @@ export function ChatInput({ onSend, disabled, userId }: ChatInputProps) {
         size="icon"
         variant="ghost"
         onClick={toggleVoice}
-        className={`rounded-xl flex-shrink-0 h-9 w-9 ${
-          isListening ? "text-destructive bg-destructive/10" : "text-muted-foreground hover:text-foreground"
+        className={`rounded-xl flex-shrink-0 h-9 w-9 transition-all ${
+          isListening ? "text-destructive bg-destructive/15 emma-pulse" : "text-muted-foreground hover:text-foreground"
         }`}
         disabled={disabled}
       >
@@ -133,17 +133,18 @@ export function ChatInput({ onSend, disabled, userId }: ChatInputProps) {
             handleSubmit();
           }
         }}
-        placeholder={isListening ? "Listening..." : "Message Emma... (use /image to generate images)"}
+        placeholder={isListening ? "Listening..." : "Message Emma…  (try /image to generate)"}
         disabled={disabled}
         rows={1}
-        className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground text-sm resize-none outline-none px-2 py-2 max-h-40 font-sans"
+        className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground/70 text-sm resize-none outline-none px-2 py-2 max-h-40 font-sans leading-relaxed"
       />
 
       <Button
         onClick={handleSubmit}
         disabled={disabled || !input.trim()}
         size="icon"
-        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl flex-shrink-0 h-9 w-9"
+        variant="glow"
+        className="rounded-xl flex-shrink-0 h-9 w-9"
       >
         <Send className="h-4 w-4" />
       </Button>

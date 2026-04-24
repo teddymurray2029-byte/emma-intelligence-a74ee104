@@ -23,42 +23,48 @@ interface ModeSwitcherProps {
 export function ModeSwitcher({ mode, onChange, compact = false }: ModeSwitcherProps) {
   if (compact) {
     return (
-      <div className="flex items-center gap-0.5">
-        {MODES.map((m) => (
-          <button
-            key={m.id}
-            onClick={() => onChange(m.id)}
-            title={`${m.label}: ${m.desc}`}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all ${
-              mode === m.id
-                ? "bg-primary/15 text-primary"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-            }`}
-          >
-            <m.icon className="h-3 w-3" />
-            {m.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-1 -mx-1 px-1 overflow-x-auto scrollbar-none snap-x">
+        {MODES.map((m) => {
+          const active = mode === m.id;
+          return (
+            <button
+              key={m.id}
+              onClick={() => onChange(m.id)}
+              title={`${m.label}: ${m.desc}`}
+              className={`group relative flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium snap-start flex-shrink-0 transition-all duration-200 ${
+                active
+                  ? "emma-tab-active text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50 hover:-translate-y-px"
+              }`}
+            >
+              <m.icon className={`h-3 w-3 transition-transform duration-200 ${active ? "text-primary" : "group-hover:scale-110 group-hover:rotate-3"}`} />
+              {m.label}
+            </button>
+          );
+        })}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-1 p-1 bg-secondary/30 rounded-xl">
-      {MODES.map((m) => (
-        <button
-          key={m.id}
-          onClick={() => onChange(m.id)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            mode === m.id
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-          }`}
-        >
-          <m.icon className="h-3.5 w-3.5" />
-          {m.label}
-        </button>
-      ))}
+    <div className="flex items-center gap-1 p-1 emma-glass rounded-2xl overflow-x-auto scrollbar-none">
+      {MODES.map((m) => {
+        const active = mode === m.id;
+        return (
+          <button
+            key={m.id}
+            onClick={() => onChange(m.id)}
+            className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 flex-shrink-0 ${
+              active
+                ? "emma-tab-active"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/40 hover:-translate-y-px"
+            }`}
+          >
+            <m.icon className={`h-3.5 w-3.5 transition-transform duration-200 ${active ? "text-primary" : "group-hover:scale-110 group-hover:rotate-3"}`} />
+            {m.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

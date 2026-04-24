@@ -296,6 +296,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
               <div
                 key={paneIndex}
                 onMouseDown={() => focusPane(paneIndex)}
+                onMouseEnter={() => { if (layout.panes > 1) setFocusedPane(paneIndex); }}
                 className={`flex flex-col min-w-0 min-h-0 bg-background relative ${
                   isFocused && layout.panes > 1 ? "ring-1 ring-primary/40 ring-inset" : ""
                 }`}

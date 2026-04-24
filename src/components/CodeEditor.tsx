@@ -1,5 +1,5 @@
 import { useState, useEffect, forwardRef, useImperativeHandle, useRef } from "react";
-import Editor, { type Monaco } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import {
   X, Plus, Play, Terminal as TerminalIcon, Save, Loader2,
   Square, Columns2, Rows2, Columns3, Rows3, LayoutGrid,

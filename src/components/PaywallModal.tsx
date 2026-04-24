@@ -114,8 +114,8 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
             Unlock Full Access
           </DialogTitle>
           <DialogDescription>
-            {step === "intro" && `You've used all ${FREE_LIMIT} free messages. Pay $12 with Cash App for lifetime access.`}
-            {step === "pay" && "Complete the steps below to unlock Emma."}
+            {step === "intro" && `You've used all ${FREE_LIMIT} free messages. Membership is $12/month — pay with Cash App, cancel anytime.`}
+            {step === "pay" && "Complete the steps below to activate your membership."}
             {step === "verifying" && "Verifying your payment..."}
           </DialogDescription>
         </DialogHeader>
@@ -133,7 +133,7 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
               </div>
               <div className="flex items-start gap-3 text-sm">
                 <Lock className="h-4 w-4 mt-0.5 text-primary shrink-0" />
-                <span>One-time payment, lifetime access</span>
+                <span>$12/month — cancel anytime, no contracts</span>
               </div>
               <div className="flex items-start gap-3 text-sm">
                 <DollarSign className="h-4 w-4 mt-0.5 text-primary shrink-0" />
@@ -160,11 +160,11 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
               size="lg"
             >
               <DollarSign className="h-5 w-5 mr-2" />
-              {loading ? "Loading..." : "Pay $12 with Cash App"}
+              {loading ? "Loading..." : "Pay $12/month with Cash App"}
             </Button>
 
             <p className="text-[10px] text-center text-muted-foreground">
-              Sent to <span className="font-mono">$mycashdirect2022</span>. One-time charge, no subscription.
+              Sent to <span className="font-mono">$mycashdirect2022</span>. $12 each month, cancel anytime by not renewing.
             </p>
           </div>
         )}
@@ -174,7 +174,7 @@ export function PaywallModal({ open, onClose, onPaid, userEmail, getToken }: Pay
             <ol className="space-y-3 text-sm">
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">1</span>
-                <span>Open Cash App and send <strong>$12</strong> to <span className="font-mono font-semibold">$mycashdirect2022</span></span>
+                <span>Open Cash App and send <strong>$12</strong> (this month's membership) to <span className="font-mono font-semibold">$mycashdirect2022</span></span>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">2</span>

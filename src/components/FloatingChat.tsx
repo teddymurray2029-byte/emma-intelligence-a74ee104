@@ -61,18 +61,28 @@ export function FloatingChat({ getToken, onApplyToFile }: FloatingChatProps) {
   }, []);
 
   // --- Drag handling for the header ---
+  // Panel is positioned with `right` / `bottom`. To make dragging feel natural we
+  // compute the offset between the cursor and the panel's right/bottom edges at
+  // mousedown, then keep that offset stable as the mouse moves. Moving the mouse
+  // right reduces `right` (panel follows cursor); moving down reduces `bottom`.
   const startDrag = (e: React.MouseEvent) => {
     if (expanded) return;
-    const rect = dragRef.current?.getBoundingClientRect();
+    const rect = dragRef.current?.parentElement?.getBoundingClientRect();
     if (!rect) return;
-    dragState.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, dragging: true };
+    // Distance from cursor to the panel's right/bottom edges
+    dragState.current = {
+      dx: rect.right - e.clientX,
+      dy: rect.bottom - e.clientY,
+      dragging: true,
+    };
     document.addEventListener("mousemove", onDrag);
     document.addEventListener("mouseup", endDrag, { once: true });
   };
   const onDrag = (e: MouseEvent) => {
     if (!dragState.current.dragging) return;
-    const x = Math.max(8, window.innerWidth - e.clientX + dragState.current.dx - 360);
-    const y = Math.max(8, window.innerHeight - e.clientY + dragState.current.dy - 60);
+    // Keep cursor-to-edge offset constant: right = viewportW - (cursorX + dx)
+    const x = Math.max(8, Math.min(window.innerWidth - 80, window.innerWidth - (e.clientX + dragState.current.dx)));
+    const y = Math.max(8, Math.min(window.innerHeight - 80, window.innerHeight - (e.clientY + dragState.current.dy)));
     setPos({ x, y });
   };
   const endDrag = () => { dragState.current.dragging = false; document.removeEventListener("mousemove", onDrag); };

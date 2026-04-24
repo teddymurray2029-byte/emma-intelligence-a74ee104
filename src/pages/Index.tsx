@@ -280,16 +280,15 @@ export default function Index() {
                       <AnimatePresence mode="wait">
                         {showWelcome ? (
                           <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex flex-col items-center justify-center h-full px-6 py-12 gap-8 overflow-hidden">
-                            <div className="absolute inset-0 emma-soft-grid opacity-30 pointer-events-none" />
-                            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[480px] h-[480px] emma-conic-glow opacity-30 pointer-events-none" />
-                            <div className="relative"><EmmaAvatar size="lg" /></div>
-                            <div className="text-center space-y-3 max-w-lg relative">
+                            <NeuralNetworkBackground />
+                            <div className="relative z-10"><EmmaAvatar size="lg" /></div>
+                            <div className="text-center space-y-3 max-w-lg relative z-10">
                               <h2 className="text-3xl font-bold emma-glow-text tracking-tight">Hello, I'm Emma</h2>
                               <p className="text-sm text-muted-foreground leading-relaxed">Your AI operating system — research, create, analyze, and build with autonomous agents, persistent memory, and source-grounded answers.</p>
                             </div>
-                            <div className="grid grid-cols-2 gap-2.5 max-w-md w-full relative">
+                            <div className="grid grid-cols-2 gap-2.5 max-w-md w-full relative z-10">
                               {WELCOME_SUGGESTIONS.map((s) => (
-                                <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-card emma-hover-lift rounded-xl px-4 py-3 text-xs text-secondary-foreground text-left space-y-1 group">
+                                <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-card emma-hover-lift rounded-xl px-4 py-3 text-xs text-secondary-foreground text-left space-y-1 group backdrop-blur-md">
                                   <span className="text-[9px] font-mono text-primary uppercase tracking-wider group-hover:text-primary-glow transition-colors">{s.mode}</span>
                                   <p className="leading-relaxed">{s.text}</p>
                                 </button>

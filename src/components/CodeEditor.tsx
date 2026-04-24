@@ -109,15 +109,36 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       const ext = language === "typescript" ? "tsx" : language === "javascript" ? "js" : language === "python" ? "py" : language;
       const fileName = name || `snippet_${files.length}.${ext}`;
       const existingIdx = files.findIndex(f => f.name === fileName);
+      const paneCount = layout.panes;
+
+      // Pick the "nearest" pane to surface this file in:
+      //   1. A pane that already shows this file (no disruption)
+      //   2. An empty / unseeded pane
+      //   3. The currently focused pane
+      const pickTargetPane = (fileIdx: number): number => {
+        for (let i = 0; i < paneCount; i++) {
+          if (paneTabs[i] === fileIdx) return i;
+        }
+        for (let i = 0; i < paneCount; i++) {
+          const t = paneTabs[i];
+          if (t == null || t < 0 || t >= files.length) return i;
+        }
+        return Math.min(focusedPane, paneCount - 1);
+      };
+
       if (existingIdx >= 0) {
         setFiles(prev => prev.map((f, i) => i === existingIdx ? { ...f, content: code } : f));
+        const target = pickTargetPane(existingIdx);
         setActiveIdx(existingIdx);
-        setPaneTabs(prev => prev.map((t, i) => i === focusedPane ? existingIdx : t));
+        setFocusedPane(target);
+        setPaneTabs(prev => prev.map((t, i) => i === target ? existingIdx : t));
       } else {
         const newIdx = files.length;
+        const target = pickTargetPane(newIdx);
         setFiles((prev) => [...prev, { name: fileName, language, content: code }]);
         setActiveIdx(newIdx);
-        setPaneTabs(prev => prev.map((t, i) => i === focusedPane ? newIdx : t));
+        setFocusedPane(target);
+        setPaneTabs(prev => prev.map((t, i) => i === target ? newIdx : t));
       }
       toast.success(`Opened: ${fileName}`);
     },

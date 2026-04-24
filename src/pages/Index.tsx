@@ -16,6 +16,7 @@ import { MemoryControlPanel } from "@/components/MemoryControlPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { PaywallModal } from "@/components/PaywallModal";
 import { ProjectIDE } from "@/components/ProjectIDE";
+import { NeuralNetworkBackground } from "@/components/NeuralNetworkBackground";
 import { ComputerUseAgent } from "@/components/ComputerUseAgent";
 import { FloatingChat } from "@/components/FloatingChat";
 import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";

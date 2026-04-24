@@ -303,19 +303,27 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
                       language={file.language}
                       value={file.content}
                       onChange={(val) => handleEditorChange(paneIndex, fileIdx, val)}
-                      theme="vs-dark"
+                      theme={EMMA_THEME_NAME}
+                      beforeMount={(monaco) => defineEmmaMonacoTheme(monaco)}
                       options={{
                         fontSize: 13,
-                        fontFamily: "'JetBrains Mono', monospace",
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        fontLigatures: true,
                         minimap: { enabled: layout.panes === 1 },
-                        padding: { top: 8 },
+                        padding: { top: 12, bottom: 12 },
                         scrollBeyondLastLine: false,
-                        renderLineHighlight: "line",
+                        renderLineHighlight: "all",
                         lineNumbers: "on",
                         automaticLayout: true,
                         smoothScrolling: true,
-                        cursorBlinking: "smooth",
+                        cursorBlinking: "phase",
+                        cursorSmoothCaretAnimation: "on",
+                        cursorWidth: 2,
                         bracketPairColorization: { enabled: true },
+                        guides: { bracketPairs: true, indentation: true, highlightActiveIndentation: true },
+                        roundedSelection: true,
+                        renderWhitespace: "selection",
+                        fontWeight: "500",
                       }}
                     />
                   ) : (

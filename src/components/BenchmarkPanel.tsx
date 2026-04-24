@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Play, History, TrendingUp, TrendingDown, Loader2, Target, ChevronDown, ChevronUp } from "lucide-react";
+import { Play, History, TrendingUp, TrendingDown, Loader2, Target, ChevronDown, ChevronUp, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { runBenchmarks, getBenchmarkHistory } from "@/lib/agi-api";
 import { toast } from "sonner";

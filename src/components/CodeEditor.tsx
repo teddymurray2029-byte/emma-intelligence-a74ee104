@@ -1,5 +1,5 @@
 import { useState, useEffect, forwardRef, useImperativeHandle, useRef } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import {
   X, Plus, Play, Terminal as TerminalIcon, Save, Loader2,
   Square, Columns2, Rows2, Columns3, Rows3, LayoutGrid,
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Terminal } from "./Terminal";
 import { ensureSession, shellExec, configureSandbox } from "@/lib/sandbox";
+import { defineEmmaMonacoTheme, EMMA_THEME_NAME } from "@/lib/monaco-theme";
 
 interface FileTab {
   name: string;

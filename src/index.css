@@ -316,6 +316,69 @@
   .emma-float { animation: emmaFloat 6s ease-in-out infinite; }
   .emma-fade-in { animation: emmaFadeIn 0.5s var(--ease-out-expo) both; }
   .emma-scale-in { animation: emmaScaleIn 0.35s var(--ease-spring) both; }
+
+  /* ─── Premium reusable utilities (v2 polish) ─── */
+  .emma-card {
+    position: relative;
+    border-radius: 1rem;
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.04) 0%, hsl(0 0% 100% / 0.01) 50%, transparent 100%),
+      hsl(var(--card) / 0.7);
+    border: 1px solid hsl(0 0% 100% / 0.06);
+    box-shadow: var(--emma-shadow-elevated);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    transition: transform 0.4s var(--ease-out-expo), box-shadow 0.4s var(--ease-out-expo), border-color 0.3s;
+  }
+  .emma-card:hover {
+    border-color: hsl(var(--primary) / 0.25);
+    box-shadow: var(--emma-shadow-deep);
+  }
+
+  .emma-premium-shadow { box-shadow: var(--emma-shadow-deep); }
+
+  .emma-button-glow {
+    position: relative;
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary-glow)) 100%);
+    color: hsl(var(--primary-foreground));
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.4),
+      0 8px 24px -8px hsl(var(--primary) / 0.55),
+      0 1px 0 hsl(0 0% 100% / 0.2) inset;
+    transition: transform 0.25s var(--ease-out-expo), box-shadow 0.25s var(--ease-out-expo), filter 0.25s;
+  }
+  .emma-button-glow:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.55),
+      0 14px 32px -8px hsl(var(--primary) / 0.7),
+      0 1px 0 hsl(0 0% 100% / 0.25) inset;
+  }
+  .emma-button-glow:active:not(:disabled) { transform: translateY(0); }
+
+  .emma-tab-active {
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.18), hsl(var(--emma-purple) / 0.14));
+    color: hsl(var(--primary-foreground));
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.35) inset,
+      0 6px 18px -6px hsl(var(--primary) / 0.5),
+      0 1px 0 hsl(0 0% 100% / 0.08) inset;
+  }
+
+  .emma-soft-grid {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.5) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 80%);
+  }
+
+  /* Reusable empty-state container */
+  .emma-empty-state {
+    @apply flex flex-col items-center justify-center text-center gap-3 px-6 py-12;
+  }
 }
 
 /* ─── Keyframes ─── */

@@ -30,10 +30,10 @@ export function ChatMessage({ message, index, conversationId, onBranch, onOpenIn
 
       <div className="flex flex-col gap-1 max-w-[80%]">
         <div
-          className={`rounded-2xl px-4 py-3 ${
+          className={`rounded-2xl px-4 py-3 transition-shadow ${
             isUser
-              ? "bg-primary text-primary-foreground rounded-br-sm"
-              : "emma-surface-elevated emma-glow-border rounded-bl-sm"
+              ? "bg-gradient-to-br from-primary to-primary-glow text-primary-foreground rounded-br-sm shadow-[0_8px_24px_-10px_hsl(var(--primary)/0.55)]"
+              : "emma-glass rounded-bl-sm hover:shadow-[0_12px_32px_-12px_hsl(var(--primary)/0.25)]"
           }`}
         >
           {isUser ? (

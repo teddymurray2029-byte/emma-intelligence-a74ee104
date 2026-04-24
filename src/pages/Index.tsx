@@ -239,24 +239,24 @@ export default function Index() {
       <div className="min-h-screen flex w-full">
         <EmmaSidebar conversations={user ? conversations : []} activeId={activeConvId} onSelect={handleSelectConv} onCreate={handleNewChat} onDelete={remove} onRename={rename} onNavigate={navigate} onSignOut={user ? signOut : () => navigate("/sign-in")} />
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-auto flex flex-col border-b border-border bg-card">
+          <header className="h-auto flex flex-col border-b border-border/60 bg-card/60 backdrop-blur-xl supports-[backdrop-filter]:bg-card/50">
             <div className="h-11 flex items-center px-3 gap-2">
               <SidebarTrigger />
-              <div className="flex items-center gap-2 flex-1">
-                <h1 className="text-sm font-semibold text-foreground">Emma</h1>
-                <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">AI Workspace</span>
-                {isAdmin && <span className="text-[10px] font-mono text-accent bg-accent/10 px-2 py-0.5 rounded-full">ADMIN</span>}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <h1 className="text-sm font-semibold tracking-tight emma-glow-text-static">Emma</h1>
+                <span className="text-[10px] font-mono text-muted-foreground bg-secondary/60 border border-white/[0.05] px-2 py-0.5 rounded-full">AI Workspace</span>
+                {isAdmin && <span className="text-[10px] font-mono text-accent bg-accent/10 border border-accent/20 px-2 py-0.5 rounded-full">ADMIN</span>}
               </div>
               {isChatMode && (
-                <div className="flex items-center gap-0.5 mr-2">
+                <div className="hidden sm:flex items-center gap-0.5 mr-2 p-0.5 bg-secondary/40 rounded-lg border border-white/[0.04]">
                   {(["concise", "standard", "deep", "direct"] as AnswerStyle[]).map(s => (
-                    <button key={s} onClick={() => setAnswerStyle(s)} className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${answerStyle === s ? s === "direct" ? "bg-accent/20 text-accent" : "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+                    <button key={s} onClick={() => setAnswerStyle(s)} className={`text-[9px] px-1.5 py-0.5 rounded-md transition-all ${answerStyle === s ? s === "direct" ? "bg-accent/25 text-accent shadow-sm" : "bg-primary/20 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
                       {s === "direct" ? <span className="flex items-center gap-0.5"><Zap className="h-2 w-2" />{s}</span> : s}
                     </button>
                   ))}
                 </div>
               )}
-              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-primary emma-pulse" /><span className="text-xs font-mono text-primary">ONLINE</span></div>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20"><div className="w-1.5 h-1.5 rounded-full bg-primary emma-pulse" /><span className="text-[10px] font-mono text-primary tracking-wider">ONLINE</span></div>
               {!isFullscreenMode && (
                 <Button variant="ghost" size="icon" className="h-8 w-8 ml-1" onClick={() => setShowRight(!showRight)}>
                   {showRight ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
@@ -278,17 +278,19 @@ export default function Index() {
                     <div ref={scrollRef} className="flex-1 overflow-y-auto">
                       <AnimatePresence mode="wait">
                         {showWelcome ? (
-                          <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center h-full px-6 py-12 gap-8">
-                            <EmmaAvatar size="lg" />
-                            <div className="text-center space-y-3 max-w-lg">
-                              <h2 className="text-2xl font-bold emma-glow-text">Hello, I'm Emma</h2>
+                          <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex flex-col items-center justify-center h-full px-6 py-12 gap-8 overflow-hidden">
+                            <div className="absolute inset-0 emma-soft-grid opacity-30 pointer-events-none" />
+                            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[480px] h-[480px] emma-conic-glow opacity-30 pointer-events-none" />
+                            <div className="relative"><EmmaAvatar size="lg" /></div>
+                            <div className="text-center space-y-3 max-w-lg relative">
+                              <h2 className="text-3xl font-bold emma-glow-text tracking-tight">Hello, I'm Emma</h2>
                               <p className="text-sm text-muted-foreground leading-relaxed">Your AI operating system — research, create, analyze, and build with autonomous agents, persistent memory, and source-grounded answers.</p>
                             </div>
-                            <div className="grid grid-cols-2 gap-2 max-w-md w-full">
+                            <div className="grid grid-cols-2 gap-2.5 max-w-md w-full relative">
                               {WELCOME_SUGGESTIONS.map((s) => (
-                                <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-surface-elevated emma-glow-border rounded-xl px-4 py-3 text-xs text-secondary-foreground hover:bg-secondary transition-colors text-left space-y-1">
-                                  <span className="text-[9px] font-mono text-primary uppercase">{s.mode}</span>
-                                  <p>{s.text}</p>
+                                <button key={s.text} onClick={() => { setMode(s.mode); if (s.mode === "chat") checkUsageAndSend(s.text); }} className="emma-card emma-hover-lift rounded-xl px-4 py-3 text-xs text-secondary-foreground text-left space-y-1 group">
+                                  <span className="text-[9px] font-mono text-primary uppercase tracking-wider group-hover:text-primary-glow transition-colors">{s.mode}</span>
+                                  <p className="leading-relaxed">{s.text}</p>
                                 </button>
                               ))}
                             </div>

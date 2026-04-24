@@ -245,7 +245,7 @@ export default function Landing() {
             variant="outline"
             className="h-14 px-8 text-base font-semibold emma-glass border-white/10 hover:border-primary/40 hover:bg-card/60"
           >
-            Get Yearly Access — $79
+            Get Membership — $12/month
           </Button>
         </motion.div>
 

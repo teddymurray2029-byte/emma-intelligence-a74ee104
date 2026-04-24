@@ -108,7 +108,7 @@ export function ProjectIDE({ getToken }: ProjectIDEProps) {
                 </ResizablePanel>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={72} minSize={30}>
-                  <FileExplorer files={files} onFileSelect={handleFileSelect} onFilesChange={handleFilesChange} selectedFile={selectedFile} />
+                  <FileExplorer files={files} onFileSelect={handleFileSelect} onFilesChange={handleFilesChange} selectedFile={selectedFile} projectKey={activeProject?.id} />
                 </ResizablePanel>
               </ResizablePanelGroup>
             )}

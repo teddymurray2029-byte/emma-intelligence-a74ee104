@@ -278,9 +278,7 @@ export default function Index() {
                     <div ref={scrollRef} className="flex-1 overflow-y-auto">
                       <AnimatePresence mode="wait">
                         {showWelcome ? (
-                          <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex flex-col items-center justify-center h-full px-6 py-12 gap-8 overflow-hidden">
-                            <div className="absolute inset-0 emma-soft-grid opacity-30 pointer-events-none" />
-                            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[480px] h-[480px] emma-conic-glow opacity-30 pointer-events-none" />
+                          <motion.div key="welcome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative flex flex-col items-center justify-center h-full px-6 py-12 gap-8">
                             <div className="relative"><EmmaAvatar size="lg" /></div>
                             <div className="text-center space-y-3 max-w-lg relative">
                               <h2 className="text-3xl font-bold emma-glow-text tracking-tight">Hello, I'm Emma</h2>

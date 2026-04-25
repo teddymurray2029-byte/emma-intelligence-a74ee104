@@ -116,29 +116,87 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden selection:bg-primary/30">
-      {/* Ambient background — layered */}
+      {/* ─── Sci-fi command-deck canvas ─── */}
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
-        {/* Conic glow */}
-        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[1200px] h-[1200px] opacity-40">
+        {/* Deep space gradient base */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,hsl(217_60%_12%/0.6),transparent_60%),radial-gradient(ellipse_at_bottom,hsl(262_50%_10%/0.5),transparent_60%)]" />
+
+        {/* Massive rotating conic glow — the "AGI core" */}
+        <div className="absolute top-[-30%] left-1/2 -translate-x-1/2 w-[1400px] h-[1400px] opacity-50">
           <div className="emma-conic-glow w-full h-full rounded-full" />
         </div>
-        {/* Soft color blobs */}
+
+        {/* Orbital rings — concentric, slow drift */}
+        <motion.div
+          aria-hidden
+          animate={{ rotate: 360 }}
+          transition={{ duration: 120, repeat: Infinity, ease: "linear" }}
+          className="absolute top-[8%] left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full border border-primary/15"
+          style={{ boxShadow: "inset 0 0 60px hsl(var(--primary) / 0.06)" }}
+        />
+        <motion.div
+          aria-hidden
+          animate={{ rotate: -360 }}
+          transition={{ duration: 180, repeat: Infinity, ease: "linear" }}
+          className="absolute top-[2%] left-1/2 -translate-x-1/2 w-[1200px] h-[1200px] rounded-full border border-purple-500/10"
+        />
+        <motion.div
+          aria-hidden
+          animate={{ rotate: 360 }}
+          transition={{ duration: 240, repeat: Infinity, ease: "linear" }}
+          className="absolute top-[-6%] left-1/2 -translate-x-1/2 w-[1600px] h-[1600px] rounded-full border border-cyan-400/10"
+        />
+
+        {/* Color blobs for depth */}
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full bg-primary/15 blur-[120px]" />
         <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-accent/10 blur-[120px]" />
-        <div className="absolute bottom-0 left-1/2 w-[800px] h-[800px] rounded-full bg-purple-500/8 blur-[140px]" />
-        {/* Grid */}
+        <div className="absolute bottom-0 left-1/2 w-[800px] h-[800px] rounded-full bg-purple-500/10 blur-[140px]" />
+
+        {/* Engineering grid */}
         <div
-          className="absolute inset-0 opacity-[0.04]"
+          className="absolute inset-0 opacity-[0.05]"
           style={{
             backgroundImage:
-              "linear-gradient(hsl(var(--foreground)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)",
-            backgroundSize: "60px 60px",
-            maskImage: "radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 80%)",
-            WebkitMaskImage: "radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 80%)",
+              "linear-gradient(hsl(var(--primary)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--primary)) 1px, transparent 1px)",
+            backgroundSize: "64px 64px",
+            maskImage: "radial-gradient(ellipse 75% 65% at 50% 30%, #000 25%, transparent 80%)",
+            WebkitMaskImage: "radial-gradient(ellipse 75% 65% at 50% 30%, #000 25%, transparent 80%)",
           }}
         />
+
+        {/* Starfield — static specks */}
+        <div
+          className="absolute inset-0 opacity-60"
+          style={{
+            backgroundImage:
+              "radial-gradient(1px 1px at 12% 18%, hsl(var(--foreground) / 0.6), transparent 50%)," +
+              "radial-gradient(1px 1px at 28% 72%, hsl(var(--primary) / 0.7), transparent 50%)," +
+              "radial-gradient(1.5px 1.5px at 47% 12%, hsl(var(--foreground) / 0.5), transparent 50%)," +
+              "radial-gradient(1px 1px at 63% 88%, hsl(190 95% 70% / 0.6), transparent 50%)," +
+              "radial-gradient(1px 1px at 81% 31%, hsl(var(--foreground) / 0.5), transparent 50%)," +
+              "radial-gradient(1.5px 1.5px at 92% 64%, hsl(262 70% 75% / 0.6), transparent 50%)," +
+              "radial-gradient(1px 1px at 7% 84%, hsl(var(--foreground) / 0.4), transparent 50%)," +
+              "radial-gradient(1px 1px at 38% 41%, hsl(var(--primary) / 0.5), transparent 50%)",
+            backgroundSize: "100% 100%",
+          }}
+        />
+
+        {/* Scanning beam — vertical sweep */}
+        <motion.div
+          aria-hidden
+          initial={{ y: "-20%" }}
+          animate={{ y: "120%" }}
+          transition={{ duration: 9, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-x-0 h-32 opacity-40"
+          style={{
+            background:
+              "linear-gradient(to bottom, transparent, hsl(var(--primary) / 0.18), transparent)",
+            filter: "blur(2px)",
+          }}
+        />
+
         {/* Vignette */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,hsl(var(--background))_95%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,hsl(var(--background))_95%)]" />
       </div>
 
       {/* Nav */}

@@ -1013,8 +1013,7 @@ serve(async (req) => {
     }
 
     if (action === "status") {
-      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, predictionCount, outcomeCount] = await Promise.all([
-      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount, candidateCount, deploymentCount] = await Promise.all([
+      const [memCount, goalCount, benchCount, improvCount, worldModelCount, metacogCount, safetyCount, transferCount, autonomousCount, sensoryCount] = await Promise.all([
         supabase.from("memory_episodes").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("goals").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "active"),
         supabase.from("benchmark_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
@@ -1025,11 +1024,11 @@ serve(async (req) => {
         supabase.from("transfer_knowledge").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("autonomous_runs").select("id", { count: "exact", head: true }).eq("user_id", userId),
         supabase.from("sensory_logs").select("id", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("world_model_predictions").select("id", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("world_model_prediction_outcomes").select("id", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("improvement_candidates").select("id", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("improvement_candidate_deployments").select("id", { count: "exact", head: true }).eq("user_id", userId),
       ]);
+      const predictionCount = { count: 0 };
+      const outcomeCount = { count: 0 };
+      const candidateCount = { count: 0 };
+      const deploymentCount = { count: 0 };
       const { data: lastBench } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
       const { data: recentGoals } = await supabase.from("goals").select("description, priority, status, goal_type").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       const { data: recentImprovements } = await supabase.from("improvement_logs").select("improvement_type, description, before_score, after_score, delta, accepted, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);

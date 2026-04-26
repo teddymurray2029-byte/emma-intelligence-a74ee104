@@ -1,6 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { getClerkUserId } from "../_shared/clerk-auth.ts";
+import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
+
+const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+
+async function getClerkUserId(req: Request): Promise<string | null> {
+  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+  if (!token || token.length < 20) return null;
+  if (token === Deno.env.get("SUPABASE_ANON_KEY")) return null;
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    return (payload.sub as string) || null;
+  } catch {
+    return null;
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

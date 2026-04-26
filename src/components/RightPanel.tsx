@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { Code2, Bot, Target, Database } from "lucide-react";
+import { Code2, Bot, Target, Database, Play } from "lucide-react";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
+import { CodeRunner } from "./CodeRunner";
 import { AgentSwarm } from "./AgentSwarm";
 import { BenchmarkPanel } from "./BenchmarkPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { ScrollArea } from "./ui/scroll-area";
 
-type Tab = "ide" | "agents" | "bench" | "memory";
+type Tab = "ide" | "run" | "agents" | "bench" | "memory";
 
 interface RightPanelProps {
   isProcessing?: boolean;
@@ -19,6 +20,7 @@ export function RightPanel({ isProcessing = false, editorRef, getToken }: RightP
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "ide", label: "IDE", icon: Code2 },
+    { id: "run", label: "Run", icon: Play },
     { id: "agents", label: "Agents", icon: Bot },
     { id: "bench", label: "Bench", icon: Target },
     { id: "memory", label: "Memory", icon: Database },
@@ -48,6 +50,7 @@ export function RightPanel({ isProcessing = false, editorRef, getToken }: RightP
 
       <div className="flex-1 overflow-hidden">
         {tab === "ide" && <CodeEditor ref={editorRef} getToken={getToken} />}
+        {tab === "run" && <CodeRunner />}
         {tab === "agents" && <AgentSwarm isProcessing={isProcessing} />}
         {tab === "bench" && (
           <ScrollArea className="h-full">
@@ -63,3 +66,4 @@ export function RightPanel({ isProcessing = false, editorRef, getToken }: RightP
     </div>
   );
 }
+

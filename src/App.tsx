@@ -17,6 +17,7 @@ import ApiKeys from "./pages/ApiKeys";
 import AdminLearning from "./pages/AdminLearning";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import NotFound from "./pages/NotFound";
+import Docs from "./pages/Docs";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,7 @@ const App = () => (
             <Route path="/sign-in/*" element={<ClerkSignIn />} />
             <Route path="/sign-up/*" element={<ClerkSignUp />} />
             <Route path="/" element={<Landing />} />
+            <Route path="/docs" element={<Docs />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

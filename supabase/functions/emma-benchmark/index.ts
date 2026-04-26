@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { guardRequest, jsonResponse, safeError } from "../_shared/request-guard.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
+import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
 import { confidenceIntervalFromScores, scorePrimary, scoreWithDifficulty, type BenchmarkQuestionRecord } from "./benchmark-service.ts";
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";

@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from "npm:jose@5.2.0";
+import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
 
 const CLERK_JWKS_URL = "https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json";
 const JWKS = createRemoteJWKSet(new URL(CLERK_JWKS_URL));

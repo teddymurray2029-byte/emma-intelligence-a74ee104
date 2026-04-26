@@ -1,9 +1,24 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
+
+const JWKS = createRemoteJWKSet(new URL("https://evident-mink-7.clerk.accounts.dev/.well-known/jwks.json"));
+
+async function getClerkUserId(req: Request): Promise<string | null> {
+  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+  if (!token || token.length < 20) return null;
+  if (token === Deno.env.get("SUPABASE_ANON_KEY")) return null;
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    return (payload.sub as string) || null;
+  } catch {
+    return null;
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -21,14 +36,11 @@ async function callAI(apiKey: string, messages: any[], model = "google/gemini-3-
 
 // Generate embeddings using AI gateway (text → 768-dim vector via a hashing approach)
 function generateEmbedding(text: string): number[] {
-  // Deterministic 768-dim pseudo-embedding from text content
-  // Uses character-level n-gram hashing for semantic similarity
   const dim = 768;
   const vec = new Float64Array(dim);
   const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
   const words = normalized.split(/\s+/);
-  
-  // Word-level hashing into vector dimensions
+
   for (const word of words) {
     for (let n = 1; n <= 3 && n <= word.length; n++) {
       for (let i = 0; i <= word.length - n; i++) {
@@ -42,14 +54,20 @@ function generateEmbedding(text: string): number[] {
       }
     }
   }
-  
-  // L2 normalize
+
   let norm = 0;
   for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
   norm = Math.sqrt(norm) || 1;
   const result: number[] = [];
   for (let i = 0; i < dim; i++) result.push(vec[i] / norm);
   return result;
+}
+
+function unauthorized() {
+  return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    status: 401,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 serve(async (req) => {
@@ -59,14 +77,19 @@ serve(async (req) => {
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    const { action, user_id } = await req.json();
+    const { action, user_id: _ignoredUserId } = await req.json();
 
     if (action === "run_autonomous_loop") {
-      // This is called by pg_cron — no user auth needed, it iterates over users with active goals
+      // Restricted to server-side cron via shared secret. Never exposed to clients.
+      const cronSecret = Deno.env.get("CRON_SECRET");
+      const provided = req.headers.get("x-cron-secret");
+      if (!cronSecret || !provided || provided !== cronSecret) {
+        return unauthorized();
+      }
+
       const startMs = Date.now();
       const results: any[] = [];
 
-      // Get users with active goals
       const { data: activeUsers } = await supabase
         .from("goals")
         .select("user_id")
@@ -75,9 +98,8 @@ serve(async (req) => {
 
       const uniqueUsers = [...new Set((activeUsers || []).map((g: any) => g.user_id))];
 
-      for (const uid of uniqueUsers.slice(0, 3)) { // Process max 3 users per run
+      for (const uid of uniqueUsers.slice(0, 3)) {
         try {
-          // Get active goals for this user
           const { data: goals } = await supabase
             .from("goals")
             .select("*")
@@ -88,7 +110,6 @@ serve(async (req) => {
 
           if (!goals?.length) continue;
 
-          // Get world model state
           const { data: worldModel } = await supabase
             .from("world_model_states")
             .select("state")
@@ -97,7 +118,6 @@ serve(async (req) => {
             .limit(1)
             .single();
 
-          // Get recent memories
           const { data: memories } = await supabase
             .from("memory_episodes")
             .select("content, episode_type")
@@ -108,7 +128,6 @@ serve(async (req) => {
           const memoryContext = (memories || []).map((m: any) => m.content).join("\n");
           const goalContext = goals.map((g: any) => `[P${g.priority}|${g.goal_type}] ${g.description}`).join("\n");
 
-          // Autonomous reasoning: decide what to work on
           const decisionResult = await callAI(LOVABLE_API_KEY, [
             {
               role: "system",
@@ -130,13 +149,11 @@ Return ONLY JSON: {"task": "description of task", "goal_id": "which goal this ad
             reasoning = parsed.reasoning || reasoning;
           } catch {}
 
-          // Execute the autonomous task
           const executionResult = await callAI(LOVABLE_API_KEY, [
             { role: "system", content: `You are Emma's autonomous execution engine. Complete this self-directed task thoroughly. World model and goal context are provided for informed decision-making.` },
             { role: "user", content: `Task: ${task}\n\nContext:\nGoals: ${goalContext}\nWorld: ${JSON.stringify(worldModel?.state || {}).slice(0, 500)}` }
           ]);
 
-          // Evaluate quality
           const evalResult = await callAI(LOVABLE_API_KEY, [
             { role: "system", content: `Rate quality 1-10. Return ONLY JSON: {"quality": <1-10>, "progress": "description of goal progress"}` },
             { role: "user", content: `Task: ${task}\nResult: ${executionResult.slice(0, 500)}` }
@@ -148,7 +165,6 @@ Return ONLY JSON: {"task": "description of task", "goal_id": "which goal this ad
             quality = parsed.quality || 5;
           } catch {}
 
-          // Store memory of autonomous action
           const embedding = generateEmbedding(`autonomous: ${task} ${executionResult.slice(0, 200)}`);
           await supabase.from("memory_episodes").insert({
             user_id: uid,
@@ -158,7 +174,6 @@ Return ONLY JSON: {"task": "description of task", "goal_id": "which goal this ad
             embedding: `[${embedding.join(",")}]`,
           });
 
-          // Log the autonomous run
           await supabase.from("autonomous_runs").insert({
             user_id: uid,
             trigger_type: "scheduled",
@@ -182,11 +197,14 @@ Return ONLY JSON: {"task": "description of task", "goal_id": "which goal this ad
     }
 
     if (action === "get_runs") {
-      if (!user_id) throw new Error("user_id required");
+      // Require Clerk JWT and only return runs for the authenticated user.
+      const authedUserId = await getClerkUserId(req);
+      if (!authedUserId) return unauthorized();
+
       const { data } = await supabase
         .from("autonomous_runs")
         .select("*")
-        .eq("user_id", user_id)
+        .eq("user_id", authedUserId)
         .order("created_at", { ascending: false })
         .limit(20);
 
@@ -198,6 +216,6 @@ Return ONLY JSON: {"task": "description of task", "goal_id": "which goal this ad
     return new Response(JSON.stringify({ error: "Invalid action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("autonomous-loop error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

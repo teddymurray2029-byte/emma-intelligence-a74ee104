@@ -47,13 +47,19 @@ serve(async (req) => {
       });
     }
 
-    // Mark as pending-review (admin manually verifies in Cash App), but optimistically grant access
-    // tied to the requesting fingerprint / user so they can keep using the app.
+    // Mark as submitted (pending admin verification). DO NOT grant paid access here —
+    // a valid reference code can be obtained without making a real payment, so optimistic
+    // access would be a free-money bypass. Only an admin-verified payment grants is_paid.
     await supabase.from("payments").update({
-      status: "submitted",
+      status: payment.status === "admin_verified" ? "admin_verified" : "submitted",
+      user_id: clerkUser?.id || payment.user_id || null,
+      fingerprint: fingerprint || payment.fingerprint || null,
     }).eq("id", payment.id);
 
-    if (fingerprint) {
+    // Only treat the payment as paid if an admin has already verified it.
+    const isPaid = payment.status === "admin_verified";
+
+    if (isPaid && fingerprint) {
       await supabase.from("usage_tracking").upsert({
         fingerprint,
         is_paid: true,
@@ -62,11 +68,15 @@ serve(async (req) => {
       }, { onConflict: "fingerprint" });
     }
 
-    if (clerkUser?.id) {
+    if (isPaid && clerkUser?.id) {
       await supabase.from("usage_tracking").update({ is_paid: true }).eq("user_id", clerkUser.id);
     }
 
-    return new Response(JSON.stringify({ paid: true }), {
+    return new Response(JSON.stringify({
+      paid: isPaid,
+      status: isPaid ? "verified" : "pending_admin_review",
+      message: isPaid ? "Payment verified." : "Submitted for admin review. Access will be granted once your Cash App payment is confirmed.",
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {

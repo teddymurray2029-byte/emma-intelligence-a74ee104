@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Buffer } from "node:buffer";
 import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
-import { PNG } from "npm:pngjs@7.0.0";
+import { PNG } from "https://esm.sh/pngjs@7.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

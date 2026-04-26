@@ -220,31 +220,13 @@ serve(async (req) => {
     }
 
     if (action === "history") {
-      const { data: runs } = await supabase.from("benchmark_runs").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(50);
-      return jsonResponse({ runs: runs || [] });
-      return new Response(JSON.stringify({
-        score: normalizedScore,
-        previousScore,
-        delta,
-        promptVersion,
-        categoryScores: catScoresNormalized,
-        results,
-        confidenceInterval: confidence,
-        scorer: scorerVersion || { scorer_name: "deterministic_parser", version: "v1" },
-        benchmarkTier: resolvedTier,
-        split: selectedSplit?.split_name || null,
-        message: delta !== null ? `SCORE: ${previousScore} → ${normalizedScore} (${delta >= 0 ? "+" : ""}${delta}) [Prompt v${promptVersion}]` : `SCORE: ${normalizedScore}/100 [Prompt v${promptVersion}]`,
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
-    if (action === "history") {
       const { data: runs } = await supabase
         .from("benchmark_runs")
-        .select("*, benchmark_run_configs(evaluation_tier, requested_category), benchmark_dataset_splits(split_name)")
+        .select("*")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(50);
-      return new Response(JSON.stringify({ runs: runs || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return jsonResponse({ runs: runs || [] });
     }
 
     return jsonResponse({ error: "Invalid action" }, 400);

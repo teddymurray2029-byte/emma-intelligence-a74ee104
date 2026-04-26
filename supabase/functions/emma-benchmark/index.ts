@@ -86,7 +86,8 @@ serve(async (req) => {
       }> = [];
       const categoryScores: Record<string, { total: number; max: number; count: number }> = {};
 
-      for (const q of questions) {
+      for (const row of questions) {
+        const q = row as { category: string; question: string; expected_answer: string | null; difficulty: number };
         const startedAt = Date.now();
         const answer = await callAI(LOVABLE_API_KEY, systemPrompt, q.question);
         const score = scoreAnswer(q.expected_answer, answer);

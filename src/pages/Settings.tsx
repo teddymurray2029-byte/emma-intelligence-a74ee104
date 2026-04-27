@@ -1,4 +1,4 @@
-import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink, Award } from "lucide-react";
+import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink, Award, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";

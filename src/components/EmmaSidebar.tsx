@@ -10,6 +10,8 @@ import {
   Brain,
   Shield,
   Kanban,
+  Search,
+  X,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +55,13 @@ export function EmmaSidebar({
   const collapsed = state === "collapsed";
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [search, setSearch] = useState("");
+
+  const filteredConversations = search.trim()
+    ? conversations.filter((c) =>
+        c.title.toLowerCase().includes(search.trim().toLowerCase())
+      )
+    : conversations;
 
   const startRename = (c: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -95,12 +104,45 @@ export function EmmaSidebar({
           </Button>
         </div>
 
+        {/* Conversation Search */}
+        {!collapsed && (
+          <div className="px-3 mb-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search conversations..."
+                className="w-full h-8 pl-7 pr-7 text-sm bg-secondary/50 border border-border rounded-md outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Conversations */}
         <SidebarGroup>
-          <SidebarGroupLabel>Conversations</SidebarGroupLabel>
+          <SidebarGroupLabel>
+            Conversations
+            {search && ` (${filteredConversations.length})`}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {conversations.map((c) => (
+              {filteredConversations.length === 0 && search && !collapsed && (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  No matches for "{search}"
+                </div>
+              )}
+              {filteredConversations.map((c) => (
                 <SidebarMenuItem key={c.id}>
                   <SidebarMenuButton
                     onClick={() => onSelect(c.id)}

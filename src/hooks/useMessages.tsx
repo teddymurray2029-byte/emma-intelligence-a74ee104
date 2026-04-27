@@ -26,11 +26,12 @@ export function useMessages(conversationId: string | null, getToken?: () => Prom
     setLoading(false);
   }, [conversationId, tokenGetter]);
 
-  const saveMessage = async (role: string, content: string, metadata?: Record<string, any>) => {
-    if (!conversationId) return;
+  const saveMessage = async (role: string, content: string, metadata?: Record<string, any>, convIdOverride?: string) => {
+    const convId = convIdOverride || conversationId;
+    if (!convId) return;
     try {
       await dbProxy("save_message", {
-        conversation_id: conversationId,
+        conversation_id: convId,
         role,
         content,
         metadata: metadata || {},

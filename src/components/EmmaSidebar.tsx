@@ -9,6 +9,7 @@ import {
   GitBranch,
   Brain,
   Shield,
+  Kanban,
 } from "lucide-react";
 import {
   Sidebar,
@@ -157,6 +158,12 @@ export function EmmaSidebar({
                 <SidebarMenuButton onClick={() => onNavigate("/agents")}>
                   <Bot className="h-4 w-4" />
                   {!collapsed && <span>Agents</span>}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => onNavigate("/projects")}>
+                  <Kanban className="h-4 w-4" />
+                  {!collapsed && <span>Projects</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

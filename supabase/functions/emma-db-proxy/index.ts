@@ -19,7 +19,9 @@ serve(async (req) => {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const supabase = anonAllowed.includes(action) ? guard.adminClient : guard.userClient;
+    // Auth is verified via Clerk JWT in guardRequest; use admin client for DB access
+    // since RLS policies only grant service_role and Clerk JWTs aren't recognized by Supabase RLS.
+    const supabase = guard.adminClient;
 
     switch (action) {
       case "list_conversations": {

@@ -20,7 +20,7 @@ const SUBSYSTEMS = [
 
 export default function Settings() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -37,7 +37,7 @@ export default function Settings() {
           <h3 className="text-sm font-medium text-foreground">Profile</h3>
           <div className="text-xs text-muted-foreground space-y-1">
             <p>Email: <span className="text-foreground">{user?.email}</span></p>
-            <p>Role: <span className="text-foreground font-mono">user</span></p>
+            <p>Role: <span className={`font-mono ${isAdmin ? "text-primary font-semibold" : "text-foreground"}`}>{isAdmin ? "admin" : "user"}</span></p>
           </div>
         </div>
 

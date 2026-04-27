@@ -171,23 +171,23 @@ export default function Index() {
       const prompt = input.slice(7).trim();
       if (!prompt) { toast.error("Please provide an image prompt"); return; }
       const userMsg: Message = { role: "user", content: input };
-      addLocal(userMsg); await saveMessage("user", input);
+      addLocal(userMsg); await saveMessage("user", input, undefined, convId);
       setIsLoading(true);
       try {
         updateLastAssistant("🎨 Generating image...");
         const { imageUrl, text } = await generateImage(prompt);
         const content = text || `Generated image: "${prompt}"`;
         updateLastAssistant(content, imageUrl);
-        await saveMessage("assistant", content, { imageUrl });
+        await saveMessage("assistant", content, { imageUrl }, convId);
       } catch (err: any) {
         updateLastAssistant(`Failed: ${err.message}`);
-        await saveMessage("assistant", `Failed: ${err.message}`);
+        await saveMessage("assistant", `Failed: ${err.message}`, undefined, convId);
       }
       setIsLoading(false); return;
     }
 
     const userMsg: Message = { role: "user", content: input, mode };
-    addLocal(userMsg); await saveMessage("user", input);
+    addLocal(userMsg); await saveMessage("user", input, undefined, convId);
     setIsLoading(true);
     let assistantSoFar = "";
 
@@ -198,7 +198,7 @@ export default function Index() {
         onDone: async () => {
           setIsLoading(false);
           if (assistantSoFar) {
-            await saveMessage("assistant", assistantSoFar);
+            await saveMessage("assistant", assistantSoFar, undefined, convId);
             const codeBlocks = assistantSoFar.match(/```(\w+)?\n([\s\S]*?)```/g);
             if (codeBlocks?.length && assistantSoFar.length > 500) {
               const firstBlock = codeBlocks[0];

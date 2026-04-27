@@ -248,9 +248,9 @@ serve(async (req) => {
 });
 
 async function handleError(response: Response) {
-  if (response.status === 429) return new Response(JSON.stringify({ error: "Rate limited. Please wait a moment." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  if (response.status === 402) return new Response(JSON.stringify({ error: "AI credits exhausted." }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (response.status === 429) return new Response(JSON.stringify({ error: "Rate limited. Please wait a moment and try again.", code: "RATE_LIMITED" }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (response.status === 402) return new Response(JSON.stringify({ error: "AI credits exhausted. Add credits in Settings → Workspace → Usage to keep chatting.", code: "CREDITS_EXHAUSTED" }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const t = await response.text();
   console.error("emma-chat error:", response.status, t);
-  return new Response(JSON.stringify({ error: "AI gateway error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ error: "AI gateway error", code: "GATEWAY_ERROR" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }

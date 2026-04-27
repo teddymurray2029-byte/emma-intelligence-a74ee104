@@ -1251,6 +1251,84 @@ export type Database = {
           },
         ]
       }
+      pm_jira_config: {
+        Row: {
+          created_at: string
+          email: string
+          enabled: boolean
+          id: string
+          last_sync_at: string | null
+          project_key: string
+          site_url: string
+          updated_at: string
+          webhook_secret: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          enabled?: boolean
+          id?: string
+          last_sync_at?: string | null
+          project_key: string
+          site_url: string
+          updated_at?: string
+          webhook_secret?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          enabled?: boolean
+          id?: string
+          last_sync_at?: string | null
+          project_key?: string
+          site_url?: string
+          updated_at?: string
+          webhook_secret?: string | null
+          workspace_id?: string
+        }
+        Relationships: []
+      }
+      pm_jira_links: {
+        Row: {
+          created_at: string
+          emma_id: string
+          entity_type: string
+          id: string
+          jira_id: string | null
+          jira_key: string
+          last_hash: string | null
+          last_pulled_at: string | null
+          last_pushed_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          emma_id: string
+          entity_type: string
+          id?: string
+          jira_id?: string | null
+          jira_key: string
+          last_hash?: string | null
+          last_pulled_at?: string | null
+          last_pushed_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          emma_id?: string
+          entity_type?: string
+          id?: string
+          jira_id?: string | null
+          jira_key?: string
+          last_hash?: string | null
+          last_pulled_at?: string | null
+          last_pushed_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: []
+      }
       pm_members: {
         Row: {
           display_name: string | null
@@ -1326,6 +1404,69 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pm_slack_config: {
+        Row: {
+          created_at: string
+          default_channel: string | null
+          id: string
+          installed: boolean
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          default_channel?: string | null
+          id?: string
+          installed?: boolean
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          default_channel?: string | null
+          id?: string
+          installed?: boolean
+          workspace_id?: string
+        }
+        Relationships: []
+      }
+      pm_sprint_snapshots: {
+        Row: {
+          completed_points: number
+          completed_stories: number
+          created_at: string
+          id: string
+          remaining_points: number
+          snapshot_date: string
+          sprint_id: string
+          total_points: number
+          total_stories: number
+          workspace_id: string
+        }
+        Insert: {
+          completed_points?: number
+          completed_stories?: number
+          created_at?: string
+          id?: string
+          remaining_points?: number
+          snapshot_date: string
+          sprint_id: string
+          total_points?: number
+          total_stories?: number
+          workspace_id: string
+        }
+        Update: {
+          completed_points?: number
+          completed_stories?: number
+          created_at?: string
+          id?: string
+          remaining_points?: number
+          snapshot_date?: string
+          sprint_id?: string
+          total_points?: number
+          total_stories?: number
+          workspace_id?: string
+        }
+        Relationships: []
       }
       pm_sprints: {
         Row: {

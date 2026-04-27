@@ -54,6 +54,13 @@ These must be configured in the backend secrets dashboard for full functionality
 
 ## Features
 
+### 🗂️ Conversation Management
+
+- **Sidebar search bar** — instantly filter past conversations by keyword/title
+- **Inline rename** (double-click) and delete with hover actions
+- **Branching** — fork conversations into child threads (visualized with a branch icon)
+- **Persistent history** — every message is saved and reloads on selection
+
 ### 🧠 Multi-Agent Cognitive Pipeline
 
 Every complex query passes through four internal reasoning agents:
@@ -64,6 +71,18 @@ Every complex query passes through four internal reasoning agents:
 | **Critic** | Adversarial analysis — attacks logic and assumptions |
 | **Skeptic** | Uncertainty detection — demands evidence |
 | **Inventor** | Lateral thinking — fundamentally different approaches |
+
+### 📋 Projects — Agile Project Management
+
+A full Jira + Slack-style workflow built into Emma:
+
+- **Workspaces** with role-based access: `admin`, `moderator`, `contributor`, `viewer`
+- **Backlog, Board (Kanban), Sprints, Epics, Stories, Sub-tasks** with story points and priorities
+- **One-click AI story execution** — Emma plans, branches, codes, and opens a PR for any user story
+- **Pipeline view** — track stories from backlog → in-progress → review → done
+- **Built-in chat** with channels, threads, mentions, reactions, and attachments
+- **Invite links** with expirable tokens (`/projects/join/:token`)
+- **Activity feed & notifications** for every change
 
 ### 🖥️ Computer-Use Agent
 

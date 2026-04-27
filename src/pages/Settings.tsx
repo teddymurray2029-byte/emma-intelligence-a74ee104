@@ -1,7 +1,8 @@
-import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink } from "lucide-react";
+import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import ConstitutionEditor from "@/components/ConstitutionEditor";
 
 const INTEGRATIONS = [
   { name: "E2B Code Execution", desc: "Sandboxed code execution environment", key: "E2B_API_KEY", icon: Zap, configured: true },
@@ -39,6 +40,19 @@ export default function Settings() {
             <p>Email: <span className="text-foreground">{user?.email}</span></p>
             <p>Role: <span className={`font-mono ${isAdmin ? "text-primary font-semibold" : "text-foreground"}`}>{isAdmin ? "admin" : "user"}</span></p>
           </div>
+        </div>
+
+        <ConstitutionEditor />
+
+        <div className="emma-surface-elevated emma-glow-border rounded-xl p-5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Award className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-medium text-foreground">Public Capability Report</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">Emma's live benchmark scores. Auto-published.</p>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate("/capabilities")}>
+            View report <ExternalLink className="h-3 w-3" />
+          </Button>
         </div>
 
         {/* AGI Subsystems */}

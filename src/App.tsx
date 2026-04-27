@@ -18,6 +18,7 @@ import AdminLearning from "./pages/AdminLearning";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import NotFound from "./pages/NotFound";
 import Docs from "./pages/Docs";
+import Capabilities from "./pages/Capabilities";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,7 @@ const App = () => (
             <Route path="/sign-up/*" element={<ClerkSignUp />} />
             <Route path="/" element={<Landing />} />
             <Route path="/docs" element={<Docs />} />
+            <Route path="/capabilities" element={<Capabilities />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

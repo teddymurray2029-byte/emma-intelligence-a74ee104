@@ -44,6 +44,119 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_installs: {
+        Row: {
+          id: string
+          installed_at: string
+          marketplace_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          installed_at?: string
+          marketplace_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          installed_at?: string
+          marketplace_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_installs_marketplace_id_fkey"
+            columns: ["marketplace_id"]
+            isOneToOne: false
+            referencedRelation: "agent_marketplace"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_marketplace: {
+        Row: {
+          author_id: string
+          category: string
+          created_at: string
+          description: string
+          id: string
+          install_count: number
+          manifest: Json
+          name: string
+          published: boolean
+          rating: number
+        }
+        Insert: {
+          author_id: string
+          category?: string
+          created_at?: string
+          description: string
+          id?: string
+          install_count?: number
+          manifest?: Json
+          name: string
+          published?: boolean
+          rating?: number
+        }
+        Update: {
+          author_id?: string
+          category?: string
+          created_at?: string
+          description?: string
+          id?: string
+          install_count?: number
+          manifest?: Json
+          name?: string
+          published?: boolean
+          rating?: number
+        }
+        Relationships: []
+      }
+      agent_tools: {
+        Row: {
+          code: string | null
+          created_at: string
+          description: string
+          endpoint: string | null
+          id: string
+          invocations: number
+          name: string
+          spec: Json
+          status: string
+          updated_at: string
+          user_id: string | null
+          version: number
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          description: string
+          endpoint?: string | null
+          id?: string
+          invocations?: number
+          name: string
+          spec?: Json
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          version?: number
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          description?: string
+          endpoint?: string | null
+          id?: string
+          invocations?: number
+          name?: string
+          spec?: Json
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          version?: number
+        }
+        Relationships: []
+      }
       api_keys: {
         Row: {
           created_at: string
@@ -179,6 +292,132 @@ export type Database = {
         }
         Relationships: []
       }
+      capability_scores: {
+        Row: {
+          benchmark: string
+          id: string
+          max_score: number
+          measured_at: string
+          model_config: Json
+          notes: string | null
+          score: number
+        }
+        Insert: {
+          benchmark: string
+          id?: string
+          max_score?: number
+          measured_at?: string
+          model_config?: Json
+          notes?: string | null
+          score: number
+        }
+        Update: {
+          benchmark?: string
+          id?: string
+          max_score?: number
+          measured_at?: string
+          model_config?: Json
+          notes?: string | null
+          score?: number
+        }
+        Relationships: []
+      }
+      causal_edges: {
+        Row: {
+          cause: string
+          created_at: string
+          domain: string | null
+          effect: string
+          evidence_count: number
+          id: string
+          strength: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cause: string
+          created_at?: string
+          domain?: string | null
+          effect: string
+          evidence_count?: number
+          id?: string
+          strength?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cause?: string
+          created_at?: string
+          domain?: string | null
+          effect?: string
+          evidence_count?: number
+          id?: string
+          strength?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      collective_knowledge: {
+        Row: {
+          created_at: string
+          curated: boolean
+          domain: string | null
+          embedding: string | null
+          id: string
+          problem_pattern: string
+          solution_pattern: string
+          success_count: number
+        }
+        Insert: {
+          created_at?: string
+          curated?: boolean
+          domain?: string | null
+          embedding?: string | null
+          id?: string
+          problem_pattern: string
+          solution_pattern: string
+          success_count?: number
+        }
+        Update: {
+          created_at?: string
+          curated?: boolean
+          domain?: string | null
+          embedding?: string | null
+          id?: string
+          problem_pattern?: string
+          solution_pattern?: string
+          success_count?: number
+        }
+        Relationships: []
+      }
+      constitutions: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          rules: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          rules: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          rules?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -213,6 +452,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      defi_strategies: {
+        Row: {
+          approved: boolean
+          chain: string
+          created_at: string
+          id: string
+          name: string
+          simulation_result: Json | null
+          strategy: Json
+          user_id: string
+        }
+        Insert: {
+          approved?: boolean
+          chain?: string
+          created_at?: string
+          id?: string
+          name: string
+          simulation_result?: Json | null
+          strategy?: Json
+          user_id: string
+        }
+        Update: {
+          approved?: boolean
+          chain?: string
+          created_at?: string
+          id?: string
+          name?: string
+          simulation_result?: Json | null
+          strategy?: Json
+          user_id?: string
+        }
+        Relationships: []
       }
       fingerprint_links: {
         Row: {
@@ -387,6 +659,42 @@ export type Database = {
         }
         Relationships: []
       }
+      memory_summaries: {
+        Row: {
+          created_at: string
+          embedding: string | null
+          id: string
+          level: string
+          range_end: string
+          range_start: string
+          source_episode_count: number
+          summary: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          level: string
+          range_end: string
+          range_start: string
+          source_episode_count?: number
+          summary: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          level?: string
+          range_end?: string
+          range_start?: string
+          source_episode_count?: number
+          summary?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           content: string
@@ -491,6 +799,54 @@ export type Database = {
           stripe_customer_id?: string | null
           stripe_session_id?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      plan_nodes: {
+        Row: {
+          action: string
+          created_at: string
+          depth: number
+          expected_utility: number | null
+          goal_id: string | null
+          id: string
+          parent_id: string | null
+          plan_id: string
+          rationale: string | null
+          result: Json | null
+          status: string
+          user_id: string
+          visit_count: number
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          depth?: number
+          expected_utility?: number | null
+          goal_id?: string | null
+          id?: string
+          parent_id?: string | null
+          plan_id: string
+          rationale?: string | null
+          result?: Json | null
+          status?: string
+          user_id: string
+          visit_count?: number
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          depth?: number
+          expected_utility?: number | null
+          goal_id?: string | null
+          id?: string
+          parent_id?: string | null
+          plan_id?: string
+          rationale?: string | null
+          result?: Json | null
+          status?: string
+          user_id?: string
+          visit_count?: number
         }
         Relationships: []
       }

@@ -10,6 +10,8 @@ import {
   Brain,
   Shield,
   Kanban,
+  Search,
+  X,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +55,13 @@ export function EmmaSidebar({
   const collapsed = state === "collapsed";
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [search, setSearch] = useState("");
+
+  const filteredConversations = search.trim()
+    ? conversations.filter((c) =>
+        c.title.toLowerCase().includes(search.trim().toLowerCase())
+      )
+    : conversations;
 
   const startRename = (c: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();

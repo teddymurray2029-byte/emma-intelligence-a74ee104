@@ -19,6 +19,7 @@ import PaymentSuccess from "./pages/PaymentSuccess";
 import NotFound from "./pages/NotFound";
 import Docs from "./pages/Docs";
 import Capabilities from "./pages/Capabilities";
+import Marketplace from "./pages/Marketplace";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/capabilities" element={<Capabilities />} />
+            <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

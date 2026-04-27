@@ -1,4 +1,4 @@
-import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink, Award } from "lucide-react";
+import { ArrowLeft, Key, Shield, Globe, Zap, CheckCircle2, AlertCircle, Brain, Target, Database, RefreshCw, ExternalLink, Award, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -52,6 +52,17 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground">Emma's live benchmark scores. Auto-published.</p>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate("/capabilities")}>
             View report <ExternalLink className="h-3 w-3" />
+          </Button>
+        </div>
+
+        <div className="emma-surface-elevated emma-glow-border rounded-xl p-5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-medium text-foreground">Agent Marketplace</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">Browse, install, and publish agents, tools, workflows, and personas.</p>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate("/marketplace")}>
+            Open marketplace <ExternalLink className="h-3 w-3" />
           </Button>
         </div>
 

@@ -850,6 +850,688 @@ export type Database = {
         }
         Relationships: []
       }
+      pm_activity: {
+        Row: {
+          action: string
+          actor_id: string
+          created_at: string
+          id: string
+          payload: Json
+          story_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          action: string
+          actor_id: string
+          created_at?: string
+          id?: string
+          payload?: Json
+          story_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string
+          created_at?: string
+          id?: string
+          payload?: Json
+          story_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_activity_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_activity_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_ai_runs: {
+        Row: {
+          branch: string | null
+          finished_at: string | null
+          id: string
+          logs: string | null
+          plan: Json | null
+          pr_url: string | null
+          result: Json | null
+          started_at: string
+          status: string
+          story_id: string
+          triggered_by: string
+          workspace_id: string
+        }
+        Insert: {
+          branch?: string | null
+          finished_at?: string | null
+          id?: string
+          logs?: string | null
+          plan?: Json | null
+          pr_url?: string | null
+          result?: Json | null
+          started_at?: string
+          status?: string
+          story_id: string
+          triggered_by: string
+          workspace_id: string
+        }
+        Update: {
+          branch?: string | null
+          finished_at?: string | null
+          id?: string
+          logs?: string | null
+          plan?: Json | null
+          pr_url?: string | null
+          result?: Json | null
+          started_at?: string
+          status?: string
+          story_id?: string
+          triggered_by?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_ai_runs_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_ai_runs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_attachments: {
+        Row: {
+          created_at: string
+          filename: string
+          id: string
+          path: string
+          size: number | null
+          story_id: string
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string
+          filename: string
+          id?: string
+          path: string
+          size?: number | null
+          story_id: string
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string
+          filename?: string
+          id?: string
+          path?: string
+          size?: number | null
+          story_id?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_attachments_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_channel_members: {
+        Row: {
+          channel_id: string
+          id: string
+          joined_at: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          joined_at?: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          joined_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_channel_members_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "pm_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_channels: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          is_private: boolean
+          name: string
+          topic: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          is_private?: boolean
+          name: string
+          topic?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          is_private?: boolean
+          name?: string
+          topic?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_channels_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_chat_messages: {
+        Row: {
+          attachments: Json | null
+          author_id: string
+          author_name: string | null
+          body: string
+          channel_id: string | null
+          created_at: string
+          edited_at: string | null
+          id: string
+          mentions: string[] | null
+          parent_message_id: string | null
+          reactions: Json | null
+          story_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          attachments?: Json | null
+          author_id: string
+          author_name?: string | null
+          body: string
+          channel_id?: string | null
+          created_at?: string
+          edited_at?: string | null
+          id?: string
+          mentions?: string[] | null
+          parent_message_id?: string | null
+          reactions?: Json | null
+          story_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          attachments?: Json | null
+          author_id?: string
+          author_name?: string | null
+          body?: string
+          channel_id?: string | null
+          created_at?: string
+          edited_at?: string | null
+          id?: string
+          mentions?: string[] | null
+          parent_message_id?: string | null
+          reactions?: Json | null
+          story_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_chat_messages_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "pm_channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_chat_messages_parent_message_id_fkey"
+            columns: ["parent_message_id"]
+            isOneToOne: false
+            referencedRelation: "pm_chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_chat_messages_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_chat_messages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_comments: {
+        Row: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          story_id: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          created_at?: string
+          id?: string
+          story_id: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          story_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_comments_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_epics: {
+        Row: {
+          color: string | null
+          created_at: string
+          description: string | null
+          id: string
+          status: string
+          title: string
+          workspace_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          status?: string
+          title: string
+          workspace_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          status?: string
+          title?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_epics_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_invites: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string
+          role: Database["public"]["Enums"]["pm_role"]
+          token: string
+          workspace_id: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by: string
+          role?: Database["public"]["Enums"]["pm_role"]
+          token: string
+          workspace_id: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string
+          role?: Database["public"]["Enums"]["pm_role"]
+          token?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_invites_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_members: {
+        Row: {
+          display_name: string | null
+          email: string | null
+          id: string
+          joined_at: string
+          role: Database["public"]["Enums"]["pm_role"]
+          user_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          joined_at?: string
+          role?: Database["public"]["Enums"]["pm_role"]
+          user_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          joined_at?: string
+          role?: Database["public"]["Enums"]["pm_role"]
+          user_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_members_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          payload: Json
+          read_at: string | null
+          user_id: string
+          workspace_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          payload?: Json
+          read_at?: string | null
+          user_id: string
+          workspace_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          payload?: Json
+          read_at?: string | null
+          user_id?: string
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_notifications_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_sprints: {
+        Row: {
+          created_at: string
+          end_at: string | null
+          goal: string | null
+          id: string
+          name: string
+          start_at: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          end_at?: string | null
+          goal?: string | null
+          id?: string
+          name: string
+          start_at?: string | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          end_at?: string | null
+          goal?: string | null
+          id?: string
+          name?: string
+          start_at?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_sprints_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_stories: {
+        Row: {
+          acceptance_criteria: string | null
+          assignee_id: string | null
+          created_at: string
+          description: string | null
+          epic_id: string | null
+          id: string
+          labels: string[] | null
+          parent_id: string | null
+          position: number | null
+          priority: string
+          reporter_id: string
+          sprint_id: string | null
+          status: string
+          story_points: number | null
+          title: string
+          type: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          acceptance_criteria?: string | null
+          assignee_id?: string | null
+          created_at?: string
+          description?: string | null
+          epic_id?: string | null
+          id?: string
+          labels?: string[] | null
+          parent_id?: string | null
+          position?: number | null
+          priority?: string
+          reporter_id: string
+          sprint_id?: string | null
+          status?: string
+          story_points?: number | null
+          title: string
+          type?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          acceptance_criteria?: string | null
+          assignee_id?: string | null
+          created_at?: string
+          description?: string | null
+          epic_id?: string | null
+          id?: string
+          labels?: string[] | null
+          parent_id?: string | null
+          position?: number | null
+          priority?: string
+          reporter_id?: string
+          sprint_id?: string | null
+          status?: string
+          story_points?: number | null
+          title?: string
+          type?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_stories_epic_id_fkey"
+            columns: ["epic_id"]
+            isOneToOne: false
+            referencedRelation: "pm_epics"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_stories_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_stories_sprint_id_fkey"
+            columns: ["sprint_id"]
+            isOneToOne: false
+            referencedRelation: "pm_sprints"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_stories_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "pm_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_story_links: {
+        Row: {
+          created_at: string
+          from_story: string
+          id: string
+          link_type: string
+          to_story: string
+        }
+        Insert: {
+          created_at?: string
+          from_story: string
+          id?: string
+          link_type?: string
+          to_story: string
+        }
+        Update: {
+          created_at?: string
+          from_story?: string
+          id?: string
+          link_type?: string
+          to_story?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pm_story_links_from_story_fkey"
+            columns: ["from_story"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pm_story_links_to_story_fkey"
+            columns: ["to_story"]
+            isOneToOne: false
+            referencedRelation: "pm_stories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pm_workspaces: {
+        Row: {
+          created_at: string
+          description: string | null
+          github_repo: string | null
+          id: string
+          name: string
+          owner_id: string
+          slack_channel_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          github_repo?: string | null
+          id?: string
+          name: string
+          owner_id: string
+          slack_channel_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          github_repo?: string | null
+          id?: string
+          name?: string
+          owner_id?: string
+          slack_channel_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -1164,6 +1846,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
+      pm_role: "admin" | "mod" | "contributor" | "viewer"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1292,6 +1975,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "moderator", "user"],
+      pm_role: ["admin", "mod", "contributor", "viewer"],
     },
   },
 } as const

@@ -20,6 +20,16 @@ import NotFound from "./pages/NotFound";
 import Docs from "./pages/Docs";
 import Capabilities from "./pages/Capabilities";
 import Marketplace from "./pages/Marketplace";
+import Projects from "./pages/Projects";
+import ProjectLayout from "./pages/ProjectLayout";
+import ProjectBoard from "./pages/ProjectBoard";
+import ProjectBacklog from "./pages/ProjectBacklog";
+import ProjectChat from "./pages/ProjectChat";
+import ProjectPipeline from "./pages/ProjectPipeline";
+import ProjectMembers from "./pages/ProjectMembers";
+import ProjectSettings from "./pages/ProjectSettings";
+import StoryDetail from "./pages/StoryDetail";
+import JoinProject from "./pages/JoinProject";
 
 const queryClient = new QueryClient();
 
@@ -59,6 +69,18 @@ const App = () => (
             <Route path="/asi" element={<ProtectedRoute><ASITransformation /></ProtectedRoute>} />
             <Route path="/api-keys" element={<ProtectedRoute><ApiKeys /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute><AdminLearning /></ProtectedRoute>} />
+            <Route path="/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
+            <Route path="/projects/join/:token" element={<JoinProject />} />
+            <Route path="/projects/:id" element={<ProtectedRoute><ProjectLayout /></ProtectedRoute>}>
+              <Route index element={<ProjectBoard />} />
+              <Route path="board" element={<ProjectBoard />} />
+              <Route path="backlog" element={<ProjectBacklog />} />
+              <Route path="chat" element={<ProjectChat />} />
+              <Route path="pipeline" element={<ProjectPipeline />} />
+              <Route path="members" element={<ProjectMembers />} />
+              <Route path="settings" element={<ProjectSettings />} />
+              <Route path="story/:storyId" element={<StoryDetail />} />
+            </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

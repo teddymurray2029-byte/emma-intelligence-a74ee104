@@ -215,7 +215,7 @@ export default function Index() {
 
   if (authLoading) return <div className="h-screen flex items-center justify-center bg-background"><EmmaAvatar size="lg" /></div>;
 
-  const showWelcome = messages.length === 0 && mode === "chat";
+  const showWelcome = messages.length === 0 && mode === "chat" && !activeConvId;
   const isChatMode = mode === "chat";
   const isProjectsMode = mode === "projects";
   const isAgentMode = mode === "agent";

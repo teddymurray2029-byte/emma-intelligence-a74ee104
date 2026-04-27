@@ -55,6 +55,17 @@ export default function Settings() {
           </Button>
         </div>
 
+        <div className="emma-surface-elevated emma-glow-border rounded-xl p-5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-medium text-foreground">Agent Marketplace</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">Browse, install, and publish agents, tools, workflows, and personas.</p>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate("/marketplace")}>
+            Open marketplace <ExternalLink className="h-3 w-3" />
+          </Button>
+        </div>
+
         {/* AGI Subsystems */}
         <div className="space-y-3">
           <h3 className="text-sm font-medium text-foreground">AGI Subsystems</h3>

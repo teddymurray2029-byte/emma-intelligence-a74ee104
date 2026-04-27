@@ -178,9 +178,20 @@ serve(async (req) => {
     }
 
     if (userId !== "anonymous") {
+      // Active user constitution — highest priority
+      const { data: constitution } = await supabase.from("constitutions").select("rules, version").eq("user_id", userId).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle();
+      if (constitution?.rules) {
+        systemPrompt = `## USER CONSTITUTION (must follow at all times — v${constitution.version})\n${constitution.rules}\n\n` + systemPrompt;
+      }
+
       const { data: memories } = await supabase.from("memory_episodes").select("content, episode_type").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(5);
       if (memories?.length) {
         systemPrompt += `\n\n## RECALLED MEMORIES\n${memories.map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 100)}`).join("\n")}`;
+      }
+      // Pull most recent hierarchical memory summary for long-horizon coherence
+      const { data: summary } = await supabase.from("memory_summaries").select("level, summary").eq("user_id", userId).order("range_end", { ascending: false }).limit(1).maybeSingle();
+      if (summary?.summary) {
+        systemPrompt += `\n\n## LONG-HORIZON CONTEXT (${summary.level})\n${summary.summary.slice(0, 500)}`;
       }
       const { data: goals } = await supabase.from("goals").select("description, priority").eq("user_id", userId).eq("status", "active").order("priority", { ascending: true }).limit(3);
       if (goals?.length) {

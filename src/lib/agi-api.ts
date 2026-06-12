@@ -28,7 +28,7 @@ async function agiCall(fn: string, body: Record<string, unknown>) {
 
 export async function runBenchmarks(category = "all") { return agiCall("emma-benchmark", { action: "run", category }); }
 export async function getBenchmarkHistory() { return agiCall("emma-benchmark", { action: "history" }); }
-export async function analyzeSelfImprovement() { return agiCall("emma-self-improve", { action: "analyze" }); }
+export async function analyzeSelfImprovement(candidateCount = 5) { return agiCall("emma-self-improve", { action: "tournament", candidateCount }); }
 export async function applySelfImprovement() { return agiCall("emma-self-improve", { action: "apply" }); }
 export async function getGoals() { return agiCall("emma-self-improve", { action: "goals" }); }
 export async function getMemoryEpisodes() { return agiCall("emma-self-improve", { action: "memory" }); }

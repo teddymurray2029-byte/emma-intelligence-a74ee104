@@ -1089,7 +1089,7 @@ ${stepsHtml}
             <Button onClick={() => setShowEngagementForm((v) => !v)} size="sm" variant="outline" className="gap-1.5 px-3">
               <Shield className="h-3.5 w-3.5" /> Scope
             </Button>
-            <Button onClick={startSession} size="sm" className="gap-1.5 px-4" disabled={!engagement.authorized}>
+            <Button onClick={startSession} size="sm" className="gap-1.5 px-4">
               <Play className="h-3.5 w-3.5" /> Start
             </Button>
           </div>

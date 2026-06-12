@@ -1084,15 +1084,6 @@ ${stepsHtml}
                 <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="My research session" className="h-7 text-xs" />
               </div>
 
-              <label className="flex items-start gap-2 text-[11px] text-foreground cursor-pointer pt-1">
-                <input type="checkbox" checked={engagement.authorized} onChange={(e) => setEngagement({ ...engagement, authorized: e.target.checked })} className="mt-0.5" />
-                <span>I confirm I have written authorization to test these targets.</span>
-              </label>
-              {engagement.authorized && (
-                <div className="flex items-center gap-1.5 text-[10px] text-green-500">
-                  <ShieldCheck className="h-3 w-3" /> Authorized engagement ready
-                </div>
-              )}
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">

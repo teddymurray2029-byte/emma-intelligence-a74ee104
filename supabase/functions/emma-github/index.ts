@@ -39,6 +39,10 @@ serve(async (req) => {
       case "list_repos": {
         const resp = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", { headers });
         const repos = await resp.json();
+        if (!Array.isArray(repos)) {
+          console.error("GitHub list_repos non-array response:", repos);
+          return json({ data: [], error: repos?.message || "GitHub API error", status: resp.status }, 200);
+        }
         return json({ data: repos.map((r: any) => ({ full_name: r.full_name, description: r.description, private: r.private, default_branch: r.default_branch })) });
       }
 

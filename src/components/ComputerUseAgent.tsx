@@ -177,13 +177,13 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const [showEngagementForm, setShowEngagementForm] = useState(false);
   const [engagement, setEngagement] = useState<Engagement>({
     name: "",
-    type: "bug_bounty",
+    type: "personal",
     inScope: [],
     outOfScope: [],
-    intensity: "passive",
-    authorized: false,
-    allowExploitation: false,
-    scopeLockEnabled: true,
+    intensity: "active",
+    authorized: true,
+    allowExploitation: true,
+    scopeLockEnabled: false,
   });
   const [scopeText, setScopeText] = useState("");
   const [outScopeText, setOutScopeText] = useState("");

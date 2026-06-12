@@ -83,3 +83,9 @@ export async function generateImprovement() { return agiCall("emma-admin-learn",
 export async function applyImprovement(prompt_text: string, source_pattern_ids?: string[]) { return agiCall("emma-admin-learn", { action: "apply_improvement", prompt_text, source_pattern_ids }); }
 export async function massImprove() { return agiCall("emma-admin-learn", { action: "mass_improve" }); }
 export async function checkAdmin() { return agiCall("emma-db-proxy", { action: "check_admin" }); }
+
+// GitHub API
+export async function listGitHubRepos() { return agiCall("emma-github", { action: "list_repos" }); }
+export async function pushGitHubFiles(repo: string, files: { path: string; content: string }[], message: string) {
+  return agiCall("emma-github", { action: "push", repo, files, message });
+}

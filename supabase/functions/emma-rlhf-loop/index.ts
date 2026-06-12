@@ -75,7 +75,7 @@ serve(async (req) => {
 
     const apiKey = Deno.env.get("LOVABLE_API_KEY")!;
     const ghToken = Deno.env.get("GITHUB_TOKEN");
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabase = supabaseAdmin;
 
     const { data: runs } = await supabase.from("benchmark_runs").select("total_score, max_score, category_scores, system_prompt_version").order("created_at", { ascending: false }).limit(10);
     const { data: insights } = await supabase.from("admin_insights").select("id, description, category, data").eq("applied", false).order("created_at", { ascending: false }).limit(20);

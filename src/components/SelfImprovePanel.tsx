@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Brain, Zap, CheckCircle2, AlertTriangle, Loader2, GitBranch, Trophy, Shield, TrendingUp, Sparkles } from "lucide-react";
+import { Brain, Zap, CheckCircle2, AlertTriangle, Loader2, GitBranch, Trophy, Shield, TrendingUp, Sparkles, Github } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { analyzeSelfImprovement, applySelfImprovement } from "@/lib/agi-api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { analyzeSelfImprovement, applySelfImprovement, listGitHubRepos, pushGitHubFiles } from "@/lib/agi-api";
 import { toast } from "sonner";
 
 interface Ranking {

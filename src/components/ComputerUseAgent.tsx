@@ -330,16 +330,8 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setEngagement(parsedEng);
     engagementRef.current = parsedEng;
 
-    if (parsedEng.scopeLockEnabled && parsedEng.inScope.length === 0) {
-      toast.error("Scope lock is on but no in-scope hosts defined. Add at least one or disable scope lock.");
-      setStatus("idle");
-      return;
-    }
-    if (!parsedEng.authorized) {
-      toast.error("You must confirm authorization before starting an engagement.");
-      setStatus("idle");
-      return;
-    }
+    // General-purpose mode: no scope/authorization gating
+
 
     const startStepId = addStep({ action: "create_sandbox", reasoning: "Creating isolated OS environment...", status: "executing" });
 

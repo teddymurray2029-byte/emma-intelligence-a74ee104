@@ -1079,46 +1079,11 @@ ${stepsHtml}
 
           {showEngagementForm && (
             <div className="space-y-2 p-3 rounded-md border border-border bg-muted/30">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-[10px] text-muted-foreground">Engagement name</Label>
-                  <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="Acme Corp Q1 Pentest" className="h-7 text-xs" />
-                </div>
-                <div>
-                  <Label className="text-[10px] text-muted-foreground">Type</Label>
-                  <select value={engagement.type} onChange={(e) => setEngagement({ ...engagement, type: e.target.value as EngagementType })} className="h-7 w-full text-xs rounded-md border border-input bg-background px-2">
-                    {Object.entries(ENGAGEMENT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </div>
-              </div>
               <div>
-                <Label className="text-[10px] text-muted-foreground">In-scope hosts (one per line, supports *.example.com)</Label>
-                <Textarea value={scopeText} onChange={(e) => setScopeText(e.target.value)} placeholder="example.com&#10;*.example.com" className="text-[11px] font-mono min-h-[60px]" />
+                <Label className="text-[10px] text-muted-foreground">Session name (optional)</Label>
+                <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="My research session" className="h-7 text-xs" />
               </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Out-of-scope (overrides in-scope)</Label>
-                <Textarea value={outScopeText} onChange={(e) => setOutScopeText(e.target.value)} placeholder="admin.example.com" className="text-[11px] font-mono min-h-[40px]" />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-[10px] text-muted-foreground">Test intensity</Label>
-                  <select value={engagement.intensity} onChange={(e) => setEngagement({ ...engagement, intensity: e.target.value as IntensityLevel })} className="h-7 w-full text-xs rounded-md border border-input bg-background px-2">
-                    <option value="passive">Passive recon only</option>
-                    <option value="active">Active probing</option>
-                    <option value="exploitation">Exploitation PoC</option>
-                  </select>
-                </div>
-                <div className="space-y-1.5 pt-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px]">Scope lock</Label>
-                    <Switch checked={engagement.scopeLockEnabled} onCheckedChange={(v) => setEngagement({ ...engagement, scopeLockEnabled: v })} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px]">Allow exploitation</Label>
-                    <Switch checked={engagement.allowExploitation} onCheckedChange={(v) => setEngagement({ ...engagement, allowExploitation: v })} />
-                  </div>
-                </div>
-              </div>
+
               <label className="flex items-start gap-2 text-[11px] text-foreground cursor-pointer pt-1">
                 <input type="checkbox" checked={engagement.authorized} onChange={(e) => setEngagement({ ...engagement, authorized: e.target.checked })} className="mt-0.5" />
                 <span>I confirm I have written authorization to test these targets.</span>

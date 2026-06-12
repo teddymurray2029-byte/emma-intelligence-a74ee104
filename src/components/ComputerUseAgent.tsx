@@ -512,24 +512,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         const execReasoning = `${decision.action}: ${decision.reasoning}`;
 
         if (decision.action !== "wait") {
-          // Client-side scope pre-check for open_url
-          if (decision.action === "open_url" && engagementRef.current.scopeLockEnabled) {
-            const check = isUrlInScope(decision.params?.url || "", {
-              inScope: engagementRef.current.inScope,
-              outOfScope: engagementRef.current.outOfScope,
-            });
-            if (!check.allowed) {
-              addStep({
-                action: "🚫 scope_block",
-                reasoning: `Blocked navigation to ${decision.params?.url} — ${check.reason}`,
-                status: "blocked",
-                guardrail: "scope",
-              });
-              actionHistory.push({ action: "scope_block", reasoning: `Blocked: ${check.reason}` });
-              await new Promise((r) => setTimeout(r, 1000));
-              continue;
-            }
-          }
+
           const execStepId = addStep({ action: decision.action, reasoning: `Executing: ${decision.action}`, status: "executing" });
           latestStepId = execStepId;
           try {

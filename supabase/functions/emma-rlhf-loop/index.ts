@@ -22,11 +22,20 @@ async function ai(apiKey: string, system: string, user: string, model = "google/
 }
 
 async function pickRepo(ghHeaders: Record<string, string>): Promise<string | null> {
-  const configured = Deno.env.get("SELF_IMPROVE_REPO");
-  if (configured && configured.includes("/")) return configured;
-  const resp = await fetch("https://api.github.com/user/repos?per_page=10&sort=updated", { headers: ghHeaders });
-  const repos = await resp.json();
-  if (!Array.isArray(repos) || !repos.length) return null;
+  const configured = (Deno.env.get("SELF_IMPROVE_REPO") || "").trim();
+  if (configured) {
+    // Accept "owner/name" or full URL
+    const m = configured.match(/(?:github\.com\/)?([^\/\s]+\/[^\/\s]+?)(?:\.git)?$/);
+    if (m) return m[1];
+  }
+  const resp = await fetch("https://api.github.com/user/repos?per_page=10&sort=updated&affiliation=owner,collaborator", { headers: ghHeaders });
+  const text = await resp.text();
+  let repos: any;
+  try { repos = JSON.parse(text); } catch { repos = null; }
+  if (!Array.isArray(repos) || !repos.length) {
+    console.error("github list repos failed:", resp.status, text.slice(0, 200));
+    return null;
+  }
   return repos[0].full_name;
 }
 

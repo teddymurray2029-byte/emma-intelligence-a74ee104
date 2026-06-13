@@ -27,7 +27,7 @@ function extractJson(s: string): any {
   try { return JSON.parse(raw.slice(start, end + 1)); } catch { return null; }
 }
 
-async function inventPhysics(apiKey: string, domain: string, existingNames: string[]) {
+async function inventPhysics(apiKey: string, domain: string, existingNames: string[], userPrompt?: string) {
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

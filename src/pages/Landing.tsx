@@ -36,8 +36,8 @@ const MODES = [
   { name: "Build", path: "/app?mode=artifacts", icon: Hammer, blurb: "Generate React components and full pages with live preview." },
   { name: "Voice", path: "/app?mode=voice", icon: Mic, blurb: "Real-time spoken conversation, hands-free." },
   { name: "Data", path: "/app?mode=data", icon: BarChart3, blurb: "Upload data → automatic analysis, charts, and insight reports." },
-  { name: "Code IDE", path: "/app?mode=ide", icon: Code2, blurb: "Full project workspace with editor, files, and execution." },
-  { name: "Computer Use", path: "/app?mode=computer", icon: Eye, blurb: "Emma operates a real browser to complete tasks for you." },
+  { name: "Code IDE", path: "/app?mode=projects", icon: Code2, blurb: "Full project workspace with editor, files, and execution." },
+  { name: "Computer Use", path: "/app?mode=agent", icon: Eye, blurb: "Emma operates a real browser to complete tasks for you." },
   { name: "AGI Dashboard", path: "/agi", icon: Cpu, blurb: "Live readout of reasoning, safety, and self-improvement loops." },
 ];
 

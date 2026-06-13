@@ -312,6 +312,16 @@ function overlayGrid(bytes: Uint8Array): Uint8Array {
   }
 }
 
+function overlayGridBase64(b64: string): string {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return toBase64(overlayGrid(bytes));
+  } catch {
+    return b64;
+  }
+}
 
 
 // ===== SDK-ALIGNED kickstartDesktop =====

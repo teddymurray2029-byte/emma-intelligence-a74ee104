@@ -16,6 +16,7 @@ interface Invention {
   equations: string | null;
   predictions: string | null;
   applications: string | null;
+  build_instructions: string | null;
   novelty_score: number | null;
   source: string | null;
   created_at: string;

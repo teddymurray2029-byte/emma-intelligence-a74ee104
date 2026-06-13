@@ -11,7 +11,6 @@ const SPLITS = {
   holdout: ["mmlu"],
 };
 
-// ---------- auth ----------
 async function getClerkUserId(req: Request): Promise<string | null> {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
   if (!token || token.length < 20) return null;
@@ -19,92 +18,42 @@ async function getClerkUserId(req: Request): Promise<string | null> {
   try { const { payload } = await jwtVerify(token, JWKS); return (payload.sub as string) || null; } catch { return null; }
 }
 
-// ---------- ai helpers ----------
-async function callAI(apiKey: string, messages: any[], model = "google/gemini-3-flash-preview", maxTokens = 4096): Promise<string> {
+const SYSTEM_PROMPT_VERSIONS: Record<number, string> = {
+  1: `You are Emma — a cognitive reasoning system. Answer directly and concisely.`,
+  2: `You are Emma — a multi-agent cognitive reasoning system. For every question: 1. Identify what's actually being asked 2. Consider counterarguments 3. State uncertainty explicitly 4. Give a precise final answer`,
+  3: `You are Emma — a self-improving cognitive system. Process through: [REFRAME] [FIRST PRINCIPLES] [DEBATE] [ANSWER] with confidence level. For simple factual questions, answer directly.`,
+};
+
+async function callAI(apiKey: string, messages: any[]): Promise<string> {
+  const system = messages.find((m: any) => m.role === "system")?.content || "";
+  const userMessages = messages.filter((m: any) => m.role !== "system").map((m: any) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: m.content,
+  }));
+  const allMessages = system ? [{ role: "system", content: system }, ...userMessages] : userMessages;
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
+    body: JSON.stringify({ model: "google/gemini-3-flash-preview", max_tokens: 8192, messages: allMessages }),
   });
   if (!resp.ok) return "";
   return (await resp.json()).choices?.[0]?.message?.content || "";
 }
 
-function mean(values: number[]): number { return values.length ? values.reduce((s, v) => s + v, 0) / values.length : 0; }
-function variance(values: number[], avg: number): number { return values.length <= 1 ? 0 : values.reduce((s, v) => s + (v - avg) ** 2, 0) / (values.length - 1); }
+function mean(values: number[]): number {
+  if (!values.length) return 0;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
+
+function variance(values: number[], avg: number): number {
+  if (values.length <= 1) return 0;
+  return values.reduce((s, v) => s + (v - avg) ** 2, 0) / (values.length - 1);
+}
+
 function parseAiJson(raw: string, fallback: any) {
   try { return JSON.parse(raw.replace(/```json\n?/g, "").replace(/```/g, "").trim()); } catch { return fallback; }
 }
 
-// ---------- tournament ----------
-type Candidate = {
-  candidateType: string;
-  diffType: string;
-  proposal: string;
-  newPromptFragment: string;
-  expectedImpact: string;
-  risk: string;
-};
-
-type Scored = Candidate & {
-  scores: { coherence: number; novelty: number; safety: number; impact: number; feasibility: number };
-  total: number;
-  critique: string;
-  predictedDelta: number;
-};
-
-const FALLBACK_CANDIDATES: Candidate[] = [
-  { candidateType: "planner", diffType: "strategy", proposal: "Decompose then calibrate uncertainty before answering",
-    newPromptFragment: "Before answering, list sub-claims and assign confidence 0-1.",
-    expectedImpact: "Better reasoning calibration", risk: "Longer outputs" },
-  { candidateType: "retrieval_policy", diffType: "ranking", proposal: "Re-rank memory by recency-weighted relevance",
-    newPromptFragment: "When recalling, prioritize memories from last 24h with similarity > 0.7.",
-    expectedImpact: "Sharper context grounding", risk: "May drop older but still relevant facts" },
-  { candidateType: "decomposer", diffType: "workflow", proposal: "Force multi-perspective debate on weak categories",
-    newPromptFragment: "For ambiguous tasks, generate 3 viewpoints and synthesize.",
-    expectedImpact: "Robustness on edge cases", risk: "Slower latency" },
-];
-
-async function generateCandidates(apiKey: string, ctx: string, n: number, pastWins: string): Promise<Candidate[]> {
-  const raw = await callAI(apiKey, [
-    { role: "system", content: `You are Emma's recursive optimization engine running a TOURNAMENT.
-Generate ${n} DIVERSE candidate improvements spanning buckets: tools, retrieval_policies, planners, decomposers, safety_layers.
-Each must be meaningfully different in strategy.
-Return ONLY a JSON array of ${n} entries:
-[{"candidateType":"...","diffType":"prompt|strategy|ranking|workflow","proposal":"...","newPromptFragment":"...","expectedImpact":"...","risk":"..."}]` },
-    { role: "user", content: `Context:\n${ctx}\n\nPast successful patterns:\n${pastWins || "(none yet)"}` },
-  ], "google/gemini-3-flash-preview", 6000);
-  const arr = parseAiJson(raw, []);
-  if (Array.isArray(arr) && arr.length) return arr.slice(0, n);
-  return FALLBACK_CANDIDATES.slice(0, n);
-}
-
-async function scoreCandidate(apiKey: string, cand: Candidate, ctx: string): Promise<Scored> {
-  const raw = await callAI(apiKey, [
-    { role: "system", content: `You are a rigorous LLM judge. Score this candidate improvement 0-10 on:
-- coherence: internal consistency
-- novelty: vs current baseline
-- safety: low-risk?
-- impact: predicted score gain on weak categories
-- feasibility: easy to deploy
-Also predict delta in benchmark points (-10 to +20) and give a 1-sentence critique.
-Return ONLY JSON: {"coherence":N,"novelty":N,"safety":N,"impact":N,"feasibility":N,"predictedDelta":N,"critique":"..."}` },
-    { role: "user", content: `Context:\n${ctx}\n\nCandidate:\n${JSON.stringify(cand)}` },
-  ], "google/gemini-3-flash-preview", 800);
-  const j = parseAiJson(raw, { coherence: 5, novelty: 5, safety: 5, impact: 5, feasibility: 5, predictedDelta: 0, critique: "Parse error" });
-  const scores = {
-    coherence: Number(j.coherence) || 0,
-    novelty: Number(j.novelty) || 0,
-    safety: Number(j.safety) || 0,
-    impact: Number(j.impact) || 0,
-    feasibility: Number(j.feasibility) || 0,
-  };
-  // Weighted: safety + impact dominate; penalize low coherence.
-  const total = scores.coherence * 0.15 + scores.novelty * 0.15 + scores.safety * 0.25 + scores.impact * 0.30 + scores.feasibility * 0.15;
-  return { ...cand, scores, total: Number(total.toFixed(2)), critique: String(j.critique || ""), predictedDelta: Number(j.predictedDelta) || 0 };
-}
-
-// ---------- handler ----------
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -114,9 +63,9 @@ serve(async (req) => {
     const userId = await getClerkUserId(req);
     if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const { action, candidateCount } = await req.json();
+    const { action } = await req.json();
 
-    if (action === "analyze" || action === "pipeline" || action === "tournament") {
+    if (action === "analyze" || action === "pipeline") {
       const { data: recentRuns } = await supabase.from("benchmark_runs").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30);
       const lastRun = recentRuns?.[0];
       if (!lastRun) return new Response(JSON.stringify({ error: "No benchmark data" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -125,27 +74,25 @@ serve(async (req) => {
       const weakCategories = Object.entries(catScores).filter(([_, s]) => Number(s) < 70).sort((a, b) => Number(a[1]) - Number(b[1])).map(([c, s]) => `${c}: ${s}/100`);
       const strongCategories = Object.entries(catScores).filter(([_, s]) => Number(s) >= 70).map(([c, s]) => `${c}: ${s}/100`);
 
-      // Pull past accepted improvements as reflection memory
-      const { data: pastAccepted } = await supabase.from("improvement_logs")
-        .select("description, delta").eq("user_id", userId).eq("accepted", true)
-        .order("created_at", { ascending: false }).limit(5);
-      const pastWins = (pastAccepted || []).map((p: any) => `+${p.delta}: ${p.description}`).join("\n");
+      const candidateGeneration = await callAI(LOVABLE_API_KEY, [
+        {
+          role: "system",
+          content: `You are Emma's recursive optimization engine. Generate candidate improvements over these buckets: tools, retrieval policies, planners, decomposers. Return ONLY JSON array with 2-4 entries: [{"candidateType":"tool|retrieval_policy|planner|decomposer","diffType":"prompt|strategy|ranking|workflow","proposal":"...","newPromptFragment":"...","expectedImpact":"...","risk":"..."}]`,
+        },
+        { role: "user", content: `Current score: ${lastRun.total_score}/100\nWeak: ${weakCategories.join(", ") || "none"}\nStrong: ${strongCategories.join(", ") || "none"}` },
+      ]);
 
-      const ctx = `Current score: ${lastRun.total_score}/100
-Weak categories: ${weakCategories.join(", ") || "none"}
-Strong categories: ${strongCategories.join(", ") || "none"}`;
+      const generatedCandidates = parseAiJson(candidateGeneration, []);
+      const fallbackCandidate = {
+        candidateType: "planner",
+        diffType: "strategy",
+        proposal: "Use stricter decomposition + uncertainty calibration for weak categories",
+        newPromptFragment: "Before final answer, run decomposition + uncertainty calibration.",
+        expectedImpact: weakCategories.join(", ") || "overall robustness",
+        risk: "Longer outputs",
+      };
+      const candidate = Array.isArray(generatedCandidates) && generatedCandidates.length ? generatedCandidates[0] : fallbackCandidate;
 
-      const n = Math.max(2, Math.min(6, Number(candidateCount) || 5));
-
-      // Stage 1: tournament generation
-      const candidates = await generateCandidates(LOVABLE_API_KEY, ctx, n, pastWins);
-
-      // Stage 2: parallel judge scoring
-      const scored: Scored[] = await Promise.all(candidates.map((c) => scoreCandidate(LOVABLE_API_KEY, c, ctx)));
-      scored.sort((a, b) => b.total - a.total);
-      const winner = scored[0];
-
-      // Stage 3: stat gates on benchmark splits
       const splitScores = (rows: any[], categories: string[]) => rows
         .map((r: any) => mean(categories.map((cat) => Number(r.category_scores?.[cat] || 0))))
         .filter((v: number) => Number.isFinite(v) && v > 0);
@@ -168,7 +115,6 @@ Strong categories: ${strongCategories.join(", ") || "none"}`;
       const holdoutZ = (currentHoldout - holdoutMean) / holdoutStd;
       const significantWin = validationZ >= 1.96 && holdoutZ >= 1.64 && currentValidation > validationMean && currentHoldout >= holdoutMean;
 
-      // Stage 4: safety regression check
       const { data: safetyRows } = await supabase
         .from("safety_verifications")
         .select("passed, risk_score")
@@ -183,31 +129,25 @@ Strong categories: ${strongCategories.join(", ") || "none"}`;
       const recentRisk = mean(recentSafety.map((r: any) => Number(r.risk_score || 0)));
       const noSafetyRegression = recentFailRate <= previousFailRate + 0.05 && recentRisk <= previousRisk + 5;
 
-      // Additional gate: tournament safety score must be >= 6
-      const tournamentSafe = winner.scores.safety >= 6;
-
       const { data: parent } = await supabase.from("improvement_candidates").select("candidate_version").eq("user_id", userId).order("candidate_version", { ascending: false }).limit(1).single();
       const parentVersion = parent?.candidate_version || Number(lastRun.system_prompt_version || 1);
       const candidateVersion = parentVersion + 1;
-      const gatePassed = significantWin && noSafetyRegression && tournamentSafe;
+      const gatePassed = significantWin && noSafetyRegression;
 
       const lineagePayload = {
         user_id: userId,
         parent_version: parentVersion,
         candidate_version: candidateVersion,
-        candidate_type: winner.candidateType || "planner",
-        diff_type: winner.diffType || "strategy",
-        proposal: winner,
+        candidate_type: candidate.candidateType || "planner",
+        diff_type: candidate.diffType || "strategy",
+        proposal: candidate,
         train_metrics: { split: SPLITS.train, baseline: trainMean, candidate: currentTrain, delta: currentTrain - trainMean },
         validation_metrics: { split: SPLITS.validation, baseline: validationMean, candidate: currentValidation, delta: currentValidation - validationMean, zscore: validationZ },
         holdout_metrics: { split: SPLITS.holdout, baseline: holdoutMean, candidate: currentHoldout, delta: currentHoldout - holdoutMean, zscore: holdoutZ },
         win_metrics: {
           significantWin,
           noSafetyRegression,
-          tournamentSafe,
           gatePassed,
-          tournamentScore: winner.total,
-          predictedDelta: winner.predictedDelta,
           failRateDelta: recentFailRate - previousFailRate,
           riskDelta: recentRisk - previousRisk,
         },
@@ -238,12 +178,12 @@ Strong categories: ${strongCategories.join(", ") || "none"}`;
 
       await supabase.from("improvement_logs").insert({
         user_id: userId,
-        improvement_type: `tournament_${winner.candidateType || "planner"}`,
-        description: winner.proposal,
+        improvement_type: `pipeline_${candidate.candidateType || "planner"}`,
+        description: candidate.proposal,
         before_score: lastRun.total_score,
-        after_score: gatePassed ? Number(lastRun.total_score) + winner.predictedDelta : lastRun.total_score,
-        delta: winner.predictedDelta,
-        diff_content: JSON.stringify({ winner, runnersUp: scored.slice(1), lineage: lineagePayload }),
+        after_score: gatePassed ? Number(lastRun.total_score) + Number((lineagePayload.validation_metrics as any).delta || 0) : lastRun.total_score,
+        delta: (lineagePayload.validation_metrics as any).delta || 0,
+        diff_content: JSON.stringify({ candidate, lineage: lineagePayload }),
         accepted: gatePassed,
       });
 
@@ -256,29 +196,39 @@ Strong categories: ${strongCategories.join(", ") || "none"}`;
         currentScore: lastRun.total_score,
         weakCategories,
         strongCategories,
-        proposal: winner,
-        tournament: {
-          candidateCount: scored.length,
-          winner,
-          rankings: scored.map((s, i) => ({
-            rank: i + 1,
-            candidateType: s.candidateType,
-            proposal: s.proposal,
-            total: s.total,
-            predictedDelta: s.predictedDelta,
-            scores: s.scores,
-            critique: s.critique,
-          })),
-          diversityBuckets: [...new Set(scored.map((s) => s.candidateType))],
-          pastWinsConsidered: (pastAccepted || []).length,
-        },
+        proposal: candidate,
         nextPromptVersion: candidateVersion,
+        availableVersions: Object.keys(SYSTEM_PROMPT_VERSIONS).map(Number),
         pipeline: {
-          stage1_tournament: { completed: true, candidateCount: scored.length, winnerScore: winner.total },
-          stage2_evaluateSplits: { completed: true, splits: { train: lineagePayload.train_metrics, validation: lineagePayload.validation_metrics, holdout: lineagePayload.holdout_metrics } },
-          stage3_statsAndSafetyGate: { completed: true, significantWin, noSafetyRegression, tournamentSafe, gatePassed },
-          stage4_canary: { completed: gatePassed, status: gatePassed ? "scheduled" : "blocked" },
-          stage5_autoRevert: { enabled: true, triggers: ["drift_spike", "failure_rate_spike", "safety_violation"] },
+          stage1_generateCandidates: { completed: true, candidateCount: Array.isArray(generatedCandidates) ? generatedCandidates.length : 1 },
+          stage2_evaluateSplits: {
+            completed: true,
+            splits: {
+              train: lineagePayload.train_metrics,
+              validation: lineagePayload.validation_metrics,
+              holdout: lineagePayload.holdout_metrics,
+            },
+          },
+          stage3_statsAndSafetyGate: {
+            completed: true,
+            significantWin,
+            noSafetyRegression,
+            gatePassed,
+          },
+          stage4_canary: {
+            completed: gatePassed,
+            status: gatePassed ? "scheduled" : "blocked",
+            rollbackCriteria: {
+              failureRateAbove: 0.08,
+              qualityDeltaBelow: -3,
+              driftScoreAbove: 0.3,
+              safetyIncident: true,
+            },
+          },
+          stage5_autoRevert: {
+            enabled: true,
+            triggers: ["drift_spike", "failure_rate_spike", "safety_violation"],
+          },
         },
         lineage: lineagePayload,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -328,7 +278,7 @@ Strong categories: ${strongCategories.join(", ") || "none"}`;
 
       const { data: latestLog } = await supabase.from("improvement_logs").select("*").eq("user_id", userId).eq("accepted", false).order("created_at", { ascending: false }).limit(1).single();
       if (latestLog) await supabase.from("improvement_logs").update({ accepted: true }).eq("id", latestLog.id);
-      await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "self_improvement", content: `Applied tournament-winning improvement. Prev: ${latestLog?.before_score}`, relevance_score: 8 });
+      await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "self_improvement", content: `Applied staged pipeline improvement. Prev: ${latestLog?.before_score}`, relevance_score: 8 });
       return new Response(JSON.stringify({ success: true, message: "Improvement applied with canary safeguards. Re-run benchmarks." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

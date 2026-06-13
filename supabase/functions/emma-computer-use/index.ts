@@ -817,113 +817,6 @@ Rules:
   }
 }
 
-// ===== Click coordinate refinement (two-pass visual grounding) =====
-// Crops a region around the proposed click and asks a vision model for the precise
-// element center within the crop, then maps it back to screen coordinates.
-// This dramatically improves click accuracy versus a single-pass coordinate guess.
-const SCREEN_W = 1024;
-const SCREEN_H = 768;
-const CROP_HALF = 160; // 320x320 crop window
-
-function cropPngBase64(b64: string, cx: number, cy: number, half: number): { base64: string; x0: number; y0: number; w: number; h: number } | null {
-  try {
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const png = PNG.sync.read(Buffer.from(bytes));
-    const x0 = Math.max(0, Math.min(png.width - 1, Math.round(cx - half)));
-    const y0 = Math.max(0, Math.min(png.height - 1, Math.round(cy - half)));
-    const w = Math.min(half * 2, png.width - x0);
-    const h = Math.min(half * 2, png.height - y0);
-    const out = new PNG({ width: w, height: h });
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const si = ((y0 + y) * png.width + (x0 + x)) * 4;
-        const di = (y * w + x) * 4;
-        out.data[di] = png.data[si];
-        out.data[di + 1] = png.data[si + 1];
-        out.data[di + 2] = png.data[si + 2];
-        out.data[di + 3] = png.data[si + 3];
-      }
-    }
-    const buf = PNG.sync.write(out);
-    let bin = "";
-    for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
-    return { base64: btoa(bin), x0, y0, w, h };
-  } catch (e) {
-    console.warn(`[refine] crop failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
-async function refineClickCoordinates(
-  screenshotBase64: string,
-  proposedX: number,
-  proposedY: number,
-  reasoning: string,
-): Promise<{ x: number; y: number; refined: boolean }> {
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!lovableKey) return { x: proposedX, y: proposedY, refined: false };
-
-  const crop = cropPngBase64(screenshotBase64, proposedX, proposedY, CROP_HALF);
-  if (!crop) return { x: proposedX, y: proposedY, refined: false };
-
-  const localX = proposedX - crop.x0;
-  const localY = proposedY - crop.y0;
-
-  const sysPrompt = `You are a pixel-precise UI element locator. You will see a cropped screenshot region (${crop.w}x${crop.h} pixels, origin top-left).
-
-The agent intends to click an element it described as: "${reasoning}"
-The current proposed click point inside this crop is (${localX}, ${localY}).
-
-Return ONLY raw JSON:
-{"x": <integer 0-${crop.w - 1}>, "y": <integer 0-${crop.h - 1}>, "confidence": <0-1>, "found": true|false}
-
-Rules:
-- x,y must be the EXACT geometric center of the clickable target (button/link/icon/field).
-- If the proposed point is already on the correct element's center, return it unchanged.
-- If you cannot identify the target, set "found": false and echo the proposed point.
-- No prose, no markdown — JSON only.`;
-
-  try {
-    const resp = await fetch(AI_GATEWAY_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        max_tokens: 128,
-        temperature: 0,
-        messages: [
-          { role: "system", content: sysPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Locate precise click center in this crop:" },
-              { type: "image_url", image_url: { url: `data:image/png;base64,${crop.base64}` } },
-            ],
-          },
-        ],
-      }),
-    });
-    if (!resp.ok) return { x: proposedX, y: proposedY, refined: false };
-    const data = await resp.json();
-    let txt = (data.choices?.[0]?.message?.content || "").trim();
-    if (txt.startsWith("```")) txt = txt.replace(/^```json?\n?/, "").replace(/\n?```$/, "");
-    const parsed = JSON.parse(txt);
-    if (parsed.found === false || typeof parsed.x !== "number" || typeof parsed.y !== "number") {
-      return { x: proposedX, y: proposedY, refined: false };
-    }
-    const newX = Math.max(0, Math.min(SCREEN_W - 1, crop.x0 + Math.round(parsed.x)));
-    const newY = Math.max(0, Math.min(SCREEN_H - 1, crop.y0 + Math.round(parsed.y)));
-    const drift = Math.hypot(newX - proposedX, newY - proposedY);
-    // Reject refinements that drift outside the crop window (likely hallucination)
-    if (drift > CROP_HALF * 1.1) return { x: proposedX, y: proposedY, refined: false };
-    console.log(`[refine] click (${proposedX},${proposedY}) -> (${newX},${newY}) drift=${drift.toFixed(1)}px conf=${parsed.confidence ?? "?"}`);
-    return { x: newX, y: newY, refined: true };
-  } catch (e) {
-    console.warn(`[refine] failed: ${e instanceof Error ? e.message : String(e)}`);
-    return { x: proposedX, y: proposedY, refined: false };
-  }
-}
-
 // ===== xdotool-based action execution (replaces pyautogui) =====
 function buildXdotoolCommand(actionType: string, params: any): { cmd: string; args: string[] } | null {
   switch (actionType) {
@@ -1273,25 +1166,6 @@ serve(async (req) => {
         }
 
         const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
-
-        // Two-pass click grounding: refine pixel coordinates for click/double_click/move_mouse
-        let refineMeta: { applied: boolean; from?: { x: number; y: number }; to?: { x: number; y: number } } = { applied: false };
-        if (decision && (decision.action === "click" || decision.action === "double_click" || decision.action === "move_mouse")) {
-          const px = Number(decision.params?.x);
-          const py = Number(decision.params?.y);
-          if (Number.isFinite(px) && Number.isFinite(py)) {
-            try {
-              const refined = await refineClickCoordinates(screenshotBase64, px, py, decision.reasoning || "");
-              if (refined.refined && (refined.x !== px || refined.y !== py)) {
-                decision.params = { ...decision.params, x: refined.x, y: refined.y };
-                refineMeta = { applied: true, from: { x: px, y: py }, to: { x: refined.x, y: refined.y } };
-              }
-            } catch (e) {
-              console.warn(`[think] refinement skipped: ${e instanceof Error ? e.message : String(e)}`);
-            }
-          }
-        }
-
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {
@@ -1307,7 +1181,7 @@ serve(async (req) => {
             { name: "black_screen_startup", recoveryAssertion: "wait action returned until meaningful frame" },
           ],
         };
-        return json({ ...decision, screenshot: screenshotBase64, reliability, clickRefinement: refineMeta, traceId });
+        return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
       }
 
       case "shell_exec": {

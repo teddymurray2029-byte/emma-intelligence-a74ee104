@@ -706,6 +706,7 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string,
   engagement?: EngagementContext,
+  screenSize?: { w: number; h: number },
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
@@ -768,9 +769,11 @@ Respond with a JSON object (no markdown, just raw JSON):
 
 Rules:
 - THE SCREENSHOT IS GROUND TRUTH. Trust what you see, not what history claims.
-- Coordinates target a 1024x768 screen — click button centres precisely.
+- Screen resolution is EXACTLY ${screenSize?.w ?? 1024}x${screenSize?.h ?? 768} pixels. Origin (0,0) is the top-left. Coordinates MUST fall inside this range.
+- For clicks, target the VISUAL CENTER of the element (button text bounding box, input field middle). Avoid edges, borders, and shadows — they often miss.
+- If a previous click did not advance the screen, the click likely landed off-target: re-examine the screenshot, pick a NEW (x,y) at least 6px away from the previous attempt, and prefer the densest pixel cluster of the element.
 - For web navigation, prefer open_url over manual address-bar typing.
-- After typing, often press Enter via hotkey.
+- After typing into a field, usually press Enter via hotkey rather than hunting for a submit button.
 - When you find a vulnerability, IMMEDIATELY emit a report_finding action with a complete finding object before continuing.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
@@ -818,52 +821,87 @@ Rules:
 }
 
 // ===== xdotool-based action execution (replaces pyautogui) =====
+// Click reliability sequence:
+//   1. mousemove --sync  (wait for cursor to actually arrive)
+//   2. brief settle delay (let hover styles / focus update — many web buttons
+//      need a frame before they accept click)
+//   3. click --clearmodifiers (avoid stuck Shift/Ctrl from prior hotkeys)
+//   4. small post-click delay so the next screenshot reflects state change
 function buildXdotoolCommand(actionType: string, params: any): { cmd: string; args: string[] } | null {
+  const SETTLE_PRE = 0.08;   // 80ms hover settle
+  const SETTLE_POST = 0.15;  // 150ms post-click settle
   switch (actionType) {
     case "click": {
-      const x = params.x ?? 512;
-      const y = params.y ?? 384;
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click 1`] };
+      const x = Math.round(params.x ?? 512);
+      const y = Math.round(params.y ?? 384);
+      const button = params.button === "right" ? 3 : params.button === "middle" ? 2 : 1;
+      return { cmd: "bash", args: ["-c",
+        `xdotool mousemove --sync ${x} ${y}; sleep ${SETTLE_PRE}; ` +
+        `xdotool click --clearmodifiers ${button}; sleep ${SETTLE_POST}`
+      ] };
     }
     case "double_click": {
-      const x = params.x ?? 512;
-      const y = params.y ?? 384;
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click --repeat 2 --delay 100 1`] };
+      const x = Math.round(params.x ?? 512);
+      const y = Math.round(params.y ?? 384);
+      return { cmd: "bash", args: ["-c",
+        `xdotool mousemove --sync ${x} ${y}; sleep ${SETTLE_PRE}; ` +
+        `xdotool click --clearmodifiers --repeat 2 --delay 80 1; sleep ${SETTLE_POST}`
+      ] };
     }
     case "move_mouse": {
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
+      const x = Math.round(params.x ?? 0);
+      const y = Math.round(params.y ?? 0);
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y}; sleep 0.05`] };
     }
     case "type": {
-      // xdotool type with delay; escape special chars
+      // xdotool type with delay; escape single quotes for bash
       const text = (params.text || "").replace(/'/g, "'\\''");
-      // For long text, chunk it
       if (text.length > 100) {
         const chunks: string[] = [];
-        for (let i = 0; i < text.length; i += 50) {
-          chunks.push(text.slice(i, i + 50));
-        }
-        const cmds = chunks.map(c => `xdotool type --delay 12 '${c}'`).join(" && ");
+        for (let i = 0; i < text.length; i += 50) chunks.push(text.slice(i, i + 50));
+        const cmds = chunks.map(c => `xdotool type --clearmodifiers --delay 16 '${c}'`).join("; ");
         return { cmd: "bash", args: ["-c", cmds] };
       }
-      return { cmd: "bash", args: ["-c", `xdotool type --delay 12 '${text}'`] };
+      return { cmd: "bash", args: ["-c", `xdotool type --clearmodifiers --delay 16 '${text}'`] };
     }
     case "hotkey": {
       const keys = (params.keys as string[]).join("+");
-      return { cmd: "bash", args: ["-c", `xdotool key ${keys}`] };
+      return { cmd: "bash", args: ["-c", `xdotool key --clearmodifiers ${keys}; sleep 0.1`] };
     }
     case "press": {
-      return { cmd: "bash", args: ["-c", `xdotool key ${params.key}`] };
+      return { cmd: "bash", args: ["-c", `xdotool key --clearmodifiers ${params.key}; sleep 0.1`] };
     }
     case "scroll": {
       const clicks = params.amount || 3;
       const button = params.direction === "up" ? 4 : 5;
-      const sx = params.x ?? 512;
-      const sy = params.y ?? 384;
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${sx} ${sy} && xdotool click --repeat ${clicks} --delay 50 ${button}`] };
+      const sx = Math.round(params.x ?? 512);
+      const sy = Math.round(params.y ?? 384);
+      return { cmd: "bash", args: ["-c",
+        `xdotool mousemove --sync ${sx} ${sy}; sleep 0.05; ` +
+        `xdotool click --repeat ${clicks} --delay 50 ${button}; sleep 0.1`
+      ] };
     }
     default:
       return null;
   }
+}
+
+// Cached display geometry so we tell the model the truth (it was hardcoded
+// to 1024x768 in the prompt — wrong resolution = systematically off clicks).
+const screenSizeCache = new Map<string, { w: number; h: number }>();
+async function getScreenSize(sandbox: SandboxSession): Promise<{ w: number; h: number }> {
+  const cached = screenSizeCache.get(sandbox.sandboxId);
+  if (cached) return cached;
+  try {
+    const r = await runCommand(sandbox, "bash", ["-c", "xdotool getdisplaygeometry"], 5);
+    const m = r.stdout.trim().match(/^(\d+)\s+(\d+)/);
+    if (m) {
+      const size = { w: parseInt(m[1], 10), h: parseInt(m[2], 10) };
+      screenSizeCache.set(sandbox.sandboxId, size);
+      return size;
+    }
+  } catch { /* fall through */ }
+  return { w: 1024, h: 768 };
 }
 
 serve(async (req) => {
@@ -1165,7 +1203,8 @@ serve(async (req) => {
           });
         }
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+        const screenSize = await getScreenSize(sandbox).catch(() => ({ w: 1024, h: 768 }));
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement, screenSize), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

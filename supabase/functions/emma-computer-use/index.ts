@@ -958,19 +958,26 @@ serve(async (req) => {
               ...result,
             });
           }
-          // Try real browsers first (xdg-open often misroutes on minimal XFCE),
-          // then fall back to xdg-open. Run detached so we don't block.
+          // Launch a browser fully detached. Previous version only backgrounded
+          // the final `xdg-open` due to `&` precedence — firefox/chromium would
+          // run in the foreground and block. We now wrap the entire chain in a
+          // subshell with nohup+setsid so the command returns immediately and
+          // the browser process survives.
           const url = JSON.stringify(params.url);
+          const launchChain = `(command -v firefox >/dev/null && firefox --new-window ${url}) \
+|| (command -v firefox-esr >/dev/null && firefox-esr --new-window ${url}) \
+|| (command -v google-chrome >/dev/null && google-chrome --no-sandbox --new-window ${url}) \
+|| (command -v chromium >/dev/null && chromium --no-sandbox --new-window ${url}) \
+|| (command -v chromium-browser >/dev/null && chromium-browser --no-sandbox --new-window ${url}) \
+|| xdg-open ${url}`;
           await runCommand(
             sandbox, "bash",
-            ["-c", `(command -v firefox >/dev/null && (firefox --new-tab ${url} || firefox ${url})) \
-|| (command -v firefox-esr >/dev/null && firefox-esr ${url}) \
-|| (command -v google-chrome >/dev/null && google-chrome --no-sandbox ${url}) \
-|| (command -v chromium >/dev/null && chromium --no-sandbox ${url}) \
-|| (command -v chromium-browser >/dev/null && chromium-browser --no-sandbox ${url}) \
-|| xdg-open ${url} >/tmp/xdg-open.log 2>&1 &`],
-            10,
+            ["-c", `nohup setsid bash -c ${JSON.stringify(launchChain)} >/tmp/browser-launch.log 2>&1 </dev/null & disown; sleep 0.3`],
+            8,
           );
+          // Give the browser a head start before the agent's next think/screenshot.
+          await new Promise((r) => setTimeout(r, 2500));
+
         } else if (actionType === "wait") {
           result = { success: true, waited: params.seconds || 2 };
         } else if (actionType === "type") {

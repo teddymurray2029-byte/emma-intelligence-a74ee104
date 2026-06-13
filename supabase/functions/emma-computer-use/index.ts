@@ -789,7 +789,7 @@ Rules:
           role: "user",
           content: [
             { type: "text", text: "Look at this screenshot and decide the next action:" },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+            { type: "image_url", url: { url: `data:image/png;base64,${screenshotBase64}` } },
           ],
         },
       ],

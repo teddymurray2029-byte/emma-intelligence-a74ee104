@@ -312,47 +312,64 @@ serve(async (req) => {
     }
 
     const useRefinement = isComplexQuery(messages);
+    const toolPattern = /```tool\s*\n([\s\S]*?)\n```/g;
 
-    if (useRefinement) {
-      const draftResponse = await callAI(LOVABLE_API_KEY, messages, false, systemPrompt);
-      if (!draftResponse.ok) return handleError(draftResponse);
-      const draftData = await draftResponse.json();
-      let draftContent = extractAIText(draftData);
+    // Iterative agent loop: let the model call tools up to N times, feeding results back.
+    const workingMessages = [...messages];
+    const toolTrace: string[] = [];
+    const MAX_TOOL_ITERS = 5;
 
-      const toolPattern = /```tool\s*\n\{[\s\S]*?\}\s*\n```/g;
-      const toolBlocks = draftContent.match(toolPattern) || [];
-      let toolResults = "";
-      for (const block of toolBlocks) {
-        try {
-          const jsonStr = block.replace(/```tool\s*\n/, "").replace(/\s*\n```/, "");
-          const { tool, args } = JSON.parse(jsonStr);
-          const result = await executeToolCall(supabase, userId, tool, args);
-          toolResults += `\n[TOOL:${tool}] ${result.result}`;
-          draftContent = draftContent.replace(block, `> 🔧 ${tool}: ${result.result}`);
-        } catch {}
+    for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+      const probe = await callAI(LOVABLE_API_KEY, workingMessages, false, systemPrompt);
+      if (!probe.ok) return handleError(probe);
+      const probeData = await probe.json();
+      const probeContent = extractAIText(probeData);
+
+      const blocks = [...probeContent.matchAll(toolPattern)];
+      if (!blocks.length) {
+        // No tool calls — this is the draft; break and proceed to final stream
+        workingMessages.push({ role: "assistant", content: probeContent });
+        break;
       }
 
-      if (userId !== "anonymous") {
-        const lastUserMsg = messages[messages.length - 1]?.content || "";
-        if (lastUserMsg.length > 20) {
-          await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 200)}". Emma provided a detailed response.`, relevance_score: 3 });
+      let toolResultsText = "";
+      for (const m of blocks) {
+        try {
+          const { tool, args } = JSON.parse(m[1]);
+          const r = await executeToolCall(supabase, userId, tool, args);
+          const line = `[${tool}] ${r.result}`;
+          toolResultsText += line + "\n\n";
+          toolTrace.push(line);
+        } catch (e) {
+          toolResultsText += `[parse-error] ${e instanceof Error ? e.message : "bad tool block"}\n\n`;
         }
       }
-
-      const refineContent = toolResults
-        ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
-        : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
-
-      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "user", content: refineContent }], true, REFINEMENT_PROMPT);
-      if (!refinedResponse.ok) return handleError(refinedResponse);
-      return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+      workingMessages.push({ role: "assistant", content: probeContent });
+      workingMessages.push({
+        role: "user",
+        content: `TOOL RESULTS (iteration ${iter + 1}):\n${toolResultsText}\nUse these to refine your answer. Call more tools if needed, otherwise produce the final response.`,
+      });
     }
 
     if (userId !== "anonymous") {
       const lastUserMsg = messages[messages.length - 1]?.content || "";
       if (lastUserMsg.length > 10) {
-        await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 150)}"`, relevance_score: 1 });
+        await supabase.from("memory_episodes").insert({
+          user_id: userId, episode_type: "interaction",
+          content: `User asked: "${lastUserMsg.slice(0, 200)}"${toolTrace.length ? ` | tools: ${toolTrace.map(t => t.split("]")[0] + "]").join(",")}` : ""}`,
+          relevance_score: toolTrace.length ? 4 : 1,
+        });
       }
+    }
+
+    // Build the final streaming call. If we used tools or this is complex, run a refinement pass.
+    if (toolTrace.length || useRefinement) {
+      const lastUser = messages[messages.length - 1]?.content || "";
+      const draft = workingMessages[workingMessages.length - 1]?.content || "";
+      const refineContent = `Original query: ${lastUser}\n\n${toolTrace.length ? `Tool results:\n${toolTrace.join("\n")}\n\n` : ""}Draft answer:\n${draft}`;
+      const refined = await callAI(LOVABLE_API_KEY, [{ role: "user", content: refineContent }], true, REFINEMENT_PROMPT);
+      if (!refined.ok) return handleError(refined);
+      return new Response(refined.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
 
     const response = await callAI(LOVABLE_API_KEY, messages, true, systemPrompt);

@@ -859,33 +859,51 @@ Rules:
 - After typing into a field, usually press Enter via hotkey.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
-  const resp = await fetch(AI_GATEWAY_URL, {
+  const requestBody: Record<string, unknown> = {
+    model: "google/gemini-2.5-pro",
+    max_tokens: 4096,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+        ],
+      },
+    ],
+    temperature: 0,
+    response_format: { type: "json_object" },
+  };
+
+  let resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${lovableKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-pro",
-      max_tokens: 4096,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
-          ],
-        },
-
-      ],
-      temperature: 0,
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!resp.ok) {
     const err = await resp.text();
+    if (/response_format|json_object/i.test(err)) {
+      delete requestBody.response_format;
+      resp = await fetch(AI_GATEWAY_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${lovableKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (resp.ok) {
+        const retryData = await resp.json();
+        const retryContent = retryData.choices?.[0]?.message?.content || "";
+        const retryParsed = parseAiDecision(retryContent);
+        return retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+      }
+    }
     throw new Error(`AI reasoning failed: ${err}`);
   }
 

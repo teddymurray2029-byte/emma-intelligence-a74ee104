@@ -150,17 +150,55 @@ async function executeToolCall(supabase: any, userId: string, tool: string, args
       }
       case "memory_recall": {
         const { query } = args;
-        const { data } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score, created_at").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(10);
+        const q = (query || "").trim();
+        let data: any[] | null = null;
+        if (q.length > 2) {
+          const { data: hits } = await supabase
+            .from("memory_episodes")
+            .select("content, episode_type, relevance_score, created_at")
+            .eq("user_id", userId)
+            .ilike("content", `%${q}%`)
+            .order("relevance_score", { ascending: false })
+            .limit(8);
+          data = hits;
+        }
+        if (!data?.length) {
+          const { data: fb } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score, created_at").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(5);
+          data = fb;
+        }
         if (!data?.length) return { result: "No relevant memories found.", success: true };
-        const filtered = data.filter((m: any) => { const q = (query || "").toLowerCase(); return m.content.toLowerCase().includes(q) || q.split(" ").some((w: string) => w.length > 3 && m.content.toLowerCase().includes(w)); });
-        const results = (filtered.length ? filtered : data.slice(0, 5)).map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`).join("\n");
-        return { result: results || "No relevant memories found.", success: true };
+        return { result: data.map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 180)}`).join("\n"), success: true };
       }
       case "goal_create": {
         const { description, priority, type } = args;
         if (!description) return { result: "Error: description required", success: false };
         await supabase.from("goals").insert({ user_id: userId, description, priority: priority || 5, goal_type: type || "user", status: "active" });
         return { result: `Created goal: "${description}" (priority: ${priority || 5})`, success: true };
+      }
+      case "web_search": {
+        if (!args.query) return { result: "Error: query required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-web-search", { body: { query: args.query } });
+        if (error) return { result: `web_search failed: ${error.message}`, success: false };
+        const items = data?.results || data?.items || [];
+        if (!items.length) return { result: (typeof data === "string" ? data : JSON.stringify(data)).slice(0, 1500), success: true };
+        const summary = items.slice(0, 5).map((r: any, i: number) => `${i + 1}. ${r.title || r.name || "result"} — ${r.url || ""}\n   ${(r.snippet || r.description || "").slice(0, 200)}`).join("\n");
+        return { result: summary, success: true };
+      }
+      case "code_exec": {
+        if (!args.code) return { result: "Error: code required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-code-exec", { body: { language: args.language || "python", code: args.code } });
+        if (error) return { result: `code_exec failed: ${error.message}`, success: false };
+        const out = data?.stdout || data?.output || data?.result || JSON.stringify(data);
+        const err = data?.stderr || data?.error;
+        return { result: `STDOUT:\n${String(out).slice(0, 1500)}${err ? `\nSTDERR: ${String(err).slice(0, 500)}` : ""}`, success: true };
+      }
+      case "github_search": {
+        if (!args.query) return { result: "Error: query required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-github", { body: { action: "search", type: args.type || "repositories", query: args.query } });
+        if (error) return { result: `github_search failed: ${error.message}`, success: false };
+        const items = data?.items || data?.results || [];
+        const summary = items.slice(0, 5).map((r: any) => `- ${r.full_name || r.name || r.title}: ${r.html_url || r.url || ""}\n  ${(r.description || "").slice(0, 150)}`).join("\n");
+        return { result: summary || JSON.stringify(data).slice(0, 1000), success: true };
       }
       case "benchmark_status": {
         const { data } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();

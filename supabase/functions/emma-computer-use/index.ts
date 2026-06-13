@@ -1086,7 +1086,7 @@ serve(async (req) => {
             }
           }
         } else {
-          const xdoCmd = buildXdotoolCommand(actionType, params);
+          const xdoCmd = buildXdotoolCommand(actionType, params, await getScreenSize(sandbox).catch(() => undefined));
           if (xdoCmd) {
             try {
               const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);

@@ -1203,7 +1203,8 @@ serve(async (req) => {
           });
         }
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+        const screenSize = await getScreenSize(sandbox).catch(() => ({ w: 1024, h: 768 }));
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement, screenSize), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

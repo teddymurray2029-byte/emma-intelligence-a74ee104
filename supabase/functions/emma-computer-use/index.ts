@@ -248,6 +248,72 @@ function analyzeScreenshot(bytes: Uint8Array): ScreenshotAnalysis {
   }
 }
 
+// ===== Coordinate grid overlay (Set-of-Marks technique for precise clicks) =====
+// 3x5 bitmap font for digits — used to label gridlines so the model can read exact coordinates.
+const DIGIT_FONT: Record<string, number[][]> = {
+  "0": [[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+  "1": [[0,1,0],[1,1,0],[0,1,0],[0,1,0],[1,1,1]],
+  "2": [[1,1,1],[0,0,1],[1,1,1],[1,0,0],[1,1,1]],
+  "3": [[1,1,1],[0,0,1],[1,1,1],[0,0,1],[1,1,1]],
+  "4": [[1,0,1],[1,0,1],[1,1,1],[0,0,1],[0,0,1]],
+  "5": [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+  "6": [[1,1,1],[1,0,0],[1,1,1],[1,0,1],[1,1,1]],
+  "7": [[1,1,1],[0,0,1],[0,1,0],[1,0,0],[1,0,0]],
+  "8": [[1,1,1],[1,0,1],[1,1,1],[1,0,1],[1,1,1]],
+  "9": [[1,1,1],[1,0,1],[1,1,1],[0,0,1],[1,1,1]],
+};
+
+function drawPixel(png: any, x: number, y: number, r: number, g: number, b: number) {
+  if (x < 0 || y < 0 || x >= png.width || y >= png.height) return;
+  const idx = (png.width * y + x) << 2;
+  png.data[idx] = r; png.data[idx + 1] = g; png.data[idx + 2] = b; png.data[idx + 3] = 255;
+}
+
+function drawDigit(png: any, ch: string, x: number, y: number, r: number, g: number, b: number) {
+  const glyph = DIGIT_FONT[ch]; if (!glyph) return;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      if (glyph[row][col]) drawPixel(png, x + col, y + row, r, g, b);
+    }
+  }
+}
+
+function drawLabel(png: any, text: string, x: number, y: number) {
+  // Black background box for legibility
+  const w = text.length * 4 + 1;
+  const h = 7;
+  for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) drawPixel(png, x + dx, y + dy, 0, 0, 0);
+  for (let i = 0; i < text.length; i++) drawDigit(png, text[i], x + 1 + i * 4, y + 1, 0, 255, 0);
+}
+
+function overlayGrid(bytes: Uint8Array): Uint8Array {
+  try {
+    const png = PNG.sync.read(Buffer.from(bytes));
+    const STEP = 100;
+    // Vertical lines
+    for (let x = STEP; x < png.width; x += STEP) {
+      for (let y = 0; y < png.height; y++) drawPixel(png, x, y, 0, 255, 0);
+    }
+    // Horizontal lines
+    for (let y = STEP; y < png.height; y += STEP) {
+      for (let x = 0; x < png.width; x++) drawPixel(png, x, y, 0, 255, 0);
+    }
+    // Labels at intersections
+    for (let x = 0; x <= png.width; x += STEP) {
+      for (let y = 0; y <= png.height; y += STEP) {
+        drawLabel(png, `${x}`, Math.min(x + 2, png.width - 20), Math.min(y + 2, png.height - 8));
+        drawLabel(png, `${y}`, Math.min(x + 2, png.width - 20), Math.min(y + 10, png.height - 8));
+      }
+    }
+    return new Uint8Array(PNG.sync.write(png));
+  } catch (e) {
+    console.warn(`[grid] overlay failed: ${e instanceof Error ? e.message : String(e)}`);
+    return bytes;
+  }
+}
+
+
+
 // ===== SDK-ALIGNED kickstartDesktop =====
 // Matches E2B Desktop SDK's _start() method exactly:
 // 1. Xvfb with -retro -dpi 96 -nolisten flags

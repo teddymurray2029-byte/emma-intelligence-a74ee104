@@ -161,6 +161,36 @@ async function executeToolCall(supabase: any, userId: string, tool: string, args
         const cats = Object.entries(data.category_scores || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
         return { result: `Latest score: ${data.total_score}/100. Categories: ${cats}. Run: ${data.created_at}`, success: true };
       }
+      case "gmail_list": {
+        const q = args.q ? `&q=${encodeURIComponent(args.q)}` : "";
+        const max = args.maxResults || 10;
+        const data = await gmailCall(`/users/me/messages?maxResults=${max}${q}`);
+        const ids = (data.messages || []).map((m: any) => m.id).join(", ");
+        return { result: `Found ${data.messages?.length || 0} messages. IDs: ${ids || "none"}`, success: true };
+      }
+      case "gmail_get": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        const data = await gmailCall(`/users/me/messages/${args.id}?format=metadata`);
+        const headers = (data.payload?.headers || []) as any[];
+        const h = (n: string) => headers.find((x) => x.name?.toLowerCase() === n.toLowerCase())?.value || "";
+        return { result: `From: ${h("From")}\nTo: ${h("To")}\nSubject: ${h("Subject")}\nDate: ${h("Date")}\nSnippet: ${data.snippet || ""}`, success: true };
+      }
+      case "gmail_send": {
+        if (!args.to || !args.subject) return { result: "Error: to and subject required", success: false };
+        const raw = b64urlEmail(args.to, args.subject, args.body || "", args.cc, args.bcc);
+        const data = await gmailCall(`/users/me/messages/send`, { method: "POST", body: JSON.stringify({ raw }) });
+        return { result: `Email sent to ${args.to}. ID: ${data.id}`, success: true };
+      }
+      case "gmail_modify": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        await gmailCall(`/users/me/messages/${args.id}/modify`, { method: "POST", body: JSON.stringify({ addLabelIds: args.addLabelIds || [], removeLabelIds: args.removeLabelIds || [] }) });
+        return { result: `Modified message ${args.id}`, success: true };
+      }
+      case "gmail_trash": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        await gmailCall(`/users/me/messages/${args.id}/trash`, { method: "POST" });
+        return { result: `Trashed message ${args.id}`, success: true };
+      }
       default: return { result: `Unknown tool: ${tool}`, success: false };
     }
   } catch (e) { return { result: `Tool error: ${e instanceof Error ? e.message : "unknown"}`, success: false }; }

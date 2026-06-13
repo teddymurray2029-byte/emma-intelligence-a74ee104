@@ -103,15 +103,37 @@ serve(async (req) => {
       const domain = body.domain || pick(DOMAINS);
       try {
         const inv = await inventPhysics(LOVABLE_API_KEY, domain, names, body.prompt);
+        const toText = (v: any): string => {
+          if (v == null) return "";
+          if (typeof v === "string") return v;
+          if (Array.isArray(v)) {
+            return v.map((item, i) => {
+              if (item == null) return "";
+              if (typeof item === "string") return `${i + 1}. ${item}`;
+              if (typeof item === "object") {
+                const title = item.title || item.step || item.name || `Step ${i + 1}`;
+                const body = item.description || item.detail || item.content || item.instructions ||
+                  Object.entries(item).filter(([k]) => !["title","step","name"].includes(k))
+                    .map(([k, val]) => `${k}: ${toText(val)}`).join("\n");
+                return `${i + 1}. ${title}\n${body}`;
+              }
+              return `${i + 1}. ${String(item)}`;
+            }).join("\n\n");
+          }
+          if (typeof v === "object") {
+            return Object.entries(v).map(([k, val]) => `${k}:\n${toText(val)}`).join("\n\n");
+          }
+          return String(v);
+        };
         const { data: row, error } = await supabase.from("physics_inventions").insert({
           name: String(inv.name).slice(0, 200),
           domain: String(inv.domain || domain).slice(0, 100),
-          hypothesis: String(inv.hypothesis || ""),
-          mechanism: String(inv.mechanism || ""),
-          equations: String(inv.equations || ""),
-          predictions: String(inv.predictions || ""),
-          applications: String(inv.applications || ""),
-          build_instructions: String(inv.build_instructions || ""),
+          hypothesis: toText(inv.hypothesis),
+          mechanism: toText(inv.mechanism),
+          equations: toText(inv.equations),
+          predictions: toText(inv.predictions),
+          applications: toText(inv.applications),
+          build_instructions: toText(inv.build_instructions),
           novelty_score: Number(inv.novelty_score) || null,
           source: isCron ? "cron" : "manual",
         }).select().single();

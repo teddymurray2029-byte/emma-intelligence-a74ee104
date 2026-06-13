@@ -104,6 +104,34 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
+const GMAIL_GATEWAY = "https://connector-gateway.lovable.dev/google_mail/gmail/v1";
+
+function b64urlEmail(to: string, subject: string, body: string, cc?: string, bcc?: string) {
+  const lines = [`To: ${to}`];
+  if (cc) lines.push(`Cc: ${cc}`);
+  if (bcc) lines.push(`Bcc: ${bcc}`);
+  lines.push(`Subject: ${subject}`, 'Content-Type: text/plain; charset="UTF-8"', "", body);
+  return btoa(lines.join("\r\n")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function gmailCall(path: string, init: RequestInit = {}) {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const GOOGLE_MAIL_API_KEY = Deno.env.get("GOOGLE_MAIL_API_KEY");
+  if (!LOVABLE_API_KEY || !GOOGLE_MAIL_API_KEY) throw new Error("Gmail connector not configured");
+  const res = await fetch(`${GMAIL_GATEWAY}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "X-Connection-Api-Key": GOOGLE_MAIL_API_KEY,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Gmail ${res.status}: ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { return text; }
+}
+
 async function executeToolCall(supabase: any, userId: string, tool: string, args: any): Promise<{ result: string; success: boolean }> {
   try {
     switch (tool) {

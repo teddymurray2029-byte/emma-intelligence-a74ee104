@@ -37,7 +37,9 @@ async function inventPhysics(apiKey: string, domain: string, existingNames: stri
       messages: [
         {
           role: "system",
-          content: `You are a theoretical physicist inventing NEW, speculative-but-internally-consistent physics systems. Avoid duplicating prior inventions. Return ONLY JSON with keys: name, domain, hypothesis, mechanism, equations (LaTeX-like plaintext), predictions, applications, novelty_score (0-10). Be specific and original.`,
+          content: `You are a theoretical physicist and experimental engineer inventing NEW, speculative-but-internally-consistent physics systems. Avoid duplicating prior inventions. Return ONLY JSON with keys: name, domain, hypothesis, mechanism, equations (LaTeX-like plaintext), predictions, applications, build_instructions, novelty_score (0-10).
+
+build_instructions MUST be a detailed, numbered, step-by-step protocol a competent lab could follow to construct and test a prototype or demonstration. Include: required materials & equipment (with specs), assembly steps, calibration, measurement procedure, expected signal vs. noise, safety considerations, and falsification criteria. Be concrete (sizes, frequencies, temperatures, voltages, sample purities). No hand-waving.`,
         },
         {
           role: "user",
@@ -109,6 +111,7 @@ serve(async (req) => {
           equations: String(inv.equations || ""),
           predictions: String(inv.predictions || ""),
           applications: String(inv.applications || ""),
+          build_instructions: String(inv.build_instructions || ""),
           novelty_score: Number(inv.novelty_score) || null,
           source: isCron ? "cron" : "manual",
         }).select().single();

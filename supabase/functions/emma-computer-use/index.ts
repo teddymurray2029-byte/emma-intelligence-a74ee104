@@ -769,9 +769,11 @@ Respond with a JSON object (no markdown, just raw JSON):
 
 Rules:
 - THE SCREENSHOT IS GROUND TRUTH. Trust what you see, not what history claims.
-- Coordinates target a 1024x768 screen — click button centres precisely.
+- Screen resolution is EXACTLY ${screenSize?.w ?? 1024}x${screenSize?.h ?? 768} pixels. Origin (0,0) is the top-left. Coordinates MUST fall inside this range.
+- For clicks, target the VISUAL CENTER of the element (button text bounding box, input field middle). Avoid edges, borders, and shadows — they often miss.
+- If a previous click did not advance the screen, the click likely landed off-target: re-examine the screenshot, pick a NEW (x,y) at least 6px away from the previous attempt, and prefer the densest pixel cluster of the element.
 - For web navigation, prefer open_url over manual address-bar typing.
-- After typing, often press Enter via hotkey.
+- After typing into a field, usually press Enter via hotkey rather than hunting for a submit button.
 - When you find a vulnerability, IMMEDIATELY emit a report_finding action with a complete finding object before continuing.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 

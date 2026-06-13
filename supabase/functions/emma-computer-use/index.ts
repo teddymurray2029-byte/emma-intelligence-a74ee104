@@ -743,7 +743,7 @@ Respond with a JSON object (no markdown, just raw JSON):
   "reasoning": "What you ACTUALLY see in the screenshot + why this action",
   "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
   "params": {
-    // click/double_click/move_mouse: {"x": number, "y": number}
+    // click/double_click/move_mouse: {"x": number, "y": number, "targetLabel": "short description of element being clicked, e.g. 'Sign in button'"}
     // type: {"text": "string"}
     // hotkey: {"keys": ["ctrl","a"]}
     // scroll: {"x":number,"y":number,"direction":"up"|"down","amount":3}
@@ -771,6 +771,7 @@ Rules:
 - THE SCREENSHOT IS GROUND TRUTH. Trust what you see, not what history claims.
 - Screen resolution is EXACTLY ${screenSize?.w ?? 1024}x${screenSize?.h ?? 768} pixels. Origin (0,0) is the top-left. Coordinates MUST fall inside this range.
 - For clicks, target the VISUAL CENTER of the element (button text bounding box, input field middle). Avoid edges, borders, and shadows — they often miss.
+- ALWAYS include "targetLabel" in params for click/double_click/move_mouse — a short description ("Submit button", "search input", "menu item Settings"). This drives a refinement pass that snaps your coordinates to the precise pixel center.
 - If a previous click did not advance the screen, the click likely landed off-target: re-examine the screenshot, pick a NEW (x,y) at least 6px away from the previous attempt, and prefer the densest pixel cluster of the element.
 - For web navigation, prefer open_url over manual address-bar typing.
 - After typing into a field, usually press Enter via hotkey rather than hunting for a submit button.

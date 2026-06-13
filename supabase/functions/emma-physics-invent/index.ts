@@ -76,10 +76,14 @@ serve(async (req) => {
       });
     }
 
-    // invent — cron-gated
-    const cronSecret = Deno.env.get("CRON_SECRET");
+    // invent — cron-gated by secret stored in public.cron_secrets
     const provided = req.headers.get("x-cron-secret");
-    const isCron = cronSecret && provided === cronSecret;
+    let isCron = false;
+    if (provided) {
+      const { data: sec } = await supabase
+        .from("cron_secrets").select("secret").eq("name", "physics-invent").maybeSingle();
+      if (sec?.secret && sec.secret === provided) isCron = true;
+    }
     const isManual = body.manual === true;
     if (!isCron && !isManual) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {

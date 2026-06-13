@@ -790,10 +790,11 @@ Rules:
         {
           role: "user",
           content: [
-            { type: "text", text: "Look at this screenshot and decide the next action:" },
-            { type: "image_url", url: { url: `data:image/png;base64,${screenshotBase64}` } },
+            { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
           ],
         },
+
       ],
       temperature: 0.1,
     }),

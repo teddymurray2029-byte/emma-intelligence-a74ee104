@@ -132,6 +132,7 @@ export default function PhysicsInventions() {
                   {it.equations && <Section label="Equations" body={it.equations} mono />}
                   {it.predictions && <Section label="Predictions" body={it.predictions} />}
                   {it.applications && <Section label="Applications" body={it.applications} />}
+                  {it.build_instructions && <Section label="Build Instructions" body={it.build_instructions} />}
                 </div>
               )}
             </Card>

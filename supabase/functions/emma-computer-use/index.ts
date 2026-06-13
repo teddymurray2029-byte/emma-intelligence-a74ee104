@@ -1273,6 +1273,25 @@ serve(async (req) => {
         }
 
         const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+
+        // Two-pass click grounding: refine pixel coordinates for click/double_click/move_mouse
+        let refineMeta: { applied: boolean; from?: { x: number; y: number }; to?: { x: number; y: number } } = { applied: false };
+        if (decision && (decision.action === "click" || decision.action === "double_click" || decision.action === "move_mouse")) {
+          const px = Number(decision.params?.x);
+          const py = Number(decision.params?.y);
+          if (Number.isFinite(px) && Number.isFinite(py)) {
+            try {
+              const refined = await refineClickCoordinates(screenshotBase64, px, py, decision.reasoning || "");
+              if (refined.refined && (refined.x !== px || refined.y !== py)) {
+                decision.params = { ...decision.params, x: refined.x, y: refined.y };
+                refineMeta = { applied: true, from: { x: px, y: py }, to: { x: refined.x, y: refined.y } };
+              }
+            } catch (e) {
+              console.warn(`[think] refinement skipped: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        }
+
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

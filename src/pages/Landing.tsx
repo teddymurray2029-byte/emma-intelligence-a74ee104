@@ -216,6 +216,7 @@ export default function Landing() {
             <a href="#features" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Features</a>
             <a href="#pricing" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Pricing</a>
             <Link to="/inventions" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Inventions</Link>
+            <Link to="/changelog" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Changelog</Link>
             {user ? (
               <Button onClick={() => navigate("/app")} size="sm" className="ml-2 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.5)]">
                 Open App<ArrowRight className="h-4 w-4 ml-1" />
@@ -419,16 +420,18 @@ export default function Landing() {
               viewport={{ once: true, margin: "-50px" }}
               transition={{ duration: 0.4, delay: (i % 6) * 0.04 }}
             >
-              <TiltCard className="h-full">
-                <div className="relative h-full p-6 rounded-2xl emma-glass emma-gloss emma-noise overflow-hidden hover:border-primary/30 transition-colors">
-                  <div className={`absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br ${f.color} opacity-[0.10] blur-3xl group-hover:opacity-30 transition-opacity duration-500`} />
-                  <div className={`relative h-11 w-11 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-4 shadow-[0_8px_24px_-6px_currentColor,0_0_0_1px_hsl(0_0%_100%/0.1)_inset]`}>
-                    <f.icon className="h-5 w-5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]" />
+              <Link to={f.to} className="block h-full">
+                <TiltCard className="h-full">
+                  <div className="relative h-full p-6 rounded-2xl emma-glass emma-gloss emma-noise overflow-hidden hover:border-primary/30 transition-colors cursor-pointer">
+                    <div className={`absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br ${f.color} opacity-[0.10] blur-3xl group-hover:opacity-30 transition-opacity duration-500`} />
+                    <div className={`relative h-11 w-11 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-4 shadow-[0_8px_24px_-6px_currentColor,0_0_0_1px_hsl(0_0%_100%/0.1)_inset]`}>
+                      <f.icon className="h-5 w-5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]" />
+                    </div>
+                    <div className="font-semibold mb-2 text-base tracking-tight">{f.title}</div>
+                    <div className="text-sm text-muted-foreground leading-relaxed">{f.desc}</div>
                   </div>
-                  <div className="font-semibold mb-2 text-base tracking-tight">{f.title}</div>
-                  <div className="text-sm text-muted-foreground leading-relaxed">{f.desc}</div>
-                </div>
-              </TiltCard>
+                </TiltCard>
+              </Link>
             </motion.div>
           ))}
         </div>

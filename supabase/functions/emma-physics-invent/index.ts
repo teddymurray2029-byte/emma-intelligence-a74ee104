@@ -27,7 +27,7 @@ function extractJson(s: string): any {
   try { return JSON.parse(raw.slice(start, end + 1)); } catch { return null; }
 }
 
-async function inventPhysics(apiKey: string, domain: string, existingNames: string[]) {
+async function inventPhysics(apiKey: string, domain: string, existingNames: string[], userPrompt?: string) {
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -41,7 +41,7 @@ async function inventPhysics(apiKey: string, domain: string, existingNames: stri
         },
         {
           role: "user",
-          content: `Invent a novel physics system in the domain of "${domain}". Avoid these existing names: ${existingNames.slice(0, 50).join("; ") || "none"}.`,
+          content: `Invent a novel physics system in the domain of "${domain}".${userPrompt ? ` User request: ${userPrompt}.` : ""} Avoid these existing names: ${existingNames.slice(0, 50).join("; ") || "none"}.`,
         },
       ],
     }),
@@ -100,7 +100,7 @@ serve(async (req) => {
     for (let i = 0; i < count; i++) {
       const domain = body.domain || pick(DOMAINS);
       try {
-        const inv = await inventPhysics(LOVABLE_API_KEY, domain, names);
+        const inv = await inventPhysics(LOVABLE_API_KEY, domain, names, body.prompt);
         const { data: row, error } = await supabase.from("physics_inventions").insert({
           name: String(inv.name).slice(0, 200),
           domain: String(inv.domain || domain).slice(0, 100),

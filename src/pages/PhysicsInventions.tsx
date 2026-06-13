@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Atom, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +29,7 @@ export default function PhysicsInventions() {
   const [loading, setLoading] = useState(true);
   const [inventing, setInventing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -52,7 +54,7 @@ export default function PhysicsInventions() {
       const r = await fetch(FN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}`, apikey: ANON },
-        body: JSON.stringify({ manual: true, count: 1 }),
+        body: JSON.stringify({ manual: true, count: 1, prompt: prompt.trim() || undefined }),
       });
       const j = await r.json();
       if (j.created?.length) {
@@ -88,6 +90,16 @@ export default function PhysicsInventions() {
       </header>
 
       <main className="max-w-5xl mx-auto p-6 space-y-3">
+        <Card className="p-3 space-y-2">
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Optional: describe what kind of invention you want (e.g. 'a theory unifying dark matter and superconductivity')"
+            rows={2}
+            className="resize-none text-sm"
+          />
+          <p className="text-xs text-muted-foreground">Leave blank for a random domain.</p>
+        </Card>
         {loading ? (
           <div className="text-center py-12 text-muted-foreground">Loading…</div>
         ) : items.length === 0 ? (

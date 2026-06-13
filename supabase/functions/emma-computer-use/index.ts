@@ -706,6 +706,7 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string,
   engagement?: EngagementContext,
+  screenSize?: { w: number; h: number },
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");

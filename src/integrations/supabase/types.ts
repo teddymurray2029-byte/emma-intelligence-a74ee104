@@ -820,6 +820,48 @@ export type Database = {
         }
         Relationships: []
       }
+      physics_inventions: {
+        Row: {
+          applications: string | null
+          created_at: string
+          domain: string | null
+          equations: string | null
+          hypothesis: string | null
+          id: string
+          mechanism: string | null
+          name: string
+          novelty_score: number | null
+          predictions: string | null
+          source: string | null
+        }
+        Insert: {
+          applications?: string | null
+          created_at?: string
+          domain?: string | null
+          equations?: string | null
+          hypothesis?: string | null
+          id?: string
+          mechanism?: string | null
+          name: string
+          novelty_score?: number | null
+          predictions?: string | null
+          source?: string | null
+        }
+        Update: {
+          applications?: string | null
+          created_at?: string
+          domain?: string | null
+          equations?: string | null
+          hypothesis?: string | null
+          id?: string
+          mechanism?: string | null
+          name?: string
+          novelty_score?: number | null
+          predictions?: string | null
+          source?: string | null
+        }
+        Relationships: []
+      }
       plan_nodes: {
         Row: {
           action: string

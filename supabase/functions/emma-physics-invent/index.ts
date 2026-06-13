@@ -41,7 +41,7 @@ async function inventPhysics(apiKey: string, domain: string, existingNames: stri
         },
         {
           role: "user",
-          content: `Invent a novel physics system in the domain of "${domain}". Avoid these existing names: ${existingNames.slice(0, 50).join("; ") || "none"}.`,
+          content: `Invent a novel physics system in the domain of "${domain}".${userPrompt ? ` User request: ${userPrompt}.` : ""} Avoid these existing names: ${existingNames.slice(0, 50).join("; ") || "none"}.`,
         },
       ],
     }),

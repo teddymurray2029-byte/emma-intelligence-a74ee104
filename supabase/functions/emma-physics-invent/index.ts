@@ -111,6 +111,7 @@ serve(async (req) => {
           equations: String(inv.equations || ""),
           predictions: String(inv.predictions || ""),
           applications: String(inv.applications || ""),
+          build_instructions: String(inv.build_instructions || ""),
           novelty_score: Number(inv.novelty_score) || null,
           source: isCron ? "cron" : "manual",
         }).select().single();

@@ -54,7 +54,7 @@ export default function PhysicsInventions() {
       const r = await fetch(FN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}`, apikey: ANON },
-        body: JSON.stringify({ manual: true, count: 1 }),
+        body: JSON.stringify({ manual: true, count: 1, prompt: prompt.trim() || undefined }),
       });
       const j = await r.json();
       if (j.created?.length) {

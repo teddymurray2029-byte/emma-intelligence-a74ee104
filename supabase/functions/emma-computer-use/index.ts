@@ -1307,7 +1307,7 @@ serve(async (req) => {
             { name: "black_screen_startup", recoveryAssertion: "wait action returned until meaningful frame" },
           ],
         };
-        return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
+        return json({ ...decision, screenshot: screenshotBase64, reliability, clickRefinement: refineMeta, traceId });
       }
 
       case "shell_exec": {

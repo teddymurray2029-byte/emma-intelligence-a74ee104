@@ -1265,6 +1265,21 @@ serve(async (req) => {
 
         const screenSize = await getScreenSize(sandbox).catch(() => ({ w: 1024, h: 768 }));
         const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement, screenSize), 15_000);
+
+        // Two-stage click refinement: snap proposed coords to visual center.
+        let refinement: { from: { x: number; y: number }; to: { x: number; y: number }; refined: boolean } | undefined;
+        if ((decision.action === "click" || decision.action === "double_click") &&
+            typeof decision.params?.x === "number" && typeof decision.params?.y === "number") {
+          const label = decision.params.targetLabel || decision.reasoning?.slice(0, 80) || "target element";
+          const from = { x: decision.params.x, y: decision.params.y };
+          const refined = await refineClickTarget(screenshotBase64, from, screenSize, label).catch(() => ({ ...from, refined: false }));
+          if (refined.refined) {
+            decision.params.x = refined.x;
+            decision.params.y = refined.y;
+          }
+          refinement = { from, to: { x: decision.params.x, y: decision.params.y }, refined: refined.refined };
+        }
+
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {
@@ -1280,7 +1295,7 @@ serve(async (req) => {
             { name: "black_screen_startup", recoveryAssertion: "wait action returned until meaningful frame" },
           ],
         };
-        return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
+        return json({ ...decision, screenshot: screenshotBase64, reliability, refinement, traceId });
       }
 
       case "shell_exec": {

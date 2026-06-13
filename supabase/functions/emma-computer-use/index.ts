@@ -834,30 +834,19 @@ You MUST:
 
 Your task: ${task}${engagementBlock}${historyText}${userIntervention}
 
-Respond with a JSON object (no markdown, just raw JSON):
-{
-  "reasoning": "Begin with 'VISIBLE: <2-3 sentences literally describing the CURRENT screenshot — name the foreground window/app title, dominant background color, any readable text you can actually see, and the positions of visible icons/buttons. If you see only a desktop with icons, SAY THAT — do not pretend a browser or website is open.>' Then 'DECISION: <next action>'. If your VISIBLE description would contradict the actual pixels (e.g. claiming a login page when only a desktop is shown), you are hallucinating — stop and choose action='wait' or 'scroll' instead.",
-  "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
-  "params": {
-    // click/double_click/move_mouse: {"x": number, "y": number}
-    // type: {"text": "string"}
-    // hotkey: {"keys": ["ctrl","a"]}
-    // scroll: {"x":number,"y":number,"direction":"up"|"down","amount":3}
-    // open_url: {"url":"https://..."}
-    // wait: {"seconds": 2}
-    // report_finding: {} (only during a security engagement; finding goes in top-level "finding")
-    // done: {}
-  },
-  "done": false,
-  "summary": "Only when done=true — what you accomplished",
-  "finding": {
-    // OPTIONAL — only when action == "report_finding" during a security engagement.
-    "title": "...", "severity": "Critical|High|Medium|Low|Info",
-    "category": "XSS|SQLi|IDOR|Auth|SSRF|CSRF|InfoDisclosure|RCE|Other",
-    "cvssVector": "CVSS:3.1/...", "affectedUrl": "https://...",
-    "description": "...", "reproductionSteps": ["..."], "remediation": "..."
-  }
-}
+Respond with exactly one valid JSON object and nothing else. No markdown, no screenshots, no prose outside JSON.
+Required shape:
+{"reasoning":"VISIBLE: two literal sentences about the current screenshot. DECISION: one sentence explaining the next action.","action":"wait","params":{"seconds":2},"done":false}
+
+Allowed actions and params:
+- click/double_click/move_mouse: {"x": number, "y": number}
+- type: {"text": "string"}
+- hotkey: {"keys": ["ctrl","a"]}
+- scroll: {"x": number, "y": number, "direction": "up" or "down", "amount": number}
+- open_url: {"url": "https://..."}
+- wait: {"seconds": 1-8}
+- report_finding: params {}, plus top-level finding object
+- done: params {}, done true, summary string
 
 Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
@@ -890,7 +879,8 @@ Rules:
         },
 
       ],
-      temperature: 0.1,
+      temperature: 0,
+      response_format: { type: "json_object" },
     }),
   });
 
@@ -902,16 +892,16 @@ Rules:
   const data = await resp.json();
   const content = data.choices?.[0]?.message?.content || "";
 
-  let jsonStr = content.trim();
-  if (jsonStr.startsWith("```")) {
-    jsonStr = jsonStr.replace(/^```json?\n?/, "").replace(/\n?```$/, "");
-  }
+  const parsed = parseAiDecision(content);
+  if (parsed) return parsed;
 
-  try {
-    return JSON.parse(jsonStr);
-  } catch {
-    return { action: "done", params: {}, reasoning: "Failed to parse AI response: " + content.slice(0, 200), done: true, summary: "Agent encountered a parsing error." };
-  }
+  return {
+    action: "wait",
+    params: { seconds: 2 },
+    reasoning: `VISIBLE: I could not safely parse the model decision from the current screen. DECISION: Wait briefly and re-analyze instead of ending the task. Raw response starts: ${content.slice(0, 180)}`,
+    done: false,
+    parseWarning: "unparseable_ai_response",
+  };
 }
 
 // ===== xdotool-based action execution (replaces pyautogui) =====

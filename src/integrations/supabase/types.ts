@@ -823,6 +823,7 @@ export type Database = {
       physics_inventions: {
         Row: {
           applications: string | null
+          build_instructions: string | null
           created_at: string
           domain: string | null
           equations: string | null
@@ -836,6 +837,7 @@ export type Database = {
         }
         Insert: {
           applications?: string | null
+          build_instructions?: string | null
           created_at?: string
           domain?: string | null
           equations?: string | null
@@ -849,6 +851,7 @@ export type Database = {
         }
         Update: {
           applications?: string | null
+          build_instructions?: string | null
           created_at?: string
           domain?: string | null
           equations?: string | null

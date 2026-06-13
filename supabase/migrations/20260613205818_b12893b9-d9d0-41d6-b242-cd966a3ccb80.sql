@@ -1,0 +1,1 @@
+ALTER TABLE public.physics_inventions ADD COLUMN IF NOT EXISTS build_instructions TEXT;

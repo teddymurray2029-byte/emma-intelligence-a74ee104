@@ -42,6 +42,11 @@ Available tools:
 - **file_read**: Read a file from uploads. Args: {"path": "..."}
 - **web_search**: Search the web. Args: {"query": "..."}
 - **benchmark_status**: Get current benchmark scores. Args: {}
+- **gmail_list**: List Gmail messages. Args: {"q": "is:unread", "maxResults": 10}
+- **gmail_get**: Get a Gmail message. Args: {"id": "<messageId>"}
+- **gmail_send**: Send an email. Args: {"to": "...", "subject": "...", "body": "...", "cc": "?", "bcc": "?"}
+- **gmail_modify**: Add/remove labels. Args: {"id": "...", "addLabelIds": [], "removeLabelIds": ["UNREAD"]}
+- **gmail_trash**: Move to trash. Args: {"id": "..."}
 
 ## REASONING PIPELINE (for complex queries)
 ### [REFRAME] Rewrite the problem, identify hidden assumptions

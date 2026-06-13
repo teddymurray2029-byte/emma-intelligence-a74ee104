@@ -825,16 +825,18 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
     case "click": {
       const x = params.x ?? 512;
       const y = params.y ?? 384;
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click 1`] };
+      // Move, settle briefly so the WM registers hover, then click with clearmodifiers.
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && sleep 0.08 && xdotool click --clearmodifiers 1`] };
     }
     case "double_click": {
       const x = params.x ?? 512;
       const y = params.y ?? 384;
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click --repeat 2 --delay 100 1`] };
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && sleep 0.08 && xdotool click --clearmodifiers --repeat 2 --delay 80 1`] };
     }
     case "move_mouse": {
       return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
     }
+
     case "type": {
       // xdotool type with delay; escape special chars
       const text = (params.text || "").replace(/'/g, "'\\''");

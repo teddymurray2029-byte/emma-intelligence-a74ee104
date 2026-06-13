@@ -51,7 +51,8 @@ export default function Index() {
   const [mode, setMode] = useState<EmmaMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const m = params.get("mode") as EmmaMode | null;
-    return m || "projects";
+    const valid: EmmaMode[] = ["chat","research","artifacts","voice","builder","think","memory","data","projects","agent"];
+    return m && valid.includes(m) ? m : "projects";
   });
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("standard");
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);

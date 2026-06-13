@@ -918,12 +918,14 @@ Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
 - If the screenshot shows the bottom of a page (e.g. footer/sponsor logos), do NOT claim you are looking at a list/menu/header that is not visible — scroll up first.
 - If you are unsure what is on screen, your next action should be 'scroll' (to top) or 'wait', not a click based on assumed state.
-- Screen is 1024x768. Click coordinates must be the EXACT CENTER of the target element (not its edge, not its label). For small icons aim within ±5 px of center.
+- Screen is 1024x768. A green coordinate grid is overlaid every 100 pixels with the x,y values printed at each intersection. READ THE GRID to determine exact click coordinates — do NOT guess. Locate the target visually, find the nearest gridline intersections, then interpolate.
+- Click coordinates must be the EXACT CENTER of the target element (not its edge, not its label). For small icons aim within ±5 px of center. The grid lines themselves are overlay — ignore them as UI; they are just for measurement.
 - DESKTOP ICONS require double_click, not click. A single click only selects them.
 - To open any website or web page, ALWAYS use action='open_url' with the full URL. Do NOT try to launch a browser by clicking desktop/taskbar icons — that is unreliable. open_url handles browser launch automatically.
 - After open_url, the browser needs ~3-5 seconds to render: follow with action='wait' (seconds: 4) before reasoning about the page.
 - After typing into a field, usually press Enter via hotkey.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
+
 
   const requestBody: Record<string, unknown> = {
     model: "google/gemini-2.5-pro",

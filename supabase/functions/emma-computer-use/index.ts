@@ -956,9 +956,17 @@ serve(async (req) => {
               ...result,
             });
           }
+          // Try real browsers first (xdg-open often misroutes on minimal XFCE),
+          // then fall back to xdg-open. Run detached so we don't block.
+          const url = JSON.stringify(params.url);
           await runCommand(
             sandbox, "bash",
-            ["-c", `xdg-open ${JSON.stringify(params.url)} >/tmp/xdg-open.log 2>&1 &`],
+            ["-c", `(command -v firefox >/dev/null && (firefox --new-tab ${url} || firefox ${url})) \
+|| (command -v firefox-esr >/dev/null && firefox-esr ${url}) \
+|| (command -v google-chrome >/dev/null && google-chrome --no-sandbox ${url}) \
+|| (command -v chromium >/dev/null && chromium --no-sandbox ${url}) \
+|| (command -v chromium-browser >/dev/null && chromium-browser --no-sandbox ${url}) \
+|| xdg-open ${url} >/tmp/xdg-open.log 2>&1 &`],
             10,
           );
         } else if (actionType === "wait") {

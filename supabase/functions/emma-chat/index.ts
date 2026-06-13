@@ -312,6 +312,16 @@ serve(async (req) => {
     }
 
     const useRefinement = isComplexQuery(messages);
+    const lastContent = (messages[messages.length - 1]?.content || "").toLowerCase().trim();
+    const isTrivial = lastContent.length < 25 && /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|cool|nice|got it|bye)\b/.test(lastContent);
+
+    // Fast path: trivial greetings stream immediately, no tool probe.
+    if (isTrivial) {
+      const r = await callAI(LOVABLE_API_KEY, messages, true, systemPrompt);
+      if (!r.ok) return handleError(r);
+      return new Response(r.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+    }
+
     const toolPattern = /```tool\s*\n([\s\S]*?)\n```/g;
 
     // Iterative agent loop: let the model call tools up to N times, feeding results back.

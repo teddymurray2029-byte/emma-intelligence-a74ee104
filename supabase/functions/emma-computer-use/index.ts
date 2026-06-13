@@ -710,8 +710,11 @@ async function aiReason(
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
-  const historyText = actionHistory.length > 0
-    ? `\n\nActions taken so far:\n${actionHistory.map((a, i) => `${i + 1}. [${a.action}] ${a.reasoning}`).join("\n")}`
+  // Only include action labels — NOT the prior reasoning text. Prior reasoning often
+  // contains hallucinated screen-state claims, which bias the model into repeating them.
+  const recent = actionHistory.slice(-8);
+  const historyText = recent.length > 0
+    ? `\n\nRecent actions (labels only — do NOT assume their stated intent succeeded; verify from the current screenshot):\n${recent.map((a, i) => `${i + 1}. ${a.action}`).join("\n")}`
     : "";
 
   const userIntervention = userMessage ? `\n\nUser intervention message: "${userMessage}"` : "";
@@ -739,7 +742,7 @@ Your task: ${task}${engagementBlock}${historyText}${userIntervention}
 
 Respond with a JSON object (no markdown, just raw JSON):
 {
-  "reasoning": "Begin with 'VISIBLE: <one sentence describing literally what is on the CURRENT screenshot right now — foreground app, scroll position, key UI elements you can actually see>'. Then 'DECISION: <why this next action>'. Never claim progress or screen state that is not actually shown in the current pixels.",
+  "reasoning": "Begin with 'VISIBLE: <2-3 sentences literally describing the CURRENT screenshot — name the foreground window/app title, dominant background color, any readable text you can actually see, and the positions of visible icons/buttons. If you see only a desktop with icons, SAY THAT — do not pretend a browser or website is open.>' Then 'DECISION: <next action>'. If your VISIBLE description would contradict the actual pixels (e.g. claiming a login page when only a desktop is shown), you are hallucinating — stop and choose action='wait' or 'scroll' instead.",
   "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
   "params": {
     // click/double_click/move_mouse: {"x": number, "y": number}

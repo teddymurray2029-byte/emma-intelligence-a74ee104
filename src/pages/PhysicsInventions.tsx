@@ -90,6 +90,16 @@ export default function PhysicsInventions() {
       </header>
 
       <main className="max-w-5xl mx-auto p-6 space-y-3">
+        <Card className="p-3 space-y-2">
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Optional: describe what kind of invention you want (e.g. 'a theory unifying dark matter and superconductivity')"
+            rows={2}
+            className="resize-none text-sm"
+          />
+          <p className="text-xs text-muted-foreground">Leave blank for a random domain.</p>
+        </Card>
         {loading ? (
           <div className="text-center py-12 text-muted-foreground">Loading…</div>
         ) : items.length === 0 ? (

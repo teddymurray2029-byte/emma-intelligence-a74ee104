@@ -935,10 +935,11 @@ Rules:
       {
         role: "user",
         content: [
-          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
-          { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. A green coordinate grid (every 100px, with x,y labels at each intersection) is overlaid for precise click measurement — IGNORE the grid as UI; use it ONLY to read the exact x,y of your target. Describe only what you literally see beneath the grid." },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${overlayGridBase64(screenshotBase64)}` } },
         ],
       },
+
     ],
     temperature: 0,
     response_format: { type: "json_object" },

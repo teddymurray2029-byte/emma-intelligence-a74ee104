@@ -31,6 +31,11 @@ import ProjectSettings from "./pages/ProjectSettings";
 import StoryDetail from "./pages/StoryDetail";
 import JoinProject from "./pages/JoinProject";
 import PhysicsInventions from "./pages/PhysicsInventions";
+import SwarmPage from "./pages/Swarm";
+import SafetyPage from "./pages/Safety";
+import TransferPage from "./pages/Transfer";
+import ImageStudio from "./pages/ImageStudio";
+import Changelog from "./pages/Changelog";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +67,11 @@ const App = () => (
             <Route path="/capabilities" element={<Capabilities />} />
             <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/inventions" element={<PhysicsInventions />} />
+            <Route path="/swarm" element={<ProtectedRoute><SwarmPage /></ProtectedRoute>} />
+            <Route path="/safety" element={<ProtectedRoute><SafetyPage /></ProtectedRoute>} />
+            <Route path="/transfer" element={<ProtectedRoute><TransferPage /></ProtectedRoute>} />
+            <Route path="/images" element={<ProtectedRoute><ImageStudio /></ProtectedRoute>} />
+            <Route path="/changelog" element={<Changelog />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

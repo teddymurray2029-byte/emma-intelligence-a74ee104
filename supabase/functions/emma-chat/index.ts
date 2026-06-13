@@ -39,14 +39,21 @@ Available tools:
 - **memory_store**: Store important information. Args: {"content": "...", "type": "episodic|semantic|procedural"}
 - **memory_recall**: Retrieve relevant memories. Args: {"query": "..."}
 - **goal_create**: Create a new goal. Args: {"description": "...", "priority": 1-10, "type": "user|system|improvement"}
-- **file_read**: Read a file from uploads. Args: {"path": "..."}
-- **web_search**: Search the web. Args: {"query": "..."}
+- **web_search**: Search the live web for current info. Args: {"query": "..."}
+- **code_exec**: Execute Python/JS code in a sandbox and return stdout. Args: {"language": "python|javascript", "code": "..."}
+- **github_search**: Search GitHub. Args: {"query": "...", "type": "repositories|code|issues"}
 - **benchmark_status**: Get current benchmark scores. Args: {}
 - **gmail_list**: List Gmail messages. Args: {"q": "is:unread", "maxResults": 10}
 - **gmail_get**: Get a Gmail message. Args: {"id": "<messageId>"}
 - **gmail_send**: Send an email. Args: {"to": "...", "subject": "...", "body": "...", "cc": "?", "bcc": "?"}
 - **gmail_modify**: Add/remove labels. Args: {"id": "...", "addLabelIds": [], "removeLabelIds": ["UNREAD"]}
 - **gmail_trash**: Move to trash. Args: {"id": "..."}
+
+## TOOL USAGE PROTOCOL
+- When a user request needs current data, computation, or external action — CALL THE TOOL. Do not guess or hallucinate.
+- You may chain up to 5 tool calls per turn. After each tool result, decide if more tools are needed.
+- After tool calls, ALWAYS produce a final natural-language answer that uses the results.
+- For trivial replies (greetings, basic Q&A from your knowledge), skip tools.
 
 ## REASONING PIPELINE (for complex queries)
 ### [REFRAME] Rewrite the problem, identify hidden assumptions
@@ -143,17 +150,55 @@ async function executeToolCall(supabase: any, userId: string, tool: string, args
       }
       case "memory_recall": {
         const { query } = args;
-        const { data } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score, created_at").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(10);
+        const q = (query || "").trim();
+        let data: any[] | null = null;
+        if (q.length > 2) {
+          const { data: hits } = await supabase
+            .from("memory_episodes")
+            .select("content, episode_type, relevance_score, created_at")
+            .eq("user_id", userId)
+            .ilike("content", `%${q}%`)
+            .order("relevance_score", { ascending: false })
+            .limit(8);
+          data = hits;
+        }
+        if (!data?.length) {
+          const { data: fb } = await supabase.from("memory_episodes").select("content, episode_type, relevance_score, created_at").eq("user_id", userId).order("relevance_score", { ascending: false }).limit(5);
+          data = fb;
+        }
         if (!data?.length) return { result: "No relevant memories found.", success: true };
-        const filtered = data.filter((m: any) => { const q = (query || "").toLowerCase(); return m.content.toLowerCase().includes(q) || q.split(" ").some((w: string) => w.length > 3 && m.content.toLowerCase().includes(w)); });
-        const results = (filtered.length ? filtered : data.slice(0, 5)).map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 150)}`).join("\n");
-        return { result: results || "No relevant memories found.", success: true };
+        return { result: data.map((m: any) => `[${m.episode_type}] ${m.content.slice(0, 180)}`).join("\n"), success: true };
       }
       case "goal_create": {
         const { description, priority, type } = args;
         if (!description) return { result: "Error: description required", success: false };
         await supabase.from("goals").insert({ user_id: userId, description, priority: priority || 5, goal_type: type || "user", status: "active" });
         return { result: `Created goal: "${description}" (priority: ${priority || 5})`, success: true };
+      }
+      case "web_search": {
+        if (!args.query) return { result: "Error: query required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-web-search", { body: { query: args.query } });
+        if (error) return { result: `web_search failed: ${error.message}`, success: false };
+        const items = data?.results || data?.items || [];
+        if (!items.length) return { result: (typeof data === "string" ? data : JSON.stringify(data)).slice(0, 1500), success: true };
+        const summary = items.slice(0, 5).map((r: any, i: number) => `${i + 1}. ${r.title || r.name || "result"} — ${r.url || ""}\n   ${(r.snippet || r.description || "").slice(0, 200)}`).join("\n");
+        return { result: summary, success: true };
+      }
+      case "code_exec": {
+        if (!args.code) return { result: "Error: code required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-code-exec", { body: { language: args.language || "python", code: args.code } });
+        if (error) return { result: `code_exec failed: ${error.message}`, success: false };
+        const out = data?.stdout || data?.output || data?.result || JSON.stringify(data);
+        const err = data?.stderr || data?.error;
+        return { result: `STDOUT:\n${String(out).slice(0, 1500)}${err ? `\nSTDERR: ${String(err).slice(0, 500)}` : ""}`, success: true };
+      }
+      case "github_search": {
+        if (!args.query) return { result: "Error: query required", success: false };
+        const { data, error } = await supabase.functions.invoke("emma-github", { body: { action: "search", type: args.type || "repositories", query: args.query } });
+        if (error) return { result: `github_search failed: ${error.message}`, success: false };
+        const items = data?.items || data?.results || [];
+        const summary = items.slice(0, 5).map((r: any) => `- ${r.full_name || r.name || r.title}: ${r.html_url || r.url || ""}\n  ${(r.description || "").slice(0, 150)}`).join("\n");
+        return { result: summary || JSON.stringify(data).slice(0, 1000), success: true };
       }
       case "benchmark_status": {
         const { data } = await supabase.from("benchmark_runs").select("total_score, category_scores, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).single();
@@ -267,47 +312,74 @@ serve(async (req) => {
     }
 
     const useRefinement = isComplexQuery(messages);
+    const lastContent = (messages[messages.length - 1]?.content || "").toLowerCase().trim();
+    const isTrivial = lastContent.length < 25 && /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|cool|nice|got it|bye)\b/.test(lastContent);
 
-    if (useRefinement) {
-      const draftResponse = await callAI(LOVABLE_API_KEY, messages, false, systemPrompt);
-      if (!draftResponse.ok) return handleError(draftResponse);
-      const draftData = await draftResponse.json();
-      let draftContent = extractAIText(draftData);
+    // Fast path: trivial greetings stream immediately, no tool probe.
+    if (isTrivial) {
+      const r = await callAI(LOVABLE_API_KEY, messages, true, systemPrompt);
+      if (!r.ok) return handleError(r);
+      return new Response(r.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+    }
 
-      const toolPattern = /```tool\s*\n\{[\s\S]*?\}\s*\n```/g;
-      const toolBlocks = draftContent.match(toolPattern) || [];
-      let toolResults = "";
-      for (const block of toolBlocks) {
-        try {
-          const jsonStr = block.replace(/```tool\s*\n/, "").replace(/\s*\n```/, "");
-          const { tool, args } = JSON.parse(jsonStr);
-          const result = await executeToolCall(supabase, userId, tool, args);
-          toolResults += `\n[TOOL:${tool}] ${result.result}`;
-          draftContent = draftContent.replace(block, `> 🔧 ${tool}: ${result.result}`);
-        } catch {}
+    const toolPattern = /```tool\s*\n([\s\S]*?)\n```/g;
+
+    // Iterative agent loop: let the model call tools up to N times, feeding results back.
+    const workingMessages = [...messages];
+    const toolTrace: string[] = [];
+    const MAX_TOOL_ITERS = 5;
+
+    for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+      const probe = await callAI(LOVABLE_API_KEY, workingMessages, false, systemPrompt);
+      if (!probe.ok) return handleError(probe);
+      const probeData = await probe.json();
+      const probeContent = extractAIText(probeData);
+
+      const blocks = [...probeContent.matchAll(toolPattern)];
+      if (!blocks.length) {
+        // No tool calls — this is the draft; break and proceed to final stream
+        workingMessages.push({ role: "assistant", content: probeContent });
+        break;
       }
 
-      if (userId !== "anonymous") {
-        const lastUserMsg = messages[messages.length - 1]?.content || "";
-        if (lastUserMsg.length > 20) {
-          await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 200)}". Emma provided a detailed response.`, relevance_score: 3 });
+      let toolResultsText = "";
+      for (const m of blocks) {
+        try {
+          const { tool, args } = JSON.parse(m[1]);
+          const r = await executeToolCall(supabase, userId, tool, args);
+          const line = `[${tool}] ${r.result}`;
+          toolResultsText += line + "\n\n";
+          toolTrace.push(line);
+        } catch (e) {
+          toolResultsText += `[parse-error] ${e instanceof Error ? e.message : "bad tool block"}\n\n`;
         }
       }
-
-      const refineContent = toolResults
-        ? `Original query: ${messages[messages.length - 1].content}\n\nTool results:\n${toolResults}\n\nDraft:\n${draftContent}`
-        : `Original query: ${messages[messages.length - 1].content}\n\nDraft:\n${draftContent}`;
-
-      const refinedResponse = await callAI(LOVABLE_API_KEY, [{ role: "user", content: refineContent }], true, REFINEMENT_PROMPT);
-      if (!refinedResponse.ok) return handleError(refinedResponse);
-      return new Response(refinedResponse.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+      workingMessages.push({ role: "assistant", content: probeContent });
+      workingMessages.push({
+        role: "user",
+        content: `TOOL RESULTS (iteration ${iter + 1}):\n${toolResultsText}\nUse these to refine your answer. Call more tools if needed, otherwise produce the final response.`,
+      });
     }
 
     if (userId !== "anonymous") {
       const lastUserMsg = messages[messages.length - 1]?.content || "";
       if (lastUserMsg.length > 10) {
-        await supabase.from("memory_episodes").insert({ user_id: userId, episode_type: "interaction", content: `User asked: "${lastUserMsg.slice(0, 150)}"`, relevance_score: 1 });
+        await supabase.from("memory_episodes").insert({
+          user_id: userId, episode_type: "interaction",
+          content: `User asked: "${lastUserMsg.slice(0, 200)}"${toolTrace.length ? ` | tools: ${toolTrace.map(t => t.split("]")[0] + "]").join(",")}` : ""}`,
+          relevance_score: toolTrace.length ? 4 : 1,
+        });
       }
+    }
+
+    // Build the final streaming call. If we used tools or this is complex, run a refinement pass.
+    if (toolTrace.length || useRefinement) {
+      const lastUser = messages[messages.length - 1]?.content || "";
+      const draft = workingMessages[workingMessages.length - 1]?.content || "";
+      const refineContent = `Original query: ${lastUser}\n\n${toolTrace.length ? `Tool results:\n${toolTrace.join("\n")}\n\n` : ""}Draft answer:\n${draft}`;
+      const refined = await callAI(LOVABLE_API_KEY, [{ role: "user", content: refineContent }], true, REFINEMENT_PROMPT);
+      if (!refined.ok) return handleError(refined);
+      return new Response(refined.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
     }
 
     const response = await callAI(LOVABLE_API_KEY, messages, true, systemPrompt);

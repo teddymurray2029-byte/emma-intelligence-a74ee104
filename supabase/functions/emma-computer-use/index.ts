@@ -710,8 +710,11 @@ async function aiReason(
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
-  const historyText = actionHistory.length > 0
-    ? `\n\nActions taken so far:\n${actionHistory.map((a, i) => `${i + 1}. [${a.action}] ${a.reasoning}`).join("\n")}`
+  // Only include action labels — NOT the prior reasoning text. Prior reasoning often
+  // contains hallucinated screen-state claims, which bias the model into repeating them.
+  const recent = actionHistory.slice(-8);
+  const historyText = recent.length > 0
+    ? `\n\nRecent actions (labels only — do NOT assume their stated intent succeeded; verify from the current screenshot):\n${recent.map((a, i) => `${i + 1}. ${a.action}`).join("\n")}`
     : "";
 
   const userIntervention = userMessage ? `\n\nUser intervention message: "${userMessage}"` : "";

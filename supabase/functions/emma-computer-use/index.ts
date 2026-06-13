@@ -742,7 +742,7 @@ Your task: ${task}${engagementBlock}${historyText}${userIntervention}
 
 Respond with a JSON object (no markdown, just raw JSON):
 {
-  "reasoning": "Begin with 'VISIBLE: <one sentence describing literally what is on the CURRENT screenshot right now — foreground app, scroll position, key UI elements you can actually see>'. Then 'DECISION: <why this next action>'. Never claim progress or screen state that is not actually shown in the current pixels.",
+  "reasoning": "Begin with 'VISIBLE: <2-3 sentences literally describing the CURRENT screenshot — name the foreground window/app title, dominant background color, any readable text you can actually see, and the positions of visible icons/buttons. If you see only a desktop with icons, SAY THAT — do not pretend a browser or website is open.>' Then 'DECISION: <next action>'. If your VISIBLE description would contradict the actual pixels (e.g. claiming a login page when only a desktop is shown), you are hallucinating — stop and choose action='wait' or 'scroll' instead.",
   "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
   "params": {
     // click/double_click/move_mouse: {"x": number, "y": number}

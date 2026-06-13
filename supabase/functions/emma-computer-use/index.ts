@@ -408,7 +408,7 @@ async function runCommand(
           process: { cmd, args, envs: { DISPLAY: ":0", ...envs } },
           stdin: false,
           timeout,
-        }),
+        }) as unknown as BodyInit,
       });
 
       if (!response.ok) {

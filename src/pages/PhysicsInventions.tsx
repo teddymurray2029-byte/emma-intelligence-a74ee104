@@ -29,6 +29,7 @@ export default function PhysicsInventions() {
   const [loading, setLoading] = useState(true);
   const [inventing, setInventing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
 
   const load = async () => {
     setLoading(true);

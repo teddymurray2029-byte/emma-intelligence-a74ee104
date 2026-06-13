@@ -42,6 +42,11 @@ Available tools:
 - **file_read**: Read a file from uploads. Args: {"path": "..."}
 - **web_search**: Search the web. Args: {"query": "..."}
 - **benchmark_status**: Get current benchmark scores. Args: {}
+- **gmail_list**: List Gmail messages. Args: {"q": "is:unread", "maxResults": 10}
+- **gmail_get**: Get a Gmail message. Args: {"id": "<messageId>"}
+- **gmail_send**: Send an email. Args: {"to": "...", "subject": "...", "body": "...", "cc": "?", "bcc": "?"}
+- **gmail_modify**: Add/remove labels. Args: {"id": "...", "addLabelIds": [], "removeLabelIds": ["UNREAD"]}
+- **gmail_trash**: Move to trash. Args: {"id": "..."}
 
 ## REASONING PIPELINE (for complex queries)
 ### [REFRAME] Rewrite the problem, identify hidden assumptions
@@ -99,6 +104,34 @@ function isComplexQuery(messages: any[]): boolean {
   return patterns.some(p => p.test(content));
 }
 
+const GMAIL_GATEWAY = "https://connector-gateway.lovable.dev/google_mail/gmail/v1";
+
+function b64urlEmail(to: string, subject: string, body: string, cc?: string, bcc?: string) {
+  const lines = [`To: ${to}`];
+  if (cc) lines.push(`Cc: ${cc}`);
+  if (bcc) lines.push(`Bcc: ${bcc}`);
+  lines.push(`Subject: ${subject}`, 'Content-Type: text/plain; charset="UTF-8"', "", body);
+  return btoa(lines.join("\r\n")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function gmailCall(path: string, init: RequestInit = {}) {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const GOOGLE_MAIL_API_KEY = Deno.env.get("GOOGLE_MAIL_API_KEY");
+  if (!LOVABLE_API_KEY || !GOOGLE_MAIL_API_KEY) throw new Error("Gmail connector not configured");
+  const res = await fetch(`${GMAIL_GATEWAY}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "X-Connection-Api-Key": GOOGLE_MAIL_API_KEY,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Gmail ${res.status}: ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { return text; }
+}
+
 async function executeToolCall(supabase: any, userId: string, tool: string, args: any): Promise<{ result: string; success: boolean }> {
   try {
     switch (tool) {
@@ -127,6 +160,36 @@ async function executeToolCall(supabase: any, userId: string, tool: string, args
         if (!data) return { result: "No benchmark data available. Run benchmarks first.", success: true };
         const cats = Object.entries(data.category_scores || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
         return { result: `Latest score: ${data.total_score}/100. Categories: ${cats}. Run: ${data.created_at}`, success: true };
+      }
+      case "gmail_list": {
+        const q = args.q ? `&q=${encodeURIComponent(args.q)}` : "";
+        const max = args.maxResults || 10;
+        const data = await gmailCall(`/users/me/messages?maxResults=${max}${q}`);
+        const ids = (data.messages || []).map((m: any) => m.id).join(", ");
+        return { result: `Found ${data.messages?.length || 0} messages. IDs: ${ids || "none"}`, success: true };
+      }
+      case "gmail_get": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        const data = await gmailCall(`/users/me/messages/${args.id}?format=metadata`);
+        const headers = (data.payload?.headers || []) as any[];
+        const h = (n: string) => headers.find((x) => x.name?.toLowerCase() === n.toLowerCase())?.value || "";
+        return { result: `From: ${h("From")}\nTo: ${h("To")}\nSubject: ${h("Subject")}\nDate: ${h("Date")}\nSnippet: ${data.snippet || ""}`, success: true };
+      }
+      case "gmail_send": {
+        if (!args.to || !args.subject) return { result: "Error: to and subject required", success: false };
+        const raw = b64urlEmail(args.to, args.subject, args.body || "", args.cc, args.bcc);
+        const data = await gmailCall(`/users/me/messages/send`, { method: "POST", body: JSON.stringify({ raw }) });
+        return { result: `Email sent to ${args.to}. ID: ${data.id}`, success: true };
+      }
+      case "gmail_modify": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        await gmailCall(`/users/me/messages/${args.id}/modify`, { method: "POST", body: JSON.stringify({ addLabelIds: args.addLabelIds || [], removeLabelIds: args.removeLabelIds || [] }) });
+        return { result: `Modified message ${args.id}`, success: true };
+      }
+      case "gmail_trash": {
+        if (!args.id) return { result: "Error: id required", success: false };
+        await gmailCall(`/users/me/messages/${args.id}/trash`, { method: "POST" });
+        return { result: `Trashed message ${args.id}`, success: true };
       }
       default: return { result: `Unknown tool: ${tool}`, success: false };
     }

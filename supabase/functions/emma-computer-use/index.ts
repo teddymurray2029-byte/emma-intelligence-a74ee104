@@ -248,6 +248,82 @@ function analyzeScreenshot(bytes: Uint8Array): ScreenshotAnalysis {
   }
 }
 
+// ===== Coordinate grid overlay (Set-of-Marks technique for precise clicks) =====
+// 3x5 bitmap font for digits — used to label gridlines so the model can read exact coordinates.
+const DIGIT_FONT: Record<string, number[][]> = {
+  "0": [[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+  "1": [[0,1,0],[1,1,0],[0,1,0],[0,1,0],[1,1,1]],
+  "2": [[1,1,1],[0,0,1],[1,1,1],[1,0,0],[1,1,1]],
+  "3": [[1,1,1],[0,0,1],[1,1,1],[0,0,1],[1,1,1]],
+  "4": [[1,0,1],[1,0,1],[1,1,1],[0,0,1],[0,0,1]],
+  "5": [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+  "6": [[1,1,1],[1,0,0],[1,1,1],[1,0,1],[1,1,1]],
+  "7": [[1,1,1],[0,0,1],[0,1,0],[1,0,0],[1,0,0]],
+  "8": [[1,1,1],[1,0,1],[1,1,1],[1,0,1],[1,1,1]],
+  "9": [[1,1,1],[1,0,1],[1,1,1],[0,0,1],[1,1,1]],
+};
+
+function drawPixel(png: any, x: number, y: number, r: number, g: number, b: number) {
+  if (x < 0 || y < 0 || x >= png.width || y >= png.height) return;
+  const idx = (png.width * y + x) << 2;
+  png.data[idx] = r; png.data[idx + 1] = g; png.data[idx + 2] = b; png.data[idx + 3] = 255;
+}
+
+function drawDigit(png: any, ch: string, x: number, y: number, r: number, g: number, b: number) {
+  const glyph = DIGIT_FONT[ch]; if (!glyph) return;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      if (glyph[row][col]) drawPixel(png, x + col, y + row, r, g, b);
+    }
+  }
+}
+
+function drawLabel(png: any, text: string, x: number, y: number) {
+  // Black background box for legibility
+  const w = text.length * 4 + 1;
+  const h = 7;
+  for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) drawPixel(png, x + dx, y + dy, 0, 0, 0);
+  for (let i = 0; i < text.length; i++) drawDigit(png, text[i], x + 1 + i * 4, y + 1, 0, 255, 0);
+}
+
+function overlayGrid(bytes: Uint8Array): Uint8Array {
+  try {
+    const png = PNG.sync.read(Buffer.from(bytes));
+    const STEP = 100;
+    // Vertical lines
+    for (let x = STEP; x < png.width; x += STEP) {
+      for (let y = 0; y < png.height; y++) drawPixel(png, x, y, 0, 255, 0);
+    }
+    // Horizontal lines
+    for (let y = STEP; y < png.height; y += STEP) {
+      for (let x = 0; x < png.width; x++) drawPixel(png, x, y, 0, 255, 0);
+    }
+    // Labels at intersections
+    for (let x = 0; x <= png.width; x += STEP) {
+      for (let y = 0; y <= png.height; y += STEP) {
+        drawLabel(png, `${x}`, Math.min(x + 2, png.width - 20), Math.min(y + 2, png.height - 8));
+        drawLabel(png, `${y}`, Math.min(x + 2, png.width - 20), Math.min(y + 10, png.height - 8));
+      }
+    }
+    return new Uint8Array(PNG.sync.write(png));
+  } catch (e) {
+    console.warn(`[grid] overlay failed: ${e instanceof Error ? e.message : String(e)}`);
+    return bytes;
+  }
+}
+
+function overlayGridBase64(b64: string): string {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return toBase64(overlayGrid(bytes));
+  } catch {
+    return b64;
+  }
+}
+
+
 // ===== SDK-ALIGNED kickstartDesktop =====
 // Matches E2B Desktop SDK's _start() method exactly:
 // 1. Xvfb with -retro -dpi 96 -nolisten flags
@@ -852,12 +928,14 @@ Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
 - If the screenshot shows the bottom of a page (e.g. footer/sponsor logos), do NOT claim you are looking at a list/menu/header that is not visible — scroll up first.
 - If you are unsure what is on screen, your next action should be 'scroll' (to top) or 'wait', not a click based on assumed state.
-- Screen is 1024x768. Click coordinates must be the EXACT CENTER of the target element (not its edge, not its label). For small icons aim within ±5 px of center.
+- Screen is 1024x768. A green coordinate grid is overlaid every 100 pixels with the x,y values printed at each intersection. READ THE GRID to determine exact click coordinates — do NOT guess. Locate the target visually, find the nearest gridline intersections, then interpolate.
+- Click coordinates must be the EXACT CENTER of the target element (not its edge, not its label). For small icons aim within ±5 px of center. The grid lines themselves are overlay — ignore them as UI; they are just for measurement.
 - DESKTOP ICONS require double_click, not click. A single click only selects them.
 - To open any website or web page, ALWAYS use action='open_url' with the full URL. Do NOT try to launch a browser by clicking desktop/taskbar icons — that is unreliable. open_url handles browser launch automatically.
 - After open_url, the browser needs ~3-5 seconds to render: follow with action='wait' (seconds: 4) before reasoning about the page.
 - After typing into a field, usually press Enter via hotkey.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
+
 
   const requestBody: Record<string, unknown> = {
     model: "google/gemini-2.5-pro",
@@ -867,10 +945,11 @@ Rules:
       {
         role: "user",
         content: [
-          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
-          { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. A green coordinate grid (every 100px, with x,y labels at each intersection) is overlaid for precise click measurement — IGNORE the grid as UI; use it ONLY to read the exact x,y of your target. Describe only what you literally see beneath the grid." },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${overlayGridBase64(screenshotBase64)}` } },
         ],
       },
+
     ],
     temperature: 0,
     response_format: { type: "json_object" },

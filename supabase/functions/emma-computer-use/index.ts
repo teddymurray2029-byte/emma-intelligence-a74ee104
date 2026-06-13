@@ -800,7 +800,7 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string,
   engagement?: EngagementContext,
-): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
+): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any; parseWarning?: string }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -1269,7 +1269,20 @@ serve(async (req) => {
           });
         }
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+        const history = Array.isArray(actionHistory) ? actionHistory : [];
+        const initialUrl = extractInitialUrl(task);
+        if (initialUrl && !history.some((entry) => entry?.action === "open_url")) {
+          return json({
+            action: "open_url",
+            params: { url: initialUrl },
+            reasoning: `VISIBLE: The current desktop is ready for browser automation. DECISION: Open ${initialUrl} directly with the browser launcher before interacting with the page.`,
+            done: false,
+            screenshot: screenshotBase64,
+            traceId,
+          });
+        }
+
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

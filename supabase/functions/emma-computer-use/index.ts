@@ -1046,7 +1046,7 @@ Required shape:
 {"reasoning":"VISIBLE: two literal sentences about the current screenshot. DECISION: one sentence explaining the next action.","action":"wait","params":{"seconds":2},"done":false}
 
 Allowed actions and params:
-- click/double_click/move_mouse: {"x": number, "y": number}
+- click/double_click/move_mouse: {"x": number, "y": number, "target": "brief description of element being clicked"}
 - type: {"text": "string"}
 - hotkey: {"keys": ["ctrl","a"]}
 - scroll: {"x": number, "y": number, "direction": "up" or "down", "amount": number}

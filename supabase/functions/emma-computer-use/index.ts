@@ -700,6 +700,100 @@ function isDestructive(text: string): { destructive: boolean; matched?: string }
   return { destructive: false };
 }
 
+const ALLOWED_ACTIONS = new Set(["click", "double_click", "type", "hotkey", "scroll", "move_mouse", "wait", "open_url", "report_finding", "done"]);
+
+function normalizeUrl(value: string): string | null {
+  const cleaned = String(value || "").trim().replace(/[),.;]+$/, "");
+  if (!cleaned) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`);
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractInitialUrl(task: string): string | null {
+  const explicit = task.match(/https?:\/\/[^\s"'<>]+/i)?.[0];
+  const explicitUrl = explicit ? normalizeUrl(explicit) : null;
+  if (explicitUrl) return explicitUrl;
+
+  const domainPattern = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s"'<>]*)?/gi;
+  for (const match of task.matchAll(domainPattern)) {
+    const index = match.index ?? 0;
+    if (task[index - 1] === "@") continue;
+    const url = normalizeUrl(match[0]);
+    if (url) return url;
+  }
+  return null;
+}
+
+function extractBalancedJson(input: string): string | null {
+  const start = input.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return input.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function normalizeDecision(value: any): { action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any; parseWarning?: string } {
+  const rawAction = String(value?.action || (value?.done ? "done" : "wait")).toLowerCase().trim();
+  const action = ALLOWED_ACTIONS.has(rawAction) ? rawAction : "wait";
+  const params = value?.params && typeof value.params === "object" ? value.params : {};
+  const reasoning = String(value?.reasoning || "VISIBLE: Current screen was analyzed. DECISION: Continue safely.").slice(0, 4000);
+  const decision = {
+    action,
+    params,
+    reasoning,
+    done: Boolean(value?.done) || action === "done",
+    summary: typeof value?.summary === "string" ? value.summary : undefined,
+    finding: value?.finding,
+  };
+
+  if ((action === "click" || action === "double_click" || action === "move_mouse") &&
+      (typeof params.x !== "number" || typeof params.y !== "number")) {
+    return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: Coordinates were missing, so I am waiting and re-reading the screen instead of clicking blindly.`, done: false, parseWarning: "missing_coordinates" };
+  }
+  if (action === "open_url") {
+    const url = normalizeUrl(params.url || "");
+    if (!url) return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: URL was invalid, so I am waiting and re-reading the task.`, done: false, parseWarning: "invalid_url" };
+    decision.params.url = url;
+  }
+  if (action === "wait") {
+    const seconds = Number(params.seconds);
+    decision.params.seconds = Number.isFinite(seconds) ? Math.min(Math.max(seconds, 1), 8) : 2;
+  }
+  return decision;
+}
+
+function parseAiDecision(content: string): ReturnType<typeof normalizeDecision> | null {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+  const candidates = [cleaned, extractBalancedJson(cleaned)].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    try {
+      return normalizeDecision(JSON.parse(candidate));
+    } catch {}
+  }
+  return null;
+}
+
 async function aiReason(
   screenshotBase64: string,
   task: string,

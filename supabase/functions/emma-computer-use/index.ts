@@ -408,7 +408,7 @@ async function runCommand(
           process: { cmd, args, envs: { DISPLAY: ":0", ...envs } },
           stdin: false,
           timeout,
-        }),
+        }) as unknown as BodyInit,
       });
 
       if (!response.ok) {
@@ -700,13 +700,107 @@ function isDestructive(text: string): { destructive: boolean; matched?: string }
   return { destructive: false };
 }
 
+const ALLOWED_ACTIONS = new Set(["click", "double_click", "type", "hotkey", "scroll", "move_mouse", "wait", "open_url", "report_finding", "done"]);
+
+function normalizeUrl(value: string): string | null {
+  const cleaned = String(value || "").trim().replace(/[),.;]+$/, "");
+  if (!cleaned) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`);
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractInitialUrl(task: string): string | null {
+  const explicit = task.match(/https?:\/\/[^\s"'<>]+/i)?.[0];
+  const explicitUrl = explicit ? normalizeUrl(explicit) : null;
+  if (explicitUrl) return explicitUrl;
+
+  const domainPattern = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s"'<>]*)?/gi;
+  for (const match of task.matchAll(domainPattern)) {
+    const index = match.index ?? 0;
+    if (task[index - 1] === "@") continue;
+    const url = normalizeUrl(match[0]);
+    if (url) return url;
+  }
+  return null;
+}
+
+function extractBalancedJson(input: string): string | null {
+  const start = input.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return input.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function normalizeDecision(value: any): { action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any; parseWarning?: string } {
+  const rawAction = String(value?.action || (value?.done ? "done" : "wait")).toLowerCase().trim();
+  const action = ALLOWED_ACTIONS.has(rawAction) ? rawAction : "wait";
+  const params = value?.params && typeof value.params === "object" ? value.params : {};
+  const reasoning = String(value?.reasoning || "VISIBLE: Current screen was analyzed. DECISION: Continue safely.").slice(0, 4000);
+  const decision = {
+    action,
+    params,
+    reasoning,
+    done: Boolean(value?.done) || action === "done",
+    summary: typeof value?.summary === "string" ? value.summary : undefined,
+    finding: value?.finding,
+  };
+
+  if ((action === "click" || action === "double_click" || action === "move_mouse") &&
+      (typeof params.x !== "number" || typeof params.y !== "number")) {
+    return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: Coordinates were missing, so I am waiting and re-reading the screen instead of clicking blindly.`, done: false, parseWarning: "missing_coordinates" };
+  }
+  if (action === "open_url") {
+    const url = normalizeUrl(params.url || "");
+    if (!url) return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: URL was invalid, so I am waiting and re-reading the task.`, done: false, parseWarning: "invalid_url" };
+    decision.params.url = url;
+  }
+  if (action === "wait") {
+    const seconds = Number(params.seconds);
+    decision.params.seconds = Number.isFinite(seconds) ? Math.min(Math.max(seconds, 1), 8) : 2;
+  }
+  return decision;
+}
+
+function parseAiDecision(content: string): ReturnType<typeof normalizeDecision> | null {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+  const candidates = [cleaned, extractBalancedJson(cleaned)].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    try {
+      return normalizeDecision(JSON.parse(candidate));
+    } catch {}
+  }
+  return null;
+}
+
 async function aiReason(
   screenshotBase64: string,
   task: string,
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string,
   engagement?: EngagementContext,
-): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
+): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any; parseWarning?: string }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -740,30 +834,19 @@ You MUST:
 
 Your task: ${task}${engagementBlock}${historyText}${userIntervention}
 
-Respond with a JSON object (no markdown, just raw JSON):
-{
-  "reasoning": "Begin with 'VISIBLE: <2-3 sentences literally describing the CURRENT screenshot — name the foreground window/app title, dominant background color, any readable text you can actually see, and the positions of visible icons/buttons. If you see only a desktop with icons, SAY THAT — do not pretend a browser or website is open.>' Then 'DECISION: <next action>'. If your VISIBLE description would contradict the actual pixels (e.g. claiming a login page when only a desktop is shown), you are hallucinating — stop and choose action='wait' or 'scroll' instead.",
-  "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
-  "params": {
-    // click/double_click/move_mouse: {"x": number, "y": number}
-    // type: {"text": "string"}
-    // hotkey: {"keys": ["ctrl","a"]}
-    // scroll: {"x":number,"y":number,"direction":"up"|"down","amount":3}
-    // open_url: {"url":"https://..."}
-    // wait: {"seconds": 2}
-    // report_finding: {} (only during a security engagement; finding goes in top-level "finding")
-    // done: {}
-  },
-  "done": false,
-  "summary": "Only when done=true — what you accomplished",
-  "finding": {
-    // OPTIONAL — only when action == "report_finding" during a security engagement.
-    "title": "...", "severity": "Critical|High|Medium|Low|Info",
-    "category": "XSS|SQLi|IDOR|Auth|SSRF|CSRF|InfoDisclosure|RCE|Other",
-    "cvssVector": "CVSS:3.1/...", "affectedUrl": "https://...",
-    "description": "...", "reproductionSteps": ["..."], "remediation": "..."
-  }
-}
+Respond with exactly one valid JSON object and nothing else. No markdown, no screenshots, no prose outside JSON.
+Required shape:
+{"reasoning":"VISIBLE: two literal sentences about the current screenshot. DECISION: one sentence explaining the next action.","action":"wait","params":{"seconds":2},"done":false}
+
+Allowed actions and params:
+- click/double_click/move_mouse: {"x": number, "y": number}
+- type: {"text": "string"}
+- hotkey: {"keys": ["ctrl","a"]}
+- scroll: {"x": number, "y": number, "direction": "up" or "down", "amount": number}
+- open_url: {"url": "https://..."}
+- wait: {"seconds": 1-8}
+- report_finding: params {}, plus top-level finding object
+- done: params {}, done true, summary string
 
 Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
@@ -776,48 +859,67 @@ Rules:
 - After typing into a field, usually press Enter via hotkey.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
-  const resp = await fetch(AI_GATEWAY_URL, {
+  const requestBody: Record<string, unknown> = {
+    model: "google/gemini-2.5-pro",
+    max_tokens: 4096,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
+        ],
+      },
+    ],
+    temperature: 0,
+    response_format: { type: "json_object" },
+  };
+
+  let resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${lovableKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-pro",
-      max_tokens: 4096,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Look at this screenshot of the CURRENT desktop and decide the next action. Describe ONLY what you literally see in the image — do not invent UI that is not present." },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotBase64}` } },
-          ],
-        },
-
-      ],
-      temperature: 0.1,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!resp.ok) {
     const err = await resp.text();
+    if (/response_format|json_object/i.test(err)) {
+      delete requestBody.response_format;
+      resp = await fetch(AI_GATEWAY_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${lovableKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (resp.ok) {
+        const retryData = await resp.json();
+        const retryContent = retryData.choices?.[0]?.message?.content || "";
+        const retryParsed = parseAiDecision(retryContent);
+        return retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+      }
+    }
     throw new Error(`AI reasoning failed: ${err}`);
   }
 
   const data = await resp.json();
   const content = data.choices?.[0]?.message?.content || "";
 
-  let jsonStr = content.trim();
-  if (jsonStr.startsWith("```")) {
-    jsonStr = jsonStr.replace(/^```json?\n?/, "").replace(/\n?```$/, "");
-  }
+  const parsed = parseAiDecision(content);
+  if (parsed) return parsed;
 
-  try {
-    return JSON.parse(jsonStr);
-  } catch {
-    return { action: "done", params: {}, reasoning: "Failed to parse AI response: " + content.slice(0, 200), done: true, summary: "Agent encountered a parsing error." };
-  }
+  return {
+    action: "wait",
+    params: { seconds: 2 },
+    reasoning: `VISIBLE: I could not safely parse the model decision from the current screen. DECISION: Wait briefly and re-analyze instead of ending the task. Raw response starts: ${content.slice(0, 180)}`,
+    done: false,
+    parseWarning: "unparseable_ai_response",
+  };
 }
 
 // ===== xdotool-based action execution (replaces pyautogui) =====
@@ -1185,7 +1287,20 @@ serve(async (req) => {
           });
         }
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
+        const history = Array.isArray(actionHistory) ? actionHistory : [];
+        const initialUrl = extractInitialUrl(task);
+        if (initialUrl && !history.some((entry) => entry?.action === "open_url")) {
+          return json({
+            action: "open_url",
+            params: { url: initialUrl },
+            reasoning: `VISIBLE: The current desktop is ready for browser automation. DECISION: Open ${initialUrl} directly with the browser launcher before interacting with the page.`,
+            done: false,
+            screenshot: screenshotBase64,
+            traceId,
+          });
+        }
+
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

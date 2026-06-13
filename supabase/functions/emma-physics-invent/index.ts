@@ -100,7 +100,7 @@ serve(async (req) => {
     for (let i = 0; i < count; i++) {
       const domain = body.domain || pick(DOMAINS);
       try {
-        const inv = await inventPhysics(LOVABLE_API_KEY, domain, names);
+        const inv = await inventPhysics(LOVABLE_API_KEY, domain, names, body.prompt);
         const { data: row, error } = await supabase.from("physics_inventions").insert({
           name: String(inv.name).slice(0, 200),
           domain: String(inv.domain || domain).slice(0, 100),

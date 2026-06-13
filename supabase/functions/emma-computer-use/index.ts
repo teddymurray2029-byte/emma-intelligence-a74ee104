@@ -706,7 +706,6 @@ async function aiReason(
   actionHistory: { action: string; reasoning: string }[],
   userMessage?: string,
   engagement?: EngagementContext,
-  screenSize?: { w: number; h: number },
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
@@ -743,7 +742,7 @@ Respond with a JSON object (no markdown, just raw JSON):
   "reasoning": "What you ACTUALLY see in the screenshot + why this action",
   "action": "click | double_click | type | hotkey | scroll | move_mouse | wait | open_url | report_finding | done",
   "params": {
-    // click/double_click/move_mouse: {"x": number, "y": number, "targetLabel": "short description of element being clicked, e.g. 'Sign in button'"}
+    // click/double_click/move_mouse: {"x": number, "y": number}
     // type: {"text": "string"}
     // hotkey: {"keys": ["ctrl","a"]}
     // scroll: {"x":number,"y":number,"direction":"up"|"down","amount":3}
@@ -769,12 +768,9 @@ Respond with a JSON object (no markdown, just raw JSON):
 
 Rules:
 - THE SCREENSHOT IS GROUND TRUTH. Trust what you see, not what history claims.
-- Screen resolution is EXACTLY ${screenSize?.w ?? 1024}x${screenSize?.h ?? 768} pixels. Origin (0,0) is the top-left. Coordinates MUST fall inside this range.
-- For clicks, target the VISUAL CENTER of the element (button text bounding box, input field middle). Avoid edges, borders, and shadows — they often miss.
-- ALWAYS include "targetLabel" in params for click/double_click/move_mouse — a short description ("Submit button", "search input", "menu item Settings"). This drives a refinement pass that snaps your coordinates to the precise pixel center.
-- If a previous click did not advance the screen, the click likely landed off-target: re-examine the screenshot, pick a NEW (x,y) at least 6px away from the previous attempt, and prefer the densest pixel cluster of the element.
+- Coordinates target a 1024x768 screen — click button centres precisely.
 - For web navigation, prefer open_url over manual address-bar typing.
-- After typing into a field, usually press Enter via hotkey rather than hunting for a submit button.
+- After typing, often press Enter via hotkey.
 - When you find a vulnerability, IMMEDIATELY emit a report_finding action with a complete finding object before continuing.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
@@ -822,146 +818,52 @@ Rules:
 }
 
 // ===== xdotool-based action execution (replaces pyautogui) =====
-// Click reliability sequence:
-//   1. mousemove --sync  (wait for cursor to actually arrive)
-//   2. brief settle delay (let hover styles / focus update — many web buttons
-//      need a frame before they accept click)
-//   3. click --clearmodifiers (avoid stuck Shift/Ctrl from prior hotkeys)
-//   4. small post-click delay so the next screenshot reflects state change
-function clampXY(x: number, y: number, size?: { w: number; h: number }) {
-  const w = size?.w ?? 1024, h = size?.h ?? 768;
-  return { x: Math.max(0, Math.min(w - 1, Math.round(x))), y: Math.max(0, Math.min(h - 1, Math.round(y))) };
-}
-
-function buildXdotoolCommand(actionType: string, params: any, size?: { w: number; h: number }): { cmd: string; args: string[] } | null {
-  const SETTLE_PRE = 0.08;
-  const SETTLE_POST = 0.15;
+function buildXdotoolCommand(actionType: string, params: any): { cmd: string; args: string[] } | null {
   switch (actionType) {
     case "click": {
-      const { x, y } = clampXY(params.x ?? 512, params.y ?? 384, size);
-      const button = params.button === "right" ? 3 : params.button === "middle" ? 2 : 1;
-      return { cmd: "bash", args: ["-c",
-        `xdotool mousemove --sync ${x} ${y}; sleep ${SETTLE_PRE}; ` +
-        `xdotool click --clearmodifiers ${button}; sleep ${SETTLE_POST}`
-      ] };
+      const x = params.x ?? 512;
+      const y = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click 1`] };
     }
     case "double_click": {
-      const { x, y } = clampXY(params.x ?? 512, params.y ?? 384, size);
-      return { cmd: "bash", args: ["-c",
-        `xdotool mousemove --sync ${x} ${y}; sleep ${SETTLE_PRE}; ` +
-        `xdotool click --clearmodifiers --repeat 2 --delay 80 1; sleep ${SETTLE_POST}`
-      ] };
+      const x = params.x ?? 512;
+      const y = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && xdotool click --repeat 2 --delay 100 1`] };
     }
     case "move_mouse": {
-      const { x, y } = clampXY(params.x ?? 0, params.y ?? 0, size);
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y}; sleep 0.05`] };
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
     }
     case "type": {
+      // xdotool type with delay; escape special chars
       const text = (params.text || "").replace(/'/g, "'\\''");
+      // For long text, chunk it
       if (text.length > 100) {
         const chunks: string[] = [];
-        for (let i = 0; i < text.length; i += 50) chunks.push(text.slice(i, i + 50));
-        const cmds = chunks.map(c => `xdotool type --clearmodifiers --delay 16 '${c}'`).join("; ");
+        for (let i = 0; i < text.length; i += 50) {
+          chunks.push(text.slice(i, i + 50));
+        }
+        const cmds = chunks.map(c => `xdotool type --delay 12 '${c}'`).join(" && ");
         return { cmd: "bash", args: ["-c", cmds] };
       }
-      return { cmd: "bash", args: ["-c", `xdotool type --clearmodifiers --delay 16 '${text}'`] };
+      return { cmd: "bash", args: ["-c", `xdotool type --delay 12 '${text}'`] };
     }
     case "hotkey": {
       const keys = (params.keys as string[]).join("+");
-      return { cmd: "bash", args: ["-c", `xdotool key --clearmodifiers ${keys}; sleep 0.1`] };
+      return { cmd: "bash", args: ["-c", `xdotool key ${keys}`] };
     }
     case "press": {
-      return { cmd: "bash", args: ["-c", `xdotool key --clearmodifiers ${params.key}; sleep 0.1`] };
+      return { cmd: "bash", args: ["-c", `xdotool key ${params.key}`] };
     }
     case "scroll": {
       const clicks = params.amount || 3;
       const button = params.direction === "up" ? 4 : 5;
-      const { x: sx, y: sy } = clampXY(params.x ?? 512, params.y ?? 384, size);
-      return { cmd: "bash", args: ["-c",
-        `xdotool mousemove --sync ${sx} ${sy}; sleep 0.05; ` +
-        `xdotool click --repeat ${clicks} --delay 50 ${button}; sleep 0.1`
-      ] };
+      const sx = params.x ?? 512;
+      const sy = params.y ?? 384;
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${sx} ${sy} && xdotool click --repeat ${clicks} --delay 50 ${button}`] };
     }
     default:
       return null;
   }
-}
-
-// ===== Two-stage click refinement =====
-// After the model proposes (x,y), crop a window around it and ask a fast model
-// to nudge to the exact visual center. Cuts click-miss rate on dense UIs.
-async function refineClickTarget(
-  screenshotBase64: string,
-  proposed: { x: number; y: number },
-  size: { w: number; h: number },
-  label: string,
-): Promise<{ x: number; y: number; refined: boolean }> {
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!lovableKey) return { ...proposed, refined: false };
-  const WIN = 160;
-  const half = WIN / 2;
-  const x0 = Math.max(0, Math.min(size.w - WIN, Math.round(proposed.x - half)));
-  const y0 = Math.max(0, Math.min(size.h - WIN, Math.round(proposed.y - half)));
-  let croppedB64: string;
-  try {
-    const bytes = Uint8Array.from(atob(screenshotBase64), c => c.charCodeAt(0));
-    const png = PNG.sync.read(Buffer.from(bytes));
-    const out = new PNG({ width: WIN, height: WIN });
-    for (let yy = 0; yy < WIN; yy++) {
-      for (let xx = 0; xx < WIN; xx++) {
-        const s = ((y0 + yy) * png.width + (x0 + xx)) << 2;
-        const d = (yy * WIN + xx) << 2;
-        out.data[d] = png.data[s]; out.data[d+1] = png.data[s+1];
-        out.data[d+2] = png.data[s+2]; out.data[d+3] = 255;
-      }
-    }
-    croppedB64 = PNG.sync.write(out).toString("base64");
-  } catch { return { ...proposed, refined: false }; }
-  try {
-    const resp = await fetch(AI_GATEWAY_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        max_tokens: 120,
-        temperature: 0,
-        messages: [
-          { role: "system", content: `You see a ${WIN}x${WIN} crop. Target: "${label}". Return ONLY JSON {"x":int,"y":int,"confident":bool} — pixel center of target within crop (0..${WIN-1}). If not visible, confident=false.` },
-          { role: "user", content: [
-            { type: "text", text: `Crop center is (${WIN/2},${WIN/2}). Adjust to visual center of the target.` },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${croppedB64}` } },
-          ] },
-        ],
-      }),
-    });
-    if (!resp.ok) return { ...proposed, refined: false };
-    const data = await resp.json();
-    let c = (data.choices?.[0]?.message?.content || "").trim();
-    if (c.startsWith("```")) c = c.replace(/^```json?\n?/, "").replace(/\n?```$/, "");
-    const p = JSON.parse(c);
-    if (!p.confident) return { ...proposed, refined: false };
-    const cx = Math.max(0, Math.min(WIN-1, parseInt(p.x, 10)));
-    const cy = Math.max(0, Math.min(WIN-1, parseInt(p.y, 10)));
-    return { x: x0 + cx, y: y0 + cy, refined: true };
-  } catch { return { ...proposed, refined: false }; }
-}
-
-// Cached display geometry so we tell the model the truth (it was hardcoded
-// to 1024x768 in the prompt — wrong resolution = systematically off clicks).
-const screenSizeCache = new Map<string, { w: number; h: number }>();
-async function getScreenSize(sandbox: SandboxSession): Promise<{ w: number; h: number }> {
-  const cached = screenSizeCache.get(sandbox.sandboxId);
-  if (cached) return cached;
-  try {
-    const r = await runCommand(sandbox, "bash", ["-c", "xdotool getdisplaygeometry"], 5);
-    const m = r.stdout.trim().match(/^(\d+)\s+(\d+)/);
-    if (m) {
-      const size = { w: parseInt(m[1], 10), h: parseInt(m[2], 10) };
-      screenSizeCache.set(sandbox.sandboxId, size);
-      return size;
-    }
-  } catch { /* fall through */ }
-  return { w: 1024, h: 768 };
 }
 
 serve(async (req) => {
@@ -1074,7 +976,7 @@ serve(async (req) => {
               ...result,
             });
           }
-          const xdoCmd = buildXdotoolCommand(actionType, params, await getScreenSize(sandbox).catch(() => undefined));
+          const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
             try {
               const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
@@ -1086,7 +988,7 @@ serve(async (req) => {
             }
           }
         } else {
-          const xdoCmd = buildXdotoolCommand(actionType, params, await getScreenSize(sandbox).catch(() => undefined));
+          const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
             try {
               const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
@@ -1263,23 +1165,7 @@ serve(async (req) => {
           });
         }
 
-        const screenSize = await getScreenSize(sandbox).catch(() => ({ w: 1024, h: 768 }));
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement, screenSize), 15_000);
-
-        // Two-stage click refinement: snap proposed coords to visual center.
-        let refinement: { from: { x: number; y: number }; to: { x: number; y: number }; refined: boolean } | undefined;
-        if ((decision.action === "click" || decision.action === "double_click") &&
-            typeof decision.params?.x === "number" && typeof decision.params?.y === "number") {
-          const label = decision.params.targetLabel || decision.reasoning?.slice(0, 80) || "target element";
-          const from = { x: decision.params.x, y: decision.params.y };
-          const refined = await refineClickTarget(screenshotBase64, from, screenSize, label).catch(() => ({ ...from, refined: false }));
-          if (refined.refined) {
-            decision.params.x = refined.x;
-            decision.params.y = refined.y;
-          }
-          refinement = { from, to: { x: decision.params.x, y: decision.params.y }, refined: refined.refined };
-        }
-
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, actionHistory || [], userMessage, engagement), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {
@@ -1295,7 +1181,7 @@ serve(async (req) => {
             { name: "black_screen_startup", recoveryAssertion: "wait action returned until meaningful frame" },
           ],
         };
-        return json({ ...decision, screenshot: screenshotBase64, reliability, refinement, traceId });
+        return json({ ...decision, screenshot: screenshotBase64, reliability, traceId });
       }
 
       case "shell_exec": {

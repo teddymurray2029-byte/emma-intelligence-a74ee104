@@ -12,22 +12,22 @@ import {
 } from "lucide-react";
 
 const FEATURES = [
-  { icon: Brain, title: "AGI Reasoning Core", desc: "Multi-step planning, world-model simulation, causal inference, and metacognitive self-correction.", color: "from-blue-500 to-purple-500" },
-  { icon: Search, title: "Deep Research", desc: "Live web search, source-grounded synthesis, and citation-backed reports across any domain.", color: "from-cyan-500 to-blue-500" },
-  { icon: Hammer, title: "Build Mode", desc: "Generates full React components, landing pages, and apps with live preview and code export.", color: "from-amber-500 to-orange-500" },
-  { icon: Code2, title: "Code Execution", desc: "Sandboxed Python & JS execution via E2B — analyze data, run scripts, return verified results.", color: "from-emerald-500 to-teal-500" },
-  { icon: Mic, title: "Voice Conversations", desc: "Real-time voice in/out via ElevenLabs — talk to Emma like a human collaborator.", color: "from-pink-500 to-rose-500" },
-  { icon: BarChart3, title: "Data Analysis", desc: "Upload CSV/JSON/Excel — Emma profiles, visualizes, and writes insights automatically.", color: "from-violet-500 to-fuchsia-500" },
-  { icon: ImageIcon, title: "Image Generation", desc: "Gemini 3 Pro Image and nano-banana models for hero art, logos, edits, and product shots.", color: "from-yellow-500 to-amber-500" },
-  { icon: Eye, title: "Computer Use Agent", desc: "Emma can see and operate browsers — fill forms, scrape, navigate apps autonomously.", color: "from-red-500 to-pink-500" },
-  { icon: Network, title: "Multi-Agent Swarm", desc: "Spawns specialist sub-agents (researcher, coder, critic) that collaborate on hard tasks.", color: "from-indigo-500 to-blue-500" },
-  { icon: GitBranch, title: "GitHub Integration", desc: "Auto-commits self-improvements to your repo, runs CI, opens PRs against itself.", color: "from-slate-500 to-zinc-500" },
-  { icon: Database, title: "Persistent Memory", desc: "Episodic + semantic memory with vector recall — remembers every conversation forever.", color: "from-green-500 to-emerald-500" },
-  { icon: Shield, title: "Formal Safety Layer", desc: "CVSS-scored risk gates, adversarial red-teaming, and provable constraint enforcement.", color: "from-blue-600 to-indigo-600" },
-  { icon: Workflow, title: "Autonomous Loops", desc: "Goals decompose into sub-goals, executed every 15 min. Benchmarks gate self-modifications.", color: "from-purple-500 to-violet-500" },
-  { icon: Cpu, title: "Self-Improvement", desc: "Measures own performance, rewrites its prompts and edge functions, redeploys autonomously.", color: "from-orange-500 to-red-500" },
-  { icon: Bot, title: "Project IDE", desc: "Inline Monaco editor, file explorer, terminal — Emma codes alongside you in real-time.", color: "from-teal-500 to-cyan-500" },
-  { icon: Layers, title: "Cross-Domain Transfer", desc: "Knowledge learned in one domain transfers to others via embedding-grounded analogy.", color: "from-fuchsia-500 to-pink-500" },
+  { icon: Brain, title: "AGI Reasoning Core", desc: "Multi-step planning, world-model simulation, causal inference, and metacognitive self-correction.", color: "from-blue-500 to-purple-500", to: "/agi" },
+  { icon: Search, title: "Deep Research", desc: "Live web search, source-grounded synthesis, and citation-backed reports across any domain.", color: "from-cyan-500 to-blue-500", to: "/app?mode=research" },
+  { icon: Hammer, title: "Build Mode", desc: "Generates full React components, landing pages, and apps with live preview and code export.", color: "from-amber-500 to-orange-500", to: "/app?mode=artifacts" },
+  { icon: Code2, title: "Code Execution", desc: "Sandboxed Python & JS execution via E2B — analyze data, run scripts, return verified results.", color: "from-emerald-500 to-teal-500", to: "/app?mode=projects" },
+  { icon: Mic, title: "Voice Conversations", desc: "Real-time voice in/out via ElevenLabs — talk to Emma like a human collaborator.", color: "from-pink-500 to-rose-500", to: "/app?mode=voice" },
+  { icon: BarChart3, title: "Data Analysis", desc: "Upload CSV/JSON/Excel — Emma profiles, visualizes, and writes insights automatically.", color: "from-violet-500 to-fuchsia-500", to: "/app?mode=data" },
+  { icon: ImageIcon, title: "Image Generation", desc: "Gemini 3 Pro Image and nano-banana models for hero art, logos, edits, and product shots.", color: "from-yellow-500 to-amber-500", to: "/images" },
+  { icon: Eye, title: "Computer Use Agent", desc: "Emma can see and operate browsers — fill forms, scrape, navigate apps autonomously.", color: "from-red-500 to-pink-500", to: "/app?mode=agent" },
+  { icon: Network, title: "Multi-Agent Swarm", desc: "Spawns specialist sub-agents (researcher, coder, critic) that collaborate on hard tasks.", color: "from-indigo-500 to-blue-500", to: "/swarm" },
+  { icon: GitBranch, title: "GitHub Integration", desc: "Auto-commits self-improvements to your repo, runs CI, opens PRs against itself.", color: "from-slate-500 to-zinc-500", to: "/app?mode=projects" },
+  { icon: Database, title: "Persistent Memory", desc: "Episodic + semantic memory with vector recall — remembers every conversation forever.", color: "from-green-500 to-emerald-500", to: "/agi" },
+  { icon: Shield, title: "Formal Safety Layer", desc: "CVSS-scored risk gates, adversarial red-teaming, and provable constraint enforcement.", color: "from-blue-600 to-indigo-600", to: "/safety" },
+  { icon: Workflow, title: "Autonomous Loops", desc: "Goals decompose into sub-goals, executed every 15 min. Benchmarks gate self-modifications.", color: "from-purple-500 to-violet-500", to: "/agi" },
+  { icon: Cpu, title: "Self-Improvement", desc: "Measures own performance, rewrites its prompts and edge functions, redeploys autonomously.", color: "from-orange-500 to-red-500", to: "/asi" },
+  { icon: Bot, title: "Project IDE", desc: "Inline Monaco editor, file explorer, terminal — Emma codes alongside you in real-time.", color: "from-teal-500 to-cyan-500", to: "/app?mode=projects" },
+  { icon: Layers, title: "Cross-Domain Transfer", desc: "Knowledge learned in one domain transfers to others via embedding-grounded analogy.", color: "from-fuchsia-500 to-pink-500", to: "/transfer" },
 ];
 
 const MODES = [

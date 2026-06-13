@@ -323,6 +323,137 @@ function overlayGridBase64(b64: string): string {
   }
 }
 
+// ===== Click refinement (zoom + fine grid + crosshair → ask model to re-center) =====
+// Crops a window around the proposed click point, 2x upscales, overlays a fine
+// 10-pixel grid (source coords) and a red crosshair at the proposed point.
+// The model is then asked for the exact center of the intended UI target.
+function cropAndAnnotateForRefine(bytes: Uint8Array, cx: number, cy: number, half = 110): { png: Uint8Array; x0: number; y0: number; w: number; h: number } | null {
+  try {
+    const src = PNG.sync.read(Buffer.from(bytes));
+    const winW = Math.min(half * 2, src.width);
+    const winH = Math.min(half * 2, src.height);
+    const x0 = Math.max(0, Math.min(src.width - winW, cx - half));
+    const y0 = Math.max(0, Math.min(src.height - winH, cy - half));
+    const dst = new PNG({ width: winW * 2, height: winH * 2 });
+    // 2x nearest-neighbor upscale
+    for (let y = 0; y < winH; y++) {
+      for (let x = 0; x < winW; x++) {
+        const si = (((y0 + y) * src.width) + (x0 + x)) << 2;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            const di = (((y * 2 + dy) * (winW * 2)) + (x * 2 + dx)) << 2;
+            dst.data[di] = src.data[si];
+            dst.data[di + 1] = src.data[si + 1];
+            dst.data[di + 2] = src.data[si + 2];
+            dst.data[di + 3] = 255;
+          }
+        }
+      }
+    }
+    // Fine grid every 10 source px (= 20 dst px). Subtle so target stays visible.
+    const STEP = 10;
+    const firstX = Math.ceil(x0 / STEP) * STEP;
+    const firstY = Math.ceil(y0 / STEP) * STEP;
+    for (let sx = firstX; sx <= x0 + winW; sx += STEP) {
+      const dx = (sx - x0) * 2;
+      for (let y = 0; y < dst.height; y += 2) drawPixel(dst, dx, y, 0, 220, 0);
+    }
+    for (let sy = firstY; sy <= y0 + winH; sy += STEP) {
+      const dy = (sy - y0) * 2;
+      for (let x = 0; x < dst.width; x += 2) drawPixel(dst, x, dy, 0, 220, 0);
+    }
+    // Labels every 20 source px
+    for (let sx = Math.ceil(x0 / 20) * 20; sx <= x0 + winW; sx += 20) {
+      for (let sy = Math.ceil(y0 / 20) * 20; sy <= y0 + winH; sy += 20) {
+        drawLabel(dst, `${sx}`, (sx - x0) * 2 + 2, (sy - y0) * 2 + 2);
+        drawLabel(dst, `${sy}`, (sx - x0) * 2 + 2, (sy - y0) * 2 + 10);
+      }
+    }
+    // Red crosshair + circle at proposed click point
+    const px = (cx - x0) * 2;
+    const py = (cy - y0) * 2;
+    for (let i = -14; i <= 14; i++) {
+      drawPixel(dst, px + i, py, 255, 30, 30);
+      drawPixel(dst, px, py + i, 255, 30, 30);
+    }
+    for (let a = 0; a < 360; a += 6) {
+      const rad = (a * Math.PI) / 180;
+      for (let r = 3; r <= 5; r++) {
+        drawPixel(dst, Math.round(px + Math.cos(rad) * r), Math.round(py + Math.sin(rad) * r), 255, 30, 30);
+      }
+    }
+    return { png: new Uint8Array(PNG.sync.write(dst)), x0, y0, w: winW, h: winH };
+  } catch (e) {
+    console.warn(`[refine] crop failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
+async function refineClickCoords(screenshotBase64: string, x: number, y: number, targetHint?: string): Promise<{ x: number; y: number; adjusted: boolean; confident: boolean }> {
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!lovableKey) return { x, y, adjusted: false, confident: false };
+  const ox = Math.round(x);
+  const oy = Math.round(y);
+  try {
+    const bin = atob(screenshotBase64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const cropped = cropAndAnnotateForRefine(bytes, ox, oy);
+    if (!cropped) return { x: ox, y: oy, adjusted: false, confident: false };
+    const b64 = toBase64(cropped.png);
+    const sysPrompt = `You refine UI click coordinates with sub-pixel precision. The image is a 2x-magnified crop of a desktop region. Green gridlines and labels show SOURCE pixel coordinates. A RED crosshair + circle marks the agent's proposed click point at source (${ox}, ${oy}).
+
+Identify the EXACT CENTER of the intended UI target (button, icon, link, tab, input field, menu item) that the crosshair is aiming at. The crosshair may be slightly off — your job is to correct it.
+
+Respond with ONE JSON object only:
+{"x": <integer source x>, "y": <integer source y>, "confident": true|false, "target": "<brief description of element>"}
+
+Rules:
+- x,y MUST be the geometric center of the target element (not its edge, not its label).
+- If the crosshair is already within ±2 px of the true center, return (${ox}, ${oy}) with confident:true.
+- If there is no obvious clickable target near the crosshair, return (${ox}, ${oy}) with confident:false.
+- Stay within the visible crop. Do not invent coordinates outside the labeled gridlines.`;
+    const resp = await fetch(AI_GATEWAY_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        max_tokens: 200,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: [
+            { type: "text", text: `Intended target: ${targetHint || "(not specified — infer from crosshair position)"}` },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+          ]},
+        ],
+      }),
+    });
+    if (!resp.ok) {
+      console.warn(`[refine] gateway ${resp.status}`);
+      return { x: ox, y: oy, adjusted: false, confident: false };
+    }
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonStr = extractBalancedJson(content);
+    if (!jsonStr) return { x: ox, y: oy, adjusted: false, confident: false };
+    const parsed = JSON.parse(jsonStr);
+    const nx = Number(parsed.x);
+    const ny = Number(parsed.y);
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { x: ox, y: oy, adjusted: false, confident: false };
+    // Clamp within crop window so the model can't teleport the cursor
+    const fx = Math.max(cropped.x0, Math.min(cropped.x0 + cropped.w - 1, Math.round(nx)));
+    const fy = Math.max(cropped.y0, Math.min(cropped.y0 + cropped.h - 1, Math.round(ny)));
+    const adjusted = fx !== ox || fy !== oy;
+    if (adjusted) console.log(`[refine] (${ox},${oy}) → (${fx},${fy}) target=${parsed.target || "?"} confident=${parsed.confident}`);
+    return { x: fx, y: fy, adjusted, confident: Boolean(parsed.confident) };
+  } catch (e) {
+    console.warn(`[refine] failed: ${e instanceof Error ? e.message : String(e)}`);
+    return { x: ox, y: oy, adjusted: false, confident: false };
+  }
+}
+
 
 // ===== SDK-ALIGNED kickstartDesktop =====
 // Matches E2B Desktop SDK's _start() method exactly:

@@ -215,6 +215,7 @@ export default function Landing() {
             <a href="#modes" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Modes</a>
             <a href="#features" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Features</a>
             <a href="#pricing" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Pricing</a>
+            <Link to="/inventions" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Inventions</Link>
             {user ? (
               <Button onClick={() => navigate("/app")} size="sm" className="ml-2 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.5)]">
                 Open App<ArrowRight className="h-4 w-4 ml-1" />

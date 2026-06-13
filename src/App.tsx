@@ -30,6 +30,7 @@ import ProjectMembers from "./pages/ProjectMembers";
 import ProjectSettings from "./pages/ProjectSettings";
 import StoryDetail from "./pages/StoryDetail";
 import JoinProject from "./pages/JoinProject";
+import PhysicsInventions from "./pages/PhysicsInventions";
 
 const queryClient = new QueryClient();
 

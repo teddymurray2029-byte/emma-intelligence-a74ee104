@@ -1320,6 +1320,24 @@ serve(async (req) => {
             }
           }
         } else {
+          // === Click refinement: zoom + re-center before clicking for sub-pixel accuracy ===
+          if ((actionType === "click" || actionType === "double_click" || actionType === "move_mouse") &&
+              typeof params?.x === "number" && typeof params?.y === "number") {
+            try {
+              const { base64: preShot } = await reliableToolCall("refine_screenshot", traceId, () => captureScreenshotData(sandbox), 12_000);
+              const refined = await reliableToolCall("refine_click", traceId,
+                () => refineClickCoords(preShot, params.x, params.y, params?.target || params?.element || params?.hint),
+                10_000,
+              );
+              if (refined.adjusted) {
+                result.refinement = { from: { x: params.x, y: params.y }, to: { x: refined.x, y: refined.y }, confident: refined.confident };
+                params.x = refined.x;
+                params.y = refined.y;
+              }
+            } catch (e) {
+              console.warn(`[refine] skipped: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
             try {

@@ -1328,6 +1328,11 @@ ${stepsHtml}
                         Background · safe to close
                       </Badge>
                     )}
+                    {restoreCount > 0 && (
+                      <Badge variant="outline" className="text-[9px] gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400" title="Sandbox was recreated; the agent reopened the last URL and resumed.">
+                        Restored ×{restoreCount}
+                      </Badge>
+                    )}
                   </div>
                    <div className="flex items-center gap-1">
                     {status === "error" && (

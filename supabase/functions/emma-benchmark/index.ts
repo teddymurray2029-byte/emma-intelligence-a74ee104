@@ -149,23 +149,44 @@ serve(async (req) => {
       }> = [];
       const categoryScores: Record<string, { total: number; max: number; count: number }> = {};
 
-      for (const row of questions) {
-        const q = row as { category: string; question: string; expected_answer: string | null; difficulty: number };
-        const startedAt = Date.now();
-        const answer = await callAI(LOVABLE_API_KEY, systemPrompt, q.question);
-        const score = scoreAnswer(q.expected_answer, answer, q.category);
-        const weight = Math.max(1, q.difficulty || 1);
-        if (!categoryScores[q.category]) categoryScores[q.category] = { total: 0, max: 0, count: 0 };
-        categoryScores[q.category].total += score * weight;
-        categoryScores[q.category].max += 10 * weight;
-        categoryScores[q.category].count++;
+      const evaluated = await Promise.all(
+        questions.map(async (row) => {
+          const q = row as { category: string; question: string; expected_answer: string | null; difficulty: number };
+          const startedAt = Date.now();
+          let answer = "";
+          try {
+            answer = await Promise.race([
+              callAI(LOVABLE_API_KEY, systemPrompt, q.question, "google/gemini-2.5-flash"),
+              new Promise<string>((resolve) => setTimeout(() => resolve(""), 45_000)),
+            ]);
+          } catch {
+            answer = "";
+          }
+          const score = scoreAnswer(q.expected_answer, answer, q.category);
+          return {
+            category: q.category,
+            question: q.question,
+            answer: answer.slice(0, 500),
+            score,
+            difficulty: q.difficulty,
+            latencyMs: Date.now() - startedAt,
+            weight: Math.max(1, q.difficulty || 1),
+          };
+        }),
+      );
+
+      for (const r of evaluated) {
+        if (!categoryScores[r.category]) categoryScores[r.category] = { total: 0, max: 0, count: 0 };
+        categoryScores[r.category].total += r.score * r.weight;
+        categoryScores[r.category].max += 10 * r.weight;
+        categoryScores[r.category].count++;
         results.push({
-          category: q.category,
-          question: q.question,
-          answer: answer.slice(0, 500),
-          score,
-          difficulty: q.difficulty,
-          latencyMs: Date.now() - startedAt,
+          category: r.category,
+          question: r.question,
+          answer: r.answer,
+          score: r.score,
+          difficulty: r.difficulty,
+          latencyMs: r.latencyMs,
         });
       }
 

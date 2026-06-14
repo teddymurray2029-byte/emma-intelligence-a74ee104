@@ -389,7 +389,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   }, [task, getToken, addStep, updateStep, startKeepalive]);
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
-    const actionHistory: { action: string; reasoning: string }[] = [];
+    const actionHistory: { action: string; reasoning: string; params?: any }[] = [];
 
     while (true) {
       if (abortRef.current) {
@@ -446,7 +446,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           action: `think → ${decision.action}`,
         });
 
-        actionHistory.push({ action: decision.action, reasoning: decision.reasoning });
+        actionHistory.push({ action: decision.action, reasoning: decision.reasoning, params: decision.params });
 
         // === Handle structured finding from AI ===
         if (decision.action === "report_finding" && decision.finding) {

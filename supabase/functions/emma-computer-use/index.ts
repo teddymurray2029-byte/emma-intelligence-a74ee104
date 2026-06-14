@@ -1290,6 +1290,24 @@ serve(async (req) => {
     }
 
     switch (action) {
+      case "debug_metrics": {
+        const metrics: Record<string, any> = {};
+        for (const [tool, m] of toolMetrics.entries()) {
+          metrics[tool] = {
+            calls: m.calls,
+            failures: m.failures,
+            degraded: m.degraded,
+            failureRate: m.calls ? Number((m.failures / m.calls).toFixed(3)) : 0,
+            avgLatencyMs: m.calls ? Math.round(m.latencyTotalMs / m.calls) : 0,
+          };
+        }
+        const circuits: Record<string, any> = {};
+        for (const [tool, c] of toolCircuits.entries()) {
+          circuits[tool] = { failures: c.failures, open: c.openUntil > Date.now(), openUntil: c.openUntil };
+        }
+        return json({ metrics, circuits, sandboxes: sandboxCache.size, idempotencyCache: idempotencyCache.size, traceId });
+      }
+
       case "start_session": {
         console.log("[emma-cu] Creating sandbox...");
         const sandbox = await reliableToolCall("create_sandbox", traceId, () => createSandbox(userId, body.task), 30_000);

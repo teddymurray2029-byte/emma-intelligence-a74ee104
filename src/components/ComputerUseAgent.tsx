@@ -318,7 +318,149 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     }, 60_000);
   }, [getToken, stopKeepalive]);
 
+
+  // ============================================================
+  // === Server-side background runs (survive closed browser) ===
+  // ============================================================
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
+  }, []);
+
+  const ingestServerStep = useCallback((s: any) => {
+    const status: AgentStep["status"] = s.status === "executing" ? "executing"
+      : s.status === "error" ? "error"
+      : s.status === "blocked" ? "blocked"
+      : "done";
+    const id = ++stepIdRef.current;
+    const step: AgentStep = {
+      id,
+      action: s.action || "step",
+      reasoning: s.reasoning || "",
+      screenshot: s.screenshot,
+      timestamp: s.t || new Date().toISOString(),
+      status,
+      params: s.params,
+      guardrail: s.guardrail,
+    };
+    stepsRef.current = [...stepsRef.current, step];
+    if (s.screenshot) {
+      setCurrentScreenshot(s.screenshot);
+      recordFrame(s.screenshot, s.reasoning, s.action);
+    }
+  }, [recordFrame]);
+
+  const pollOnce = useCallback(async (id: string) => {
+    try {
+      const res = await cuApi("get_run", { runId: id, sinceStep: sinceStepRef.current }, getToken, 15_000);
+      const run = res.run;
+      const newSteps: any[] = res.newSteps || [];
+      for (const s of newSteps) ingestServerStep(s);
+      sinceStepRef.current += newSteps.length;
+      if (newSteps.length > 0) setSteps([...stepsRef.current]);
+      if (run.current_screenshot && !newSteps.some((s) => s.screenshot)) {
+        setCurrentScreenshot(run.current_screenshot);
+      }
+      if (run.status === "done") {
+        setSummary(run.summary || "Task completed.");
+        setStatus("done");
+        setIsRunning(false);
+        stopPolling();
+      } else if (run.status === "error") {
+        setStatus("error");
+        setIsRunning(false);
+        stopPolling();
+        toast.error(`Agent error: ${run.error || "unknown"}`);
+      } else if (run.status === "stopped") {
+        setStatus("done");
+        setIsRunning(false);
+        stopPolling();
+      } else {
+        setStatus("running");
+        setIsRunning(true);
+        setIsBooting(run.status === "starting");
+      }
+    } catch (e) {
+      console.warn("[poll] failed", e);
+    }
+  }, [getToken, ingestServerStep, stopPolling]);
+
+  const startPolling = useCallback((id: string) => {
+    stopPolling();
+    pollOnce(id);
+    pollTimerRef.current = setInterval(() => pollOnce(id), 2500);
+  }, [pollOnce, stopPolling]);
+
+  const attachToRun = useCallback(async (id: string, taskDesc: string) => {
+    setRunId(id);
+    setSteps([]);
+    stepsRef.current = [];
+    stepIdRef.current = 0;
+    sinceStepRef.current = 0;
+    setSummary(null);
+    setCurrentScreenshot(null);
+    framesRef.current = [];
+    taskRef.current = taskDesc;
+    setTask(taskDesc);
+    setStatus("running");
+    setIsRunning(true);
+    startPolling(id);
+  }, [startPolling]);
+
+  const startBackgroundRun = useCallback(async () => {
+    if (!task.trim()) { toast.error("Enter a task first"); return; }
+    setStatus("starting");
+    setIsRunning(true);
+    setSteps([]); stepsRef.current = []; stepIdRef.current = 0; sinceStepRef.current = 0;
+    setSummary(null);
+    framesRef.current = [];
+    taskRef.current = task.trim();
+    try {
+      const parsedEng: Engagement = {
+        ...engagement,
+        inScope: parseScopeList(scopeText),
+        outOfScope: parseScopeList(outScopeText),
+      };
+      const res = await cuApi("start_run", { task: task.trim(), engagement: parsedEng }, getToken, 20_000);
+      if (!res.runId) throw new Error("No runId returned");
+      setRunId(res.runId);
+      toast.success("Agent running in background — safe to close this tab");
+      startPolling(res.runId);
+    } catch (e: any) {
+      setStatus("error");
+      setIsRunning(false);
+      toast.error(e?.message || "Failed to start background run");
+    }
+  }, [task, engagement, scopeText, outScopeText, getToken, startPolling]);
+
+  const stopBackgroundRun = useCallback(async () => {
+    const id = runIdRef.current;
+    stopPolling();
+    if (id) {
+      try { await cuApi("stop_run", { runId: id }, getToken, 10_000); } catch {}
+    }
+    setRunId(null);
+    setIsRunning(false);
+    setStatus("done");
+    toast.success("Background run stopped");
+  }, [getToken, stopPolling]);
+
+  // Auto-discover resumable runs on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await cuApi("list_runs", {}, getToken, 10_000);
+        if (cancelled) return;
+        const runs = (res.runs || []) as any[];
+        setResumableRuns(runs.filter((r) => r.status === "running" || r.status === "starting"));
+      } catch { /* ignore — user may not be signed in */ }
+    })();
+    return () => { cancelled = true; stopPolling(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const startSession = useCallback(async () => {
+
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
     setSummary(null);

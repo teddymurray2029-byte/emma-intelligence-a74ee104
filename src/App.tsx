@@ -38,6 +38,7 @@ import SafetyPage from "./pages/Safety";
 import TransferPage from "./pages/Transfer";
 import ImageStudio from "./pages/ImageStudio";
 import Changelog from "./pages/Changelog";
+import Demo from "./pages/Demo";
 
 const queryClient = new QueryClient();
 
@@ -85,6 +86,7 @@ const App = () => (
             <Route path="/transfer" element={<ProtectedRoute><TransferPage /></ProtectedRoute>} />
             <Route path="/images" element={<ProtectedRoute><ImageStudio /></ProtectedRoute>} />
             <Route path="/changelog" element={<Changelog />} />
+            <Route path="/demo" element={<Demo />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

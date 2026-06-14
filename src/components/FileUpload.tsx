@@ -49,8 +49,14 @@ export function FileUpload({ userId, onFileUploaded, onZipExtracted, disabled, c
       return;
     }
 
-    const { data } = supabase.storage.from("chat-uploads").getPublicUrl(path);
-    onFileUploaded(data.publicUrl, file.name);
+    const { data: signed, error: signErr } = await supabase.storage
+      .from("chat-uploads")
+      .createSignedUrl(path, 60 * 60 * 24 * 7);
+    if (signErr || !signed) {
+      toast.error("Could not get file URL: " + (signErr?.message || "unknown"));
+      return;
+    }
+    onFileUploaded(signed.signedUrl, file.name);
   }, [userId, onFileUploaded, extractZip]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

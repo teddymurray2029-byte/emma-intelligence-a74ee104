@@ -10,7 +10,7 @@ interface BenchmarkResult {
   previousScore: number | null;
   delta: number | null;
   categoryScores: Record<string, number>;
-  results: { category: string; question: string; answer: string; score: number; reasoning: string; difficulty: number }[];
+  results: { category: string; question: string; answer: string; expected?: string; score: number; reasoning: string; difficulty: number }[];
   message: string;
 }
 
@@ -121,6 +121,12 @@ export function BenchmarkPanel() {
         lines.push("```");
         lines.push(r.answer);
         lines.push("```");
+        if (r.expected) {
+          lines.push(`**Expected Answer:**`);
+          lines.push("```");
+          lines.push(r.expected);
+          lines.push("```");
+        }
         lines.push(`**Evaluator Reasoning:** ${r.reasoning}`);
         lines.push("");
       });
@@ -259,6 +265,9 @@ export function BenchmarkPanel() {
                 {expandedResult === i && (
                   <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="mt-2 space-y-1 text-[10px]">
                     <p className="text-muted-foreground"><span className="text-foreground">Answer:</span> {r.answer.slice(0, 200)}</p>
+                    {r.expected && (
+                      <p className="text-muted-foreground"><span className="text-foreground">Expected:</span> {r.expected.slice(0, 300)}</p>
+                    )}
                     <p className="text-muted-foreground"><span className="text-foreground">Eval:</span> {r.reasoning}</p>
                   </motion.div>
                 )}

@@ -143,6 +143,8 @@ serve(async (req) => {
         category: string;
         question: string;
         answer: string;
+        expected: string;
+        reasoning: string;
         score: number;
         difficulty: number;
         latencyMs: number;
@@ -167,6 +169,13 @@ serve(async (req) => {
             category: q.category,
             question: q.question,
             answer: answer.slice(0, 500),
+            expected: q.expected_answer || "",
+            reasoning:
+              score >= 8
+                ? "Matched expected answer"
+                : score >= 4
+                ? "Partial overlap with expected answer"
+                : "Did not match expected answer",
             score,
             difficulty: q.difficulty,
             latencyMs: Date.now() - startedAt,
@@ -184,6 +193,8 @@ serve(async (req) => {
           category: r.category,
           question: r.question,
           answer: r.answer,
+          expected: r.expected,
+          reasoning: r.reasoning,
           score: r.score,
           difficulty: r.difficulty,
           latencyMs: r.latencyMs,

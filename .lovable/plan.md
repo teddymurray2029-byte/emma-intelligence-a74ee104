@@ -1,63 +1,66 @@
-## Goal
+# Background Agent Execution
 
-The agent falls back to `Ctrl+A` whenever it needs to select text because the current action vocabulary has no way to express "drag from point A to point B." Add a real drag-select primitive, teach the model when to use it (vs. Ctrl+A), and while we're in the loop, fix the recurring slowness/inconsistency issues that show up alongside selection bugs.
+Today the agent's think→act loop runs inside `ComputerUseAgent.tsx` in your browser. Each step is a `fetch` to the edge function. When the Android browser is backgrounded, suspended, or the screen locks, JS timers throttle or stop, the fetch chain dies, and the agent halts.
+
+To make it survive a closed browser, the loop must run on the server and the UI just observes.
+
+## Architecture
+
+```text
+Browser (Android)           Edge Function                   Database
+─────────────────           ─────────────                   ────────
+ Start task  ───────────►   agent_run(insert row)  ─────►   agent_runs
+                            EdgeRuntime.waitUntil(loop)
+                              │
+                              ├─ think → act → screenshot
+                              ├─ append to agent_steps     ◄─── agent_steps
+                              └─ keepalive sandbox
+ Close browser                 (loop keeps running)
+ Reopen later  ─────────►   GET run + steps        ─────►   (resume view)
+```
 
 ## Changes
 
-### 1. New action: `drag_select` (partial text selection)
+### 1. Database (new migration)
+- `agent_runs` — id, user_id, task, status (running/done/error/stopped), session_id, envd_token, summary, started_at, ended_at, last_heartbeat
+- `agent_steps` — id, run_id, idx, action, reasoning, params, screenshot_url, status, guardrail, created_at
+- RLS: user sees only their own runs/steps; service_role full access
+- GRANTs for authenticated + service_role
 
-`supabase/functions/emma-computer-use/index.ts`
+Screenshots: store in existing storage bucket (or new `agent-frames` bucket) and reference by URL to keep rows small.
 
-- Add `drag_select` to `ALLOWED_ACTIONS`.
-- Params: `{ x1, y1, x2, y2, target?: string }`.
-- `normalizeDecision`: require all four coords as finite numbers; otherwise downgrade to `wait` with a `missing_coordinates` warning (same pattern as click).
-- `buildXdotoolCommand` new case:
-  ```
-  xdotool mousemove --sync X1 Y1 && sleep 0.05 \
-    && xdotool mousedown 1 && sleep 0.05 \
-    && xdotool mousemove --sync X2 Y2 && sleep 0.05 \
-    && xdotool mouseup 1
-  ```
-- System prompt: document the action, add an explicit rule:
-  > Use `drag_select` to highlight a SPECIFIC range of text (word, line, paragraph). Use `hotkey ctrl+a` ONLY when you truly want the entire document/field. Double-click selects a word; triple-click via two `double_click`s back-to-back is unreliable — prefer `drag_select`.
-- Loop detector: also flag two consecutive `hotkey ctrl+a` calls as a repetition warning suggesting `drag_select` instead.
-- `fmtParams`: pretty-print as `drag(x1,y1→x2,y2)` so history is readable.
+### 2. Edge function `emma-computer-use` — new actions
+- `start_run`: creates `agent_runs` row, starts sandbox, then calls `EdgeRuntime.waitUntil(backgroundLoop(runId))` and returns `{ runId }` immediately
+- `get_run`: returns run + recent steps for polling/resume
+- `stop_run`: sets status=stopped; loop checks flag each iteration
+- `list_runs`: user's recent runs
 
-### 2. Coordinate refinement for drag endpoints
+`backgroundLoop(runId)`:
+- Reads run row, runs the same think→act logic that today lives in `runAgentLoop`
+- Persists every step to `agent_steps`, updates `last_heartbeat` each iteration
+- Self-rescues sandbox via existing keepalive logic
+- Exits on done/error/stopped or hard cap (e.g. 30 min)
 
-Reuse `refineClickCoords` on both `(x1,y1)` and `(x2,y2)` before issuing the drag, so the selection lands on real glyph boundaries instead of whitespace. Skip refinement if the two points are < 8px apart (tiny drags = likely model error → downgrade to `click`).
+A pg_cron job every minute calls a `resume_stalled_runs` action that picks up any run whose `status=running` and `last_heartbeat < now()-2min` (covers edge-function cold restarts).
 
-### 3. Deeper debugging hooks
+### 3. Client `ComputerUseAgent.tsx`
+- Start button → calls `start_run`, stores `runId`, begins polling `get_run` every 2s
+- Polling renders steps/screenshots the same way as today
+- "Resume" panel on mount: lists user's active runs so reopening the app shows in-progress agents
+- Existing in-browser loop kept behind a "Foreground mode" toggle for fast/interactive tasks; default is background
 
-- Add a `[action]` log line before every xdotool exec: action name, params, trace id, latency. Already partial — make it consistent for click / type / hotkey / scroll / drag_select.
-- Surface `parseWarning` and `loopWarning` to the client in the `think` response (already returned for parse warnings; thread `loopWarning` too) so `ComputerUseAgent.tsx` can render them in the step row as a `guardrail` badge.
-- Expose `toolMetrics` snapshot in a new `GET ?action=debug_metrics` branch (avg latency, failure rate, circuit state per tool) for live diagnostics.
-
-### 4. Consistency fixes
-
-- `move_mouse` currently has no settle delay — add `sleep 0.05` after to match click semantics.
-- Type chunking uses 50-char chunks with `--delay 12`. Drop to 25-char chunks with `--delay 8` for ~40% faster typing on long inputs; keep escaping identical.
-- Single source of truth for the 1024×768 screen size: define `const SCREEN_W = 1024, SCREEN_H = 768` and clamp every `x/y` in `normalizeDecision` so off-screen coords from the model are corrected once, not re-validated everywhere.
-- After every executed action, capture screenshot through the same `reliableToolCall` wrapper so retries/circuit breaker apply uniformly (today some paths bypass it).
-
-### 5. Speed
-
-- `aiReason` calls `gemini-2.5-pro` per think step. For "obvious" follow-ups (after `open_url` → next think is almost always `wait`), short-circuit: if last action was `open_url` and history length is odd, return a deterministic `wait 4s` without a model call.
-- Run grid overlay and base64 encode once, cache the result on the screenshot bytes via a WeakMap keyed by Uint8Array reference — currently `overlayGridBase64` runs on every think.
-- Drop `max_tokens` from 4096 → 1024 for the decision call; decisions are tiny JSON, the extra budget just inflates latency.
-
-### 6. Client (`src/components/ComputerUseAgent.tsx`)
-
-- Extend `fmtParams`-equivalent rendering: show `drag(x1,y1→x2,y2)` in the step row.
-- If `decision.loopWarning` is present, set `guardrail` on the step so it renders as a yellow warning chip.
-- Bump `cuApi` think timeout from 60s → 45s (with the model-call reductions above, 60s is now a hang indicator, not a normal ceiling).
+### 4. UI
+- Status pill: "Running in background — safe to close" when a run is active
+- Active runs list at top of agent page
 
 ## Out of scope
-
-- No changes to engagement/scope logic, findings UI, or video export.
-- No new model — staying on `gemini-2.5-pro` for reasoning and `gemini-2.5-flash` for click refinement.
+- Push notifications on completion (separate feature, needs FCM setup)
+- Multiple concurrent runs per user (cap at 1 for now)
 
 ## Files touched
+- `supabase/migrations/<new>.sql` (tables, RLS, grants, cron)
+- `supabase/functions/emma-computer-use/index.ts` (new actions + background loop)
+- `src/components/ComputerUseAgent.tsx` (polling, resume UI)
 
-- `supabase/functions/emma-computer-use/index.ts` (action vocab, xdotool, prompt, metrics, speed)
-- `src/components/ComputerUseAgent.tsx` (display + timeout)
+## Caveat
+The E2B sandbox itself has a TTL (~5–15 min idle). The existing keepalive recreates it but state inside the sandbox (open tabs, half-filled forms) is lost on recreation. For truly long background tasks the agent will restart from current visible state after any sandbox recreation, same as today.

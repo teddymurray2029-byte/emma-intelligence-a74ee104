@@ -416,6 +416,14 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     toast.success("Resuming where the agent left off…");
   }, [startPolling, getToken]);
 
+  const discoverResumableRuns = useCallback(async () => {
+    const res = await cuApi("list_runs", {}, getToken, 30_000);
+    const runs = (res.runs || []) as any[];
+    const active = runs.filter((r) => r.status === "running" || r.status === "starting");
+    setResumableRuns(active);
+    return active;
+  }, [getToken]);
+
   const startBackgroundRun = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
@@ -437,11 +445,22 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       toast.success("Agent running in background — safe to close this tab");
       startPolling(res.runId);
     } catch (e: any) {
+      try {
+        const active = await discoverResumableRuns();
+        const matching = active.find((r) => r.task === task.trim()) || active[0];
+        if (matching) {
+          await attachToRun(matching.id, matching.task);
+          toast.info("Reconnected to the active background agent run.");
+          return;
+        }
+      } catch { /* fall through to visible error */ }
+      const message = e?.message || "Failed to start background run";
       setStatus("error");
       setIsRunning(false);
-      toast.error(e?.message || "Failed to start background run");
+      addStep({ action: "start_error", reasoning: message, status: "error" });
+      toast.error(message);
     }
-  }, [task, engagement, scopeText, outScopeText, getToken, startPolling]);
+  }, [task, engagement, scopeText, outScopeText, getToken, startPolling, discoverResumableRuns, attachToRun, addStep]);
 
   const stopBackgroundRun = useCallback(async () => {
     const id = runIdRef.current;

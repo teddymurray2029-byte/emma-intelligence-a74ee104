@@ -112,12 +112,6 @@ export default function Benchmarks() {
         </div>
       </header>
 
-          <p className="mt-2 text-muted-foreground max-w-2xl">
-            How Emma scores against frontier models across the four capabilities OpenAI, Anthropic, and Google
-            actually report on. Sample prompts and answers shown verbatim.
-          </p>
-        </div>
-      </header>
 
       <main className="container mx-auto px-6 py-10 grid gap-6 md:grid-cols-2">
         {BENCHMARKS.map((b) => {

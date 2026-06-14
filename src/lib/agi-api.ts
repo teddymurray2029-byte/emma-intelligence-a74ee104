@@ -7,21 +7,33 @@ export function setAgiTokenGetter(fn: () => Promise<string | null>) {
   _getToken = fn;
 }
 
+async function getSignedInToken() {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const token = _getToken ? await _getToken() : null;
+    if (token) return token;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  throw new Error("Your signed-in session is still loading. Please try again.");
+}
+
 async function agiCall(fn: string, body: Record<string, unknown>) {
-  const token = _getToken ? await _getToken() : API_KEY;
+  const token = await getSignedInToken();
+  const traceId = crypto.randomUUID();
 
   const resp = await fetch(`${BASE_URL}/functions/v1/${fn}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token || API_KEY}`,
+      Authorization: `Bearer ${token}`,
       apikey: API_KEY,
+      "x-trace-id": traceId,
     },
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
+    throw new Error(err.error ? `${err.error}${err.traceId ? ` (${err.traceId})` : ""}` : `Error ${resp.status} (${traceId})`);
   }
   return resp.json();
 }

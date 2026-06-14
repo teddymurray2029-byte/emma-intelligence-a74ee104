@@ -1178,7 +1178,8 @@ Rules:
         const retryData = await resp.json();
         const retryContent = retryData.choices?.[0]?.message?.content || "";
         const retryParsed = parseAiDecision(retryContent);
-        return retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+        const fallback = retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+        return { ...fallback, loopWarning: loopWarning || undefined };
       }
     }
     throw new Error(`AI reasoning failed: ${err}`);
@@ -1188,7 +1189,7 @@ Rules:
   const content = data.choices?.[0]?.message?.content || "";
 
   const parsed = parseAiDecision(content);
-  if (parsed) return parsed;
+  if (parsed) return { ...parsed, loopWarning: loopWarning || undefined };
 
   return {
     action: "wait",
@@ -1196,6 +1197,7 @@ Rules:
     reasoning: `VISIBLE: I could not safely parse the model decision from the current screen. DECISION: Wait briefly and re-analyze instead of ending the task. Raw response starts: ${content.slice(0, 180)}`,
     done: false,
     parseWarning: "unparseable_ai_response",
+    loopWarning: loopWarning || undefined,
   };
 }
 
@@ -1214,22 +1216,36 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
       return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && sleep 0.08 && xdotool click --clearmodifiers --repeat 2 --delay 80 1`] };
     }
     case "move_mouse": {
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y} && sleep 0.05`] };
+    }
+    case "drag_select": {
+      const { x1, y1, x2, y2 } = params;
+      // mouse-down at start, drag to end with intermediate settle, mouse-up.
+      // Two intermediate moves keep the WM's selection logic happy for long drags.
+      const mx = Math.round((x1 + x2) / 2);
+      const my = Math.round((y1 + y2) / 2);
+      return { cmd: "bash", args: ["-c",
+        `xdotool mousemove --sync ${x1} ${y1} && sleep 0.06 ` +
+        `&& xdotool mousedown 1 && sleep 0.05 ` +
+        `&& xdotool mousemove --sync ${mx} ${my} && sleep 0.04 ` +
+        `&& xdotool mousemove --sync ${x2} ${y2} && sleep 0.06 ` +
+        `&& xdotool mouseup 1`
+      ] };
     }
 
     case "type": {
       // xdotool type with delay; escape special chars
       const text = (params.text || "").replace(/'/g, "'\\''");
-      // For long text, chunk it
-      if (text.length > 100) {
+      // For long text, chunk it (smaller chunks + lower per-char delay = faster typing)
+      if (text.length > 50) {
         const chunks: string[] = [];
-        for (let i = 0; i < text.length; i += 50) {
-          chunks.push(text.slice(i, i + 50));
+        for (let i = 0; i < text.length; i += 25) {
+          chunks.push(text.slice(i, i + 25));
         }
-        const cmds = chunks.map(c => `xdotool type --delay 12 '${c}'`).join(" && ");
+        const cmds = chunks.map(c => `xdotool type --delay 8 '${c}'`).join(" && ");
         return { cmd: "bash", args: ["-c", cmds] };
       }
-      return { cmd: "bash", args: ["-c", `xdotool type --delay 12 '${text}'`] };
+      return { cmd: "bash", args: ["-c", `xdotool type --delay 8 '${text}'`] };
     }
     case "hotkey": {
       const keys = (params.keys as string[]).join("+");

@@ -1361,7 +1361,7 @@ async function probeActiveUrl(sandbox: SandboxSession): Promise<string | null> {
 
 const MAX_RESTORES = 5;
 
-
+async function runBackground(runId: string): Promise<void> {
   if (activeRunners.has(runId)) return;
   activeRunners.add(runId);
   const deadline = Date.now() + PER_INVOCATION_BUDGET_MS;

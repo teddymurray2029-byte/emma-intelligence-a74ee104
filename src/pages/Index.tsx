@@ -18,7 +18,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { ProjectIDE } from "@/components/ProjectIDE";
 import { ComputerUseAgent } from "@/components/ComputerUseAgent";
 import { FloatingChat } from "@/components/FloatingChat";
-import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
+import { streamChat, generateImage, generateVideo, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";
@@ -148,6 +148,53 @@ export default function Index() {
   };
 
   const send = async (input: string) => {
+    // Handle media commands (work for anonymous + signed-in users)
+    const isImage = input.startsWith("/image ");
+    const isVideo = input.startsWith("/video ");
+    if (isImage || isVideo) {
+      const convId = user ? await ensureConversation(input) : null;
+      if (user && !convId) return;
+
+      const userMsg: Message = { role: "user", content: input };
+      addLocal(userMsg);
+      if (convId) await saveMessage("user", input, undefined, convId);
+      setIsLoading(true);
+
+      try {
+        if (isImage) {
+          const prompt = input.slice(7).trim();
+          if (!prompt) { toast.error("Please provide an image prompt"); setIsLoading(false); return; }
+          updateLastAssistant("🎨 Generating image...");
+          const { imageUrl, text } = await generateImage(prompt);
+          const content = text || `Generated image: "${prompt}"`;
+          updateLastAssistant(content, imageUrl);
+          if (convId) await saveMessage("assistant", content, { imageUrl }, convId);
+        } else {
+          // /video [5|10] prompt — duration optional, defaults to 5s. Max 10s per clip (Kling).
+          let rest = input.slice(7).trim();
+          let duration = 5;
+          const m = rest.match(/^(\d{1,2})\s+(.+)$/);
+          if (m) {
+            const d = parseInt(m[1], 10);
+            if (d >= 6) duration = 10; else duration = 5;
+            rest = m[2];
+          }
+          if (!rest) { toast.error("Please provide a video prompt"); setIsLoading(false); return; }
+          updateLastAssistant(`🎬 Generating ${duration}s video... (this can take 1-3 minutes)`);
+          const { videoUrl, text } = await generateVideo(rest, duration);
+          const content = text || `Generated video: "${rest}"`;
+          updateLastAssistant(content, undefined, videoUrl);
+          if (convId) await saveMessage("assistant", content, { videoUrl }, convId);
+        }
+      } catch (err: any) {
+        updateLastAssistant(`Failed: ${err.message}`);
+        if (convId) await saveMessage("assistant", `Failed: ${err.message}`, undefined, convId);
+        toast.error(err.message);
+      }
+      setIsLoading(false);
+      return;
+    }
+
     // For anonymous users without conversation support, just do local chat
     if (!user) {
       const userMsg: Message = { role: "user", content: input, mode };
@@ -168,24 +215,7 @@ export default function Index() {
     const convId = await ensureConversation(input);
     if (!convId) return;
 
-    if (input.startsWith("/image ")) {
-      const prompt = input.slice(7).trim();
-      if (!prompt) { toast.error("Please provide an image prompt"); return; }
-      const userMsg: Message = { role: "user", content: input };
-      addLocal(userMsg); await saveMessage("user", input, undefined, convId);
-      setIsLoading(true);
-      try {
-        updateLastAssistant("🎨 Generating image...");
-        const { imageUrl, text } = await generateImage(prompt);
-        const content = text || `Generated image: "${prompt}"`;
-        updateLastAssistant(content, imageUrl);
-        await saveMessage("assistant", content, { imageUrl }, convId);
-      } catch (err: any) {
-        updateLastAssistant(`Failed: ${err.message}`);
-        await saveMessage("assistant", `Failed: ${err.message}`, undefined, convId);
-      }
-      setIsLoading(false); return;
-    }
+
 
     const userMsg: Message = { role: "user", content: input, mode };
     addLocal(userMsg); await saveMessage("user", input, undefined, convId);

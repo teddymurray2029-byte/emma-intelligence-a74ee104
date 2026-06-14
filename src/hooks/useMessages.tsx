@@ -18,6 +18,7 @@ export function useMessages(conversationId: string | null, getToken?: () => Prom
           role: m.role as "user" | "assistant",
           content: m.content,
           imageUrl: m.metadata?.imageUrl,
+          videoUrl: m.metadata?.videoUrl,
         })));
       }
     } catch (e) {
@@ -45,15 +46,16 @@ export function useMessages(conversationId: string | null, getToken?: () => Prom
     setMessages((prev) => [...prev, msg]);
   };
 
-  const updateLastAssistant = (content: string, imageUrl?: string) => {
+  const updateLastAssistant = (content: string, imageUrl?: string, videoUrl?: string) => {
     setMessages((prev) => {
+      const extra = { ...(imageUrl ? { imageUrl } : {}), ...(videoUrl ? { videoUrl } : {}) };
       const last = prev[prev.length - 1];
       if (last?.role === "assistant") {
         return prev.map((m, i) =>
-          i === prev.length - 1 ? { ...m, content, ...(imageUrl ? { imageUrl } : {}) } : m
+          i === prev.length - 1 ? { ...m, content, ...extra } : m
         );
       }
-      return [...prev, { role: "assistant", content, ...(imageUrl ? { imageUrl } : {}) }];
+      return [...prev, { role: "assistant", content, ...extra }];
     });
   };
 

@@ -88,6 +88,20 @@ export function ChatMessage({ message, index, conversationId, onBranch, onOpenIn
           </div>
         )}
 
+        {/* Inline video */}
+        {message.videoUrl && (
+          <div className="relative rounded-xl overflow-hidden emma-glow-border">
+            <video src={message.videoUrl} controls className="max-w-full rounded-xl" />
+            <a
+              href={message.videoUrl}
+              download="emma-generated.mp4"
+              className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm rounded-lg p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <Download className="h-3.5 w-3.5 text-foreground" />
+            </a>
+          </div>
+        )}
+
         {/* Action buttons */}
         {!isUser && (
           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 items-center">

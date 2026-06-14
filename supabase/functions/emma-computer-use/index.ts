@@ -1268,7 +1268,197 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
   }
 }
 
+// ============================================================
+// === Background Agent Runner (server-side autonomous loop) ===
+// ============================================================
+const SUPABASE_URL_BG = Deno.env.get("SUPABASE_URL") || "";
+const SERVICE_ROLE_BG = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const adminDb = () => createClient(SUPABASE_URL_BG, SERVICE_ROLE_BG, { auth: { persistSession: false } });
+const PER_INVOCATION_BUDGET_MS = 80_000;
+const MAX_STEPS = 250;
+const activeRunners = new Set<string>();
+
+async function loadRun(id: string): Promise<any | null> {
+  const { data } = await adminDb().from("agent_runs").select("*").eq("id", id).maybeSingle();
+  return data;
+}
+async function patchRun(id: string, patch: Record<string, unknown>) {
+  patch.updated_at = new Date().toISOString();
+  await adminDb().from("agent_runs").update(patch).eq("id", id);
+}
+async function appendStep(run: any, step: any) {
+  run.steps = [...(run.steps || []), { ...step, t: new Date().toISOString() }];
+  run.step_count = run.steps.length;
+  await patchRun(run.id, {
+    steps: run.steps,
+    step_count: run.step_count,
+    last_heartbeat: new Date().toISOString(),
+    current_screenshot: step.screenshot || run.current_screenshot,
+  });
+}
+
+async function executeActionForBg(sandbox: SandboxSession, actionType: string, params: any): Promise<{ success: boolean; error?: string; screenshot?: string }> {
+  try {
+    if (actionType === "open_url") {
+      const url = JSON.stringify(params?.url || "");
+      const launchChain = `(command -v firefox >/dev/null && firefox --new-window ${url}) || (command -v firefox-esr >/dev/null && firefox-esr --new-window ${url}) || (command -v chromium >/dev/null && chromium --no-sandbox --new-window ${url}) || (command -v chromium-browser >/dev/null && chromium-browser --no-sandbox --new-window ${url}) || xdg-open ${url}`;
+      await runCommand(sandbox, "bash", ["-c", `nohup setsid bash -c ${JSON.stringify(launchChain)} >/tmp/browser-launch.log 2>&1 </dev/null & disown; sleep 0.3`], 8);
+      await new Promise((r) => setTimeout(r, 2500));
+    } else if (actionType === "wait") {
+      const s = Math.max(1, Math.min(10, Number(params?.seconds || 2)));
+      await new Promise((r) => setTimeout(r, s * 1000));
+    } else {
+      // Refine click/move coords if present
+      if ((actionType === "click" || actionType === "double_click" || actionType === "move_mouse") &&
+          typeof params?.x === "number" && typeof params?.y === "number") {
+        try {
+          const { base64: pre } = await captureScreenshotData(sandbox);
+          const refined = await refineClickCoords(pre, params.x, params.y, params?.target || params?.hint);
+          if (refined.adjusted) { params.x = refined.x; params.y = refined.y; }
+        } catch { /* best effort */ }
+      }
+      const cmd = buildXdotoolCommand(actionType, params);
+      if (cmd) {
+        const r = await runCommand(sandbox, cmd.cmd, cmd.args, 15);
+        if (r.exitCode !== 0) {
+          return { success: false, error: r.stderr || r.stdout || "command failed" };
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const { base64 } = await captureScreenshotData(sandbox);
+      return { success: true, screenshot: base64 };
+    } catch {
+      return { success: true };
+    }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function runBackground(runId: string): Promise<void> {
+  if (activeRunners.has(runId)) return;
+  activeRunners.add(runId);
+  const deadline = Date.now() + PER_INVOCATION_BUDGET_MS;
+  console.log(`[bg ${runId.slice(0, 8)}] resume`);
+  try {
+    let run = await loadRun(runId);
+    if (!run) return;
+    if (run.status === "done" || run.status === "stopped" || run.status === "error") return;
+
+    // Bootstrap sandbox if missing
+    if (!run.session_id) {
+      await patchRun(runId, { status: "starting", last_heartbeat: new Date().toISOString() });
+      try {
+        const sb = await createSandbox(run.user_id, run.task);
+        await patchRun(runId, { session_id: sb.sandboxId, envd_token: sb.envdAccessToken });
+        await appendStep(run, { action: "create_sandbox", reasoning: `Sandbox created (${sb.sandboxId.slice(0, 8)}...)`, status: "done" });
+        run.session_id = sb.sandboxId; run.envd_token = sb.envdAccessToken;
+        kickstartDesktop(sb).catch(() => {});
+        const ready = await waitForDesktopReady(sb);
+        if (!ready.ready) {
+          await appendStep(run, { action: "boot_desktop", reasoning: `Boot failed: ${ready.errorCode || "unknown"}`, status: "error" });
+          await patchRun(runId, { status: "error", error: `boot_failed:${ready.errorCode || ""}`, ended_at: new Date().toISOString() });
+          return;
+        }
+        await appendStep(run, { action: "boot_desktop", reasoning: `Desktop ready (${Math.ceil(ready.waitedMs / 1000)}s)`, status: "done", screenshot: ready.screenshot });
+      } catch (e) {
+        await patchRun(runId, { status: "error", error: `start_failed: ${e instanceof Error ? e.message : String(e)}`, ended_at: new Date().toISOString() });
+        return;
+      }
+    }
+    await patchRun(runId, { status: "running", last_heartbeat: new Date().toISOString() });
+
+    while (Date.now() < deadline) {
+      run = await loadRun(runId);
+      if (!run) return;
+      if (run.status === "stopped" || run.status === "done" || run.status === "error") return;
+      if ((run.step_count || 0) >= MAX_STEPS) {
+        await patchRun(runId, { status: "error", error: "max_steps_reached", ended_at: new Date().toISOString() });
+        return;
+      }
+
+      // Acquire sandbox (recreate on failure)
+      let sandbox: SandboxSession;
+      try {
+        sandbox = await getSandbox(run.session_id, run.envd_token);
+      } catch {
+        try {
+          const sb = await createSandbox(run.user_id, run.task);
+          kickstartDesktop(sb).catch(() => {});
+          await waitForDesktopReady(sb);
+          run.session_id = sb.sandboxId; run.envd_token = sb.envdAccessToken;
+          run.action_history = [];
+          await patchRun(runId, { session_id: sb.sandboxId, envd_token: sb.envdAccessToken, action_history: [] });
+          await appendStep(run, { action: "sandbox_recreated", reasoning: "Sandbox expired — recreated from scratch.", status: "done" });
+          sandbox = sb;
+        } catch {
+          await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+          return; // try again next tick
+        }
+      }
+
+      // Snapshot
+      let shot = "";
+      try { shot = (await captureScreenshotData(sandbox)).base64; }
+      catch { await new Promise((r) => setTimeout(r, 1500)); continue; }
+
+      // Decide
+      const history = (run.action_history || []) as any[];
+      const initialUrl = extractInitialUrl(run.task);
+      let decision: any;
+      if (initialUrl && !history.some((h) => h?.action === "open_url")) {
+        decision = { action: "open_url", params: { url: initialUrl }, reasoning: `Opening initial URL ${initialUrl}.`, done: false };
+      } else if (history[history.length - 1]?.action === "open_url") {
+        decision = { action: "wait", params: { seconds: 4 }, reasoning: "Waiting for page to load.", done: false };
+      } else {
+        try {
+          decision = await aiReason(shot, run.task, history, undefined, run.engagement);
+        } catch (e) {
+          await appendStep(run, { action: "think_error", reasoning: e instanceof Error ? e.message : String(e), status: "error", screenshot: shot });
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+      }
+
+      await appendStep(run, { action: `think → ${decision.action}`, reasoning: decision.reasoning, status: "done", screenshot: shot, params: decision.params });
+      history.push({ action: decision.action, reasoning: decision.reasoning, params: decision.params });
+      await patchRun(runId, { action_history: history });
+
+      if (decision.done) {
+        await patchRun(runId, { status: "done", summary: decision.summary || "Task completed.", ended_at: new Date().toISOString() });
+        return;
+      }
+
+      if (decision.action !== "wait") {
+        const exec = await executeActionForBg(sandbox, decision.action, decision.params || {});
+        await appendStep(run, {
+          action: decision.action,
+          reasoning: exec.success ? `${decision.action} executed` : `failed: ${exec.error}`,
+          status: exec.success ? "done" : "error",
+          screenshot: exec.screenshot,
+          params: decision.params,
+        });
+      } else {
+        const s = Math.max(1, Math.min(10, Number(decision.params?.seconds || 2)));
+        await new Promise((r) => setTimeout(r, s * 1000));
+      }
+      await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+    }
+    // Budget exhausted — leave status=running; cron will resume.
+    await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+    console.log(`[bg ${runId.slice(0, 8)}] yield (budget)`);
+  } catch (e) {
+    console.error(`[bg ${runId.slice(0, 8)}] crash`, e);
+    try { await patchRun(runId, { status: "error", error: e instanceof Error ? e.message : String(e), ended_at: new Date().toISOString() }); } catch {}
+  } finally {
+    activeRunners.delete(runId);
+  }
+}
+
 serve(async (req) => {
+
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const traceId = req.headers.get("x-trace-id") || crypto.randomUUID();
 

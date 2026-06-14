@@ -1,66 +1,49 @@
-# Background Agent Execution
+# Make background agent fully persistent
 
-Today the agent's think→act loop runs inside `ComputerUseAgent.tsx` in your browser. Each step is a `fetch` to the edge function. When the Android browser is backgrounded, suspended, or the screen locks, JS timers throttle or stop, the fetch chain dies, and the agent halts.
+Three upgrades to the existing server-side run loop so a closed browser, dead edge worker, or idle sandbox never stalls a task.
 
-To make it survive a closed browser, the loop must run on the server and the UI just observes.
+## 1. Faster recovery (cron every 20s)
 
-## Architecture
+pg_cron's minimum is 1 minute, so use a single 1-minute job that fans out three `bg_tick` calls staggered at 0s / 20s / 40s via `pg_net` + `pg_sleep`. Lower the stalled-heartbeat threshold in `bg_tick` from 90s to 30s.
 
-```text
-Browser (Android)           Edge Function                   Database
-─────────────────           ─────────────                   ────────
- Start task  ───────────►   agent_run(insert row)  ─────►   agent_runs
-                            EdgeRuntime.waitUntil(loop)
-                              │
-                              ├─ think → act → screenshot
-                              ├─ append to agent_steps     ◄─── agent_steps
-                              └─ keepalive sandbox
- Close browser                 (loop keeps running)
- Reopen later  ─────────►   GET run + steps        ─────►   (resume view)
-```
+Result: a dead edge worker is re-attached within ~20–30s instead of ~60s.
 
-## Changes
+## 2. Sandbox keepalive inside the loop
 
-### 1. Database (new migration)
-- `agent_runs` — id, user_id, task, status (running/done/error/stopped), session_id, envd_token, summary, started_at, ended_at, last_heartbeat
-- `agent_steps` — id, run_id, idx, action, reasoning, params, screenshot_url, status, guardrail, created_at
-- RLS: user sees only their own runs/steps; service_role full access
-- GRANTs for authenticated + service_role
+In `runBackground` in `supabase/functions/emma-computer-use/index.ts`:
 
-Screenshots: store in existing storage bucket (or new `agent-frames` bucket) and reference by URL to keep rows small.
+- Every iteration, after the action runs, fire a lightweight `xdotool getmouselocation` (or `echo ok`) against the sandbox to reset its idle timer.
+- Track `last_sandbox_ping`; if >60s since last ping during a long `wait`/`ai_reason`, send a keepalive mid-step.
+- On any sandbox 404/expired error, recreate sandbox AND immediately call the new restore path (step 3) instead of starting blank.
 
-### 2. Edge function `emma-computer-use` — new actions
-- `start_run`: creates `agent_runs` row, starts sandbox, then calls `EdgeRuntime.waitUntil(backgroundLoop(runId))` and returns `{ runId }` immediately
-- `get_run`: returns run + recent steps for polling/resume
-- `stop_run`: sets status=stopped; loop checks flag each iteration
-- `list_runs`: user's recent runs
+Result: sandboxes don't idle out mid-task; recreations are rare and recoverable.
 
-`backgroundLoop(runId)`:
-- Reads run row, runs the same think→act logic that today lives in `runAgentLoop`
-- Persists every step to `agent_steps`, updates `last_heartbeat` each iteration
-- Self-rescues sandbox via existing keepalive logic
-- Exits on done/error/stopped or hard cap (e.g. 30 min)
+## 3. Restorable state in `agent_runs`
 
-A pg_cron job every minute calls a `resume_stalled_runs` action that picks up any run whose `status=running` and `last_heartbeat < now()-2min` (covers edge-function cold restarts).
+Add columns to `agent_runs`:
 
-### 3. Client `ComputerUseAgent.tsx`
-- Start button → calls `start_run`, stores `runId`, begins polling `get_run` every 2s
-- Polling renders steps/screenshots the same way as today
-- "Resume" panel on mount: lists user's active runs so reopening the app shows in-progress agents
-- Existing in-browser loop kept behind a "Foreground mode" toggle for fast/interactive tasks; default is background
+- `last_url text` — current top tab URL, updated after every `open_url`/navigation step
+- `tab_urls jsonb` — array of open tab URLs
+- `form_state jsonb` — `{ [css_selector]: value }` snapshot of filled inputs on the active page
+- `restore_count int default 0`
 
-### 4. UI
-- Status pill: "Running in background — safe to close" when a run is active
-- Active runs list at top of agent page
+Loop changes:
 
-## Out of scope
-- Push notifications on completion (separate feature, needs FCM setup)
-- Multiple concurrent runs per user (cap at 1 for now)
+- After each act step, run a tiny JS probe in the sandbox browser (`document.location.href`, all `<input>/<textarea>/<select>` values keyed by a stable selector) and persist to the run row.
+- On sandbox recreation: open `last_url`, replay `form_state` by setting each input value + dispatching `input`/`change`, then continue. Increment `restore_count` and log a `guardrail` step "restored from snapshot".
+- Cap `restore_count` at 5 to avoid infinite recreation loops; mark run `error` past that.
 
 ## Files touched
-- `supabase/migrations/<new>.sql` (tables, RLS, grants, cron)
-- `supabase/functions/emma-computer-use/index.ts` (new actions + background loop)
-- `src/components/ComputerUseAgent.tsx` (polling, resume UI)
+
+- `supabase/migrations/<new>.sql` — add 4 columns to `agent_runs`; replace cron job with staggered fan-out; lower stale threshold constant lives in code, not SQL
+- `supabase/functions/emma-computer-use/index.ts` — keepalive ping, state probe + persistence, restore-on-recreate path, 30s stalled threshold in `bg_tick`
+- `src/components/ComputerUseAgent.tsx` — show "restored from snapshot ×N" badge when `restore_count > 0`
+
+## Out of scope
+
+- Cookie/localStorage/auth-session restore (would need encrypted storage; flagging as a follow-up)
+- Multi-tab restore beyond URLs (form state only captured for active tab)
 
 ## Caveat
-The E2B sandbox itself has a TTL (~5–15 min idle). The existing keepalive recreates it but state inside the sandbox (open tabs, half-filled forms) is lost on recreation. For truly long background tasks the agent will restart from current visible state after any sandbox recreation, same as today.
+
+Form restore is best-effort: sites using React-controlled inputs with custom event handling or anti-bot fingerprinting may ignore programmatic value sets. The agent treats restore as a hint, then re-verifies the page before resuming.

@@ -213,6 +213,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const runIdRef = useRef<string | null>(null);
   const sinceStepRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [restoreCount, setRestoreCount] = useState(0);
   const [resumableRuns, setResumableRuns] = useState<Array<{ id: string; task: string; status: string; step_count: number; started_at: string }>>([]);
 
   useEffect(() => { runIdRef.current = runId; }, [runId]);
@@ -360,6 +361,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (run.current_screenshot && !newSteps.some((s) => s.screenshot)) {
         setCurrentScreenshot(run.current_screenshot);
       }
+      if (typeof run.restore_count === "number" && run.restore_count !== restoreCount) {
+        setRestoreCount(run.restore_count);
+      }
       if (run.status === "done") {
         setSummary(run.summary || "Task completed.");
         setStatus("done");
@@ -396,6 +400,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     sinceStepRef.current = 0;
+    setRestoreCount(0);
     setSummary(null);
     setCurrentScreenshot(null);
     framesRef.current = [];
@@ -411,6 +416,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setStatus("starting");
     setIsRunning(true);
     setSteps([]); stepsRef.current = []; stepIdRef.current = 0; sinceStepRef.current = 0;
+    setRestoreCount(0);
     setSummary(null);
     framesRef.current = [];
     taskRef.current = task.trim();
@@ -1320,6 +1326,11 @@ ${stepsHtml}
                       <Badge variant="outline" className="text-[9px] gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         Background · safe to close
+                      </Badge>
+                    )}
+                    {restoreCount > 0 && (
+                      <Badge variant="outline" className="text-[9px] gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400" title="Sandbox was recreated; the agent reopened the last URL and resumed.">
+                        Restored ×{restoreCount}
                       </Badge>
                     )}
                   </div>

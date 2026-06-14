@@ -1337,6 +1337,30 @@ async function executeActionForBg(sandbox: SandboxSession, actionType: string, p
   }
 }
 
+// Lightweight sandbox keepalive — resets E2B idle timer with near-zero cost.
+async function pingSandbox(sandbox: SandboxSession): Promise<void> {
+  try { await runCommand(sandbox, "true", [], 3); } catch { /* ignore */ }
+}
+
+// Best-effort active-tab URL probe. Reads the focused window title (Firefox/Chromium
+// set it to "<Page Title> — <Browser>") and falls back to parsing any http(s) URL
+// from the active window. Returns null if nothing usable is found.
+async function probeActiveUrl(sandbox: SandboxSession): Promise<string | null> {
+  try {
+    const r = await runCommand(sandbox, "bash", [
+      "-c",
+      "xdotool getactivewindow getwindowname 2>/dev/null || true",
+    ], 4);
+    const title = (r.stdout || "").trim();
+    if (!title) return null;
+    const m = title.match(/https?:\/\/[^\s)"']+/);
+    if (m) return m[0];
+    return null;
+  } catch { return null; }
+}
+
+const MAX_RESTORES = 5;
+
 async function runBackground(runId: string): Promise<void> {
   if (activeRunners.has(runId)) return;
   activeRunners.add(runId);
@@ -1379,25 +1403,64 @@ async function runBackground(runId: string): Promise<void> {
         return;
       }
 
-      // Acquire sandbox (recreate on failure)
+      // Acquire sandbox (recreate on failure + restore from snapshot if possible)
       let sandbox: SandboxSession;
+      let justRestored = false;
       try {
         sandbox = await getSandbox(run.session_id, run.envd_token);
       } catch {
+        // Cap restores so a broken page can't loop forever.
+        if ((run.restore_count || 0) >= MAX_RESTORES) {
+          await patchRun(runId, {
+            status: "error",
+            error: `max_restores_reached (${MAX_RESTORES})`,
+            ended_at: new Date().toISOString(),
+          });
+          return;
+        }
         try {
           const sb = await createSandbox(run.user_id, run.task);
           kickstartDesktop(sb).catch(() => {});
           await waitForDesktopReady(sb);
-          run.session_id = sb.sandboxId; run.envd_token = sb.envdAccessToken;
-          run.action_history = [];
-          await patchRun(runId, { session_id: sb.sandboxId, envd_token: sb.envdAccessToken, action_history: [] });
-          await appendStep(run, { action: "sandbox_recreated", reasoning: "Sandbox expired — recreated from scratch.", status: "done" });
+          const newRestoreCount = (run.restore_count || 0) + 1;
+          const restoreUrl = run.last_url as string | null;
+          // Reset action_history but seed it with the restore step so the AI
+          // doesn't repeat the very first open_url and lose the user's progress.
+          run.session_id = sb.sandboxId;
+          run.envd_token = sb.envdAccessToken;
+          run.action_history = restoreUrl
+            ? [{ action: "open_url", params: { url: restoreUrl }, reasoning: "Restored from snapshot." }]
+            : [];
+          run.restore_count = newRestoreCount;
+          await patchRun(runId, {
+            session_id: sb.sandboxId,
+            envd_token: sb.envdAccessToken,
+            action_history: run.action_history,
+            restore_count: newRestoreCount,
+          });
+          await appendStep(run, {
+            action: "sandbox_recreated",
+            reasoning: restoreUrl
+              ? `Sandbox expired — recreated and restoring to ${restoreUrl} (restore #${newRestoreCount}/${MAX_RESTORES}).`
+              : `Sandbox expired — recreated from scratch (restore #${newRestoreCount}/${MAX_RESTORES}).`,
+            status: "done",
+            guardrail: `restored_from_snapshot:${newRestoreCount}`,
+          });
+          // Replay the URL immediately so the model resumes mid-task instead of a blank desktop.
+          if (restoreUrl) {
+            await executeActionForBg(sb, "open_url", { url: restoreUrl });
+            await new Promise((r) => setTimeout(r, 3500));
+          }
           sandbox = sb;
+          justRestored = true;
         } catch {
           await patchRun(runId, { last_heartbeat: new Date().toISOString() });
           return; // try again next tick
         }
       }
+
+      // Keepalive ping — prevents E2B from idling out mid-task.
+      pingSandbox(sandbox).catch(() => {});
 
       // Snapshot
       let shot = "";
@@ -1408,7 +1471,10 @@ async function runBackground(runId: string): Promise<void> {
       const history = (run.action_history || []) as any[];
       const initialUrl = extractInitialUrl(run.task);
       let decision: any;
-      if (initialUrl && !history.some((h) => h?.action === "open_url")) {
+      if (justRestored) {
+        // Right after restore, just observe the page first.
+        decision = { action: "wait", params: { seconds: 2 }, reasoning: "Settling after sandbox restore.", done: false };
+      } else if (initialUrl && !history.some((h) => h?.action === "open_url")) {
         decision = { action: "open_url", params: { url: initialUrl }, reasoning: `Opening initial URL ${initialUrl}.`, done: false };
       } else if (history[history.length - 1]?.action === "open_url") {
         decision = { action: "wait", params: { seconds: 4 }, reasoning: "Waiting for page to load.", done: false };
@@ -1444,6 +1510,18 @@ async function runBackground(runId: string): Promise<void> {
         const s = Math.max(1, Math.min(10, Number(decision.params?.seconds || 2)));
         await new Promise((r) => setTimeout(r, s * 1000));
       }
+
+      // Probe + persist current page URL so we can restore after sandbox death.
+      try {
+        const url = await probeActiveUrl(sandbox);
+        if (url && url !== run.last_url) {
+          const tabs = Array.isArray(run.tab_urls) ? run.tab_urls : [];
+          const nextTabs = tabs.includes(url) ? tabs : [...tabs.slice(-9), url];
+          await patchRun(runId, { last_url: url, tab_urls: nextTabs });
+          run.last_url = url; run.tab_urls = nextTabs;
+        }
+      } catch { /* best effort */ }
+
       await patchRun(runId, { last_heartbeat: new Date().toISOString() });
     }
     // Budget exhausted — leave status=running; cron will resume.
@@ -1478,7 +1556,7 @@ serve(async (req) => {
         .from("cron_secrets").select("secret").eq("name", "emma-cu-bg").maybeSingle();
       const expected = secretRow?.secret || Deno.env.get("CRON_SECRET");
       if (!provided || !expected || provided !== expected) return json({ error: "unauthorized" }, 401);
-      const cutoff = new Date(Date.now() - 90_000).toISOString();
+      const cutoff = new Date(Date.now() - 30_000).toISOString();
       const { data } = await adminDb()
         .from("agent_runs").select("id")
         .in("status", ["running", "starting"])
@@ -2012,6 +2090,8 @@ serve(async (req) => {
             current_screenshot: data.current_screenshot,
             started_at: data.started_at, ended_at: data.ended_at,
             last_heartbeat: data.last_heartbeat,
+            restore_count: data.restore_count || 0,
+            last_url: data.last_url || null,
           },
           newSteps,
           traceId,

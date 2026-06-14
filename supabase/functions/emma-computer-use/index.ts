@@ -1968,8 +1968,90 @@ serve(async (req) => {
         return json({ success: true, status: "destroyed", traceId });
       }
 
+      // ============================================================
+      // === Background-run lifecycle (survive browser close) =======
+      // ============================================================
+      case "start_run": {
+        const task = String(body.task || "").trim();
+        if (!task) return json({ error: "Missing task" }, 400);
+        const db = adminDb();
+        // 1 active run per user
+        const { data: existing } = await db
+          .from("agent_runs").select("id")
+          .eq("user_id", userId).in("status", ["starting", "running"])
+          .limit(1).maybeSingle();
+        if (existing) return json({ runId: existing.id, status: "already_running", traceId });
+
+        const { data: row, error } = await db
+          .from("agent_runs")
+          .insert({ user_id: userId, task, engagement: body.engagement || {}, status: "starting" })
+          .select("id").single();
+        if (error || !row) return json({ error: error?.message || "Failed to create run" }, 500);
+
+        // @ts-ignore
+        try { EdgeRuntime.waitUntil(runBackground(row.id)); } catch { runBackground(row.id); }
+        return json({ runId: row.id, status: "starting", traceId });
+      }
+
+      case "get_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const sinceStep = Number(body.sinceStep || 0);
+        const { data } = await adminDb().from("agent_runs").select("*").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        const allSteps = (data.steps || []) as any[];
+        const newSteps = sinceStep > 0 ? allSteps.slice(sinceStep) : allSteps;
+        return json({
+          run: {
+            id: data.id, task: data.task, status: data.status,
+            step_count: data.step_count, summary: data.summary, error: data.error,
+            current_screenshot: data.current_screenshot,
+            started_at: data.started_at, ended_at: data.ended_at,
+            last_heartbeat: data.last_heartbeat,
+          },
+          newSteps,
+          traceId,
+        });
+      }
+
+      case "list_runs": {
+        const { data } = await adminDb()
+          .from("agent_runs")
+          .select("id, task, status, step_count, summary, started_at, ended_at, last_heartbeat")
+          .eq("user_id", userId)
+          .order("started_at", { ascending: false })
+          .limit(20);
+        return json({ runs: data || [], traceId });
+      }
+
+      case "stop_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const db = adminDb();
+        const { data } = await db.from("agent_runs").select("user_id, session_id").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        await db.from("agent_runs").update({ status: "stopped", ended_at: new Date().toISOString() }).eq("id", id);
+        if (data.session_id) {
+          try { await fetch(`${E2B_API_BASE}/sandboxes/${data.session_id}`, { method: "DELETE", headers: { "X-API-Key": apiKey } }); } catch {}
+        }
+        return json({ ok: true, traceId });
+      }
+
+      case "nudge_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const { data } = await adminDb().from("agent_runs").select("user_id, status").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        if (data.status === "running" || data.status === "starting") {
+          // @ts-ignore
+          try { EdgeRuntime.waitUntil(runBackground(id)); } catch { runBackground(id); }
+        }
+        return json({ ok: true, traceId });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
+
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

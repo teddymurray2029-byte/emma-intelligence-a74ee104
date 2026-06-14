@@ -2093,7 +2093,7 @@ serve(async (req) => {
         if (error || !row) return json({ error: error?.message || "Failed to create run" }, 500);
 
         // @ts-ignore
-        try { EdgeRuntime.waitUntil(runBackground(row.id)); } catch { runBackground(row.id); }
+        try { EdgeRuntime.waitUntil(runBackground(row.id, { forceClaim: true })); } catch { runBackground(row.id, { forceClaim: true }); }
         return json({ runId: row.id, status: "starting", traceId });
       }
 
@@ -2150,7 +2150,7 @@ serve(async (req) => {
         if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
         if (data.status === "running" || data.status === "starting") {
           // @ts-ignore
-          try { EdgeRuntime.waitUntil(runBackground(id)); } catch { runBackground(id); }
+          try { EdgeRuntime.waitUntil(runBackground(id, { forceClaim: true })); } catch { runBackground(id, { forceClaim: true }); }
         }
         return json({ ok: true, traceId });
       }

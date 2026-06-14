@@ -408,8 +408,13 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setTask(taskDesc);
     setStatus("running");
     setIsRunning(true);
+    // Wake the server-side loop immediately instead of waiting for the next cron tick.
+    // Without this, Resume only re-attaches the UI to a paused run and the agent
+    // appears to "not start where we left off" until the next 20s cron tick.
+    try { await cuApi("nudge_run", { runId: id }, getToken, 10_000); } catch {}
     startPolling(id);
-  }, [startPolling]);
+    toast.success("Resuming where the agent left off…");
+  }, [startPolling, getToken]);
 
   const startBackgroundRun = useCallback(async () => {
     if (!task.trim()) { toast.error("Enter a task first"); return; }

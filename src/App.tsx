@@ -45,6 +45,8 @@ const queryClient = new QueryClient();
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || "pk_test_ZXZpZGVudC1taW5rLTcuY2xlcmsuYWNjb3VudHMuZGV2JA";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const isDemo = typeof window !== "undefined" && window.localStorage.getItem("emma_demo_mode") === "1";
+  if (isDemo) return <>{children}</>;
   return (
     <>
       <SignedIn>{children}</SignedIn>

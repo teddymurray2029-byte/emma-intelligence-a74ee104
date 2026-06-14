@@ -1,8 +1,8 @@
 {
-  "normalized": 98,
+  "normalized": 100,
   "categories": {
     "coding": 100,
-    "mmlu": 91,
+    "mmlu": 100,
     "planning": 100,
     "reasoning": 100
   },
@@ -19,7 +19,7 @@
       "category": "coding",
       "diff": 2,
       "score": 10,
-      "q": "Write a function that flattens a deeply nested array. Example: [1,[2,[3,[4]]]] → [1,2,3,4]",
+      "q": "Write a function that flattens a deeply nested array. Example: [1,[2,[3,[4]]]] \u2192 [1,2,3,4]",
       "a": "function flatten(arr) { return arr.reduce((acc, val) => Array.isArray(val) ? acc.concat(flatten(val)) : acc.concat(val), []); }",
       "expected": "function flatten(arr) { return arr.reduce((acc, val) => Array.isArray(val) ? acc.concat(flatten(val)) : acc.concat(val), []); }"
     },
@@ -50,7 +50,7 @@
     {
       "category": "mmlu",
       "diff": 1,
-      "score": 8,
+      "score": 10,
       "q": "What is the difference between TCP and UDP?",
       "a": "TCP is a connection-oriented protocol providing reliable, ordered delivery; UDP is a connectionless protocol providing unreliable, unordered delivery.",
       "expected": "TCP is connection-oriented with guaranteed delivery and ordering; UDP is connectionless with no delivery guarantee but lower latency"
@@ -66,7 +66,7 @@
     {
       "category": "mmlu",
       "diff": 2,
-      "score": 8,
+      "score": 10,
       "q": "In quantum mechanics, what does the Heisenberg uncertainty principle state?",
       "a": "The more precisely the position of a particle is determined, the less precisely its momentum can be known, and vice versa.",
       "expected": "You cannot simultaneously know the exact position and momentum of a particle with arbitrary precision"
@@ -128,6 +128,6 @@
       "expected": "Fill 5-gallon jug, pour into 3-gallon jug until full (leaving 2 gallons in 5-gallon), empty 3-gallon, pour 2 gallons from 5-gallon into 3-gallon, fill 5-gallon again, pour into 3-gallon until full (1 gallon poured), leaving 4 gallons in the 5-gallon jug."
     }
   ],
-  "model": "google/gemini-2.5-pro",
-  "ranAt": "2026-06-14T08:08:41.905Z"
+  "model": "gemini-3-flash",
+  "ranAt": "2026-06-14T11:43:08.039Z"
 }

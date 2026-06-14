@@ -18,7 +18,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { ProjectIDE } from "@/components/ProjectIDE";
 import { ComputerUseAgent } from "@/components/ComputerUseAgent";
 import { FloatingChat } from "@/components/FloatingChat";
-import { streamChat, generateImage, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
+import { streamChat, generateImage, generateVideo, setStreamTokenGetter, type Message, type EmmaMode, type AnswerStyle, type Artifact } from "@/lib/emma-stream";
 import { setAgiTokenGetter } from "@/lib/agi-api";
 import { useAuth } from "@/hooks/useAuth";
 import { useConversations } from "@/hooks/useConversations";

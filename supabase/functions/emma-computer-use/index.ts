@@ -1337,7 +1337,31 @@ async function executeActionForBg(sandbox: SandboxSession, actionType: string, p
   }
 }
 
-async function runBackground(runId: string): Promise<void> {
+// Lightweight sandbox keepalive — resets E2B idle timer with near-zero cost.
+async function pingSandbox(sandbox: SandboxSession): Promise<void> {
+  try { await runCommand(sandbox, "true", [], 3); } catch { /* ignore */ }
+}
+
+// Best-effort active-tab URL probe. Reads the focused window title (Firefox/Chromium
+// set it to "<Page Title> — <Browser>") and falls back to parsing any http(s) URL
+// from the active window. Returns null if nothing usable is found.
+async function probeActiveUrl(sandbox: SandboxSession): Promise<string | null> {
+  try {
+    const r = await runCommand(sandbox, "bash", [
+      "-c",
+      "xdotool getactivewindow getwindowname 2>/dev/null || true",
+    ], 4);
+    const title = (r.stdout || "").trim();
+    if (!title) return null;
+    const m = title.match(/https?:\/\/[^\s)"']+/);
+    if (m) return m[0];
+    return null;
+  } catch { return null; }
+}
+
+const MAX_RESTORES = 5;
+
+
   if (activeRunners.has(runId)) return;
   activeRunners.add(runId);
   const deadline = Date.now() + PER_INVOCATION_BUDGET_MS;

@@ -1312,24 +1312,31 @@ ${stepsHtml}
               <div className="flex flex-col h-full">
                 {/* Desktop toolbar */}
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card flex-shrink-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : status === "error" ? "bg-destructive" : "bg-muted-foreground"}`} />
                     <span className="text-[10px] font-mono text-foreground capitalize">{status}</span>
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}…</span>}
+                    {runId && (
+                      <Badge variant="outline" className="text-[9px] gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Background · safe to close
+                      </Badge>
+                    )}
                   </div>
                    <div className="flex items-center gap-1">
                     {status === "error" && (
-                      <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={startSession}>
+                      <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={backgroundMode ? startBackgroundRun : startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry
                       </Button>
                     )}
                     {isRunning && (
-                      <Button variant="destructive" size="sm" className="h-6 gap-1 text-[10px]" onClick={stopSession}>
+                      <Button variant="destructive" size="sm" className="h-6 gap-1 text-[10px]" onClick={runId ? stopBackgroundRun : stopSession}>
                         <Square className="h-3 w-3" /> Stop
                       </Button>
                     )}
                   </div>
                 </div>
+
 
                 {/* Desktop view */}
                 <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden min-h-0">

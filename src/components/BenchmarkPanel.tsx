@@ -259,6 +259,9 @@ export function BenchmarkPanel() {
                 {expandedResult === i && (
                   <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="mt-2 space-y-1 text-[10px]">
                     <p className="text-muted-foreground"><span className="text-foreground">Answer:</span> {r.answer.slice(0, 200)}</p>
+                    {r.expected && (
+                      <p className="text-muted-foreground"><span className="text-foreground">Expected:</span> {r.expected.slice(0, 300)}</p>
+                    )}
                     <p className="text-muted-foreground"><span className="text-foreground">Eval:</span> {r.reasoning}</p>
                   </motion.div>
                 )}

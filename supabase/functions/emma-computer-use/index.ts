@@ -1004,19 +1004,47 @@ function parseAiDecision(content: string): ReturnType<typeof normalizeDecision> 
 async function aiReason(
   screenshotBase64: string,
   task: string,
-  actionHistory: { action: string; reasoning: string }[],
+  actionHistory: { action: string; reasoning: string; params?: any }[],
   userMessage?: string,
   engagement?: EngagementContext,
 ): Promise<{ action: string; params: any; reasoning: string; done: boolean; summary?: string; finding?: any; parseWarning?: string }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
 
-  // Only include action labels — NOT the prior reasoning text. Prior reasoning often
-  // contains hallucinated screen-state claims, which bias the model into repeating them.
-  const recent = actionHistory.slice(-8);
+  // Include compact action+params so the model can SEE its own repetition.
+  const recent = actionHistory.slice(-10);
+  const fmtParams = (a: any) => {
+    if (!a?.params) return "";
+    const p = a.params;
+    if (a.action === "click" || a.action === "double_click" || a.action === "move_mouse")
+      return ` @(${p.x},${p.y})${p.target ? ` "${String(p.target).slice(0, 40)}"` : ""}`;
+    if (a.action === "type") return ` "${String(p.text || "").slice(0, 60)}"`;
+    if (a.action === "open_url") return ` ${p.url || ""}`;
+    if (a.action === "hotkey") return ` [${(p.keys || []).join("+")}]`;
+    if (a.action === "scroll") return ` ${p.direction || ""} ${p.amount || ""}`;
+    if (a.action === "wait") return ` ${p.seconds || ""}s`;
+    return "";
+  };
   const historyText = recent.length > 0
-    ? `\n\nRecent actions (labels only — do NOT assume their stated intent succeeded; verify from the current screenshot):\n${recent.map((a, i) => `${i + 1}. ${a.action}`).join("\n")}`
+    ? `\n\nRecent actions (verify the SCREEN, not these labels):\n${recent.map((a, i) => `${i + 1}. ${a.action}${fmtParams(a)}`).join("\n")}`
     : "";
+
+  // Loop / repetition detector
+  let loopWarning = "";
+  const last = recent[recent.length - 1];
+  const prev = recent[recent.length - 2];
+  const prev2 = recent[recent.length - 3];
+  const sameClick = (a: any, b: any) =>
+    a && b && a.action === b.action && /click/.test(a.action) &&
+    Math.abs((a.params?.x || 0) - (b.params?.x || 0)) <= 12 &&
+    Math.abs((a.params?.y || 0) - (b.params?.y || 0)) <= 12;
+  const sameType = (a: any, b: any) =>
+    a && b && a.action === "type" && b.action === "type" && (a.params?.text || "") === (b.params?.text || "");
+  if ((sameClick(last, prev) && sameClick(prev, prev2)) || (sameType(last, prev) && sameType(prev, prev2))) {
+    loopWarning = `\n\n⚠ LOOP DETECTED: you have repeated essentially the same action 3 times. It is NOT working. You MUST change strategy this turn: pick a different x,y (look ±30-80px), scroll to reveal the real target, switch to keyboard (Tab+Enter), or wait 3s for the UI to settle. Do NOT emit the same action again.`;
+  } else if (sameClick(last, prev) || sameType(last, prev)) {
+    loopWarning = `\n\n⚠ You just repeated the previous action. If the screen did not visibly change, the click missed or the field rejected input. Try a different coordinate, scroll, or use Tab to focus the next field.`;
+  }
 
   const userIntervention = userMessage ? `\n\nUser intervention message: "${userMessage}"` : "";
 
@@ -1039,7 +1067,7 @@ You MUST:
 
   const systemPrompt = `You are Emma, a general-purpose computer-use AI agent operating a virtual Linux desktop. You can browse the web, use apps, fill forms, run terminals, and perform any task a human user could do at a desktop.
 
-Your task: ${task}${engagementBlock}${historyText}${userIntervention}
+Your task: ${task}${engagementBlock}${historyText}${loopWarning}${userIntervention}
 
 Respond with exactly one valid JSON object and nothing else. No markdown, no screenshots, no prose outside JSON.
 Required shape:
@@ -1057,6 +1085,10 @@ Allowed actions and params:
 
 Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
+- VERIFY EVERY ACTION: before taking a new action, check whether the previous action visibly changed the screen. If it didn't, the click missed or the field is invalid — DO NOT repeat it; try a different coordinate, scroll, or keyboard navigation.
+- NEVER repeat the exact same click (within ~15px) or the same typed text twice in a row. If a button doesn't respond, the target is wrong — re-locate it.
+- REQUIRED FIELDS: before clicking any Submit / Continue / Next / Sign up / Pay button, scan the WHOLE form top-to-bottom. Every field marked with * or "required" (and standard fields like email, password, name, confirm-password, checkboxes for ToS) MUST be filled. If any required field is empty, fill it FIRST. If a validation error appears (red text, red border), fix that field before retrying submit.
+- ONE FIELD AT A TIME for typing: click the field → verify cursor/focus indicator appears → type → press Tab to confirm acceptance → move to next field.
 - If the screenshot shows the bottom of a page (e.g. footer/sponsor logos), do NOT claim you are looking at a list/menu/header that is not visible — scroll up first.
 - If you are unsure what is on screen, your next action should be 'scroll' (to top) or 'wait', not a click based on assumed state.
 - Screen is 1024x768. A green coordinate grid is overlaid every 100 pixels with the x,y values printed at each intersection. READ THE GRID to determine exact click coordinates — do NOT guess. Locate the target visually, find the nearest gridline intersections, then interpolate.
@@ -1064,7 +1096,7 @@ Rules:
 - DESKTOP ICONS require double_click, not click. A single click only selects them.
 - To open any website or web page, ALWAYS use action='open_url' with the full URL. Do NOT try to launch a browser by clicking desktop/taskbar icons — that is unreliable. open_url handles browser launch automatically.
 - After open_url, the browser needs ~3-5 seconds to render: follow with action='wait' (seconds: 4) before reasoning about the page.
-- After typing into a field, usually press Enter via hotkey.
+- After typing into a field, usually press Tab to commit and move on, or Enter only when the form is fully complete.
 - Maximum 50 actions per task — wrap up with done=true if you approach the limit.`;
 
 

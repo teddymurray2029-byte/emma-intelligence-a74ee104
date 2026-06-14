@@ -207,9 +207,20 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
+  // === Background-run state (server-side loop, survives browser close) ===
+  const [backgroundMode, setBackgroundMode] = useState(true);
+  const [runId, setRunId] = useState<string | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const sinceStepRef = useRef(0);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [resumableRuns, setResumableRuns] = useState<Array<{ id: string; task: string; status: string; step_count: number; started_at: string }>>([]);
+
+  useEffect(() => { runIdRef.current = runId; }, [runId]);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [steps]);
+
 
   useEffect(() => {
     const cleanup = () => {
@@ -307,7 +318,149 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     }, 60_000);
   }, [getToken, stopKeepalive]);
 
+
+  // ============================================================
+  // === Server-side background runs (survive closed browser) ===
+  // ============================================================
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
+  }, []);
+
+  const ingestServerStep = useCallback((s: any) => {
+    const status: AgentStep["status"] = s.status === "executing" ? "executing"
+      : s.status === "error" ? "error"
+      : s.status === "blocked" ? "blocked"
+      : "done";
+    const id = ++stepIdRef.current;
+    const step: AgentStep = {
+      id,
+      action: s.action || "step",
+      reasoning: s.reasoning || "",
+      screenshot: s.screenshot,
+      timestamp: s.t || new Date().toISOString(),
+      status,
+      params: s.params,
+      guardrail: s.guardrail,
+    };
+    stepsRef.current = [...stepsRef.current, step];
+    if (s.screenshot) {
+      setCurrentScreenshot(s.screenshot);
+      recordFrame(s.screenshot, s.reasoning, s.action);
+    }
+  }, [recordFrame]);
+
+  const pollOnce = useCallback(async (id: string) => {
+    try {
+      const res = await cuApi("get_run", { runId: id, sinceStep: sinceStepRef.current }, getToken, 15_000);
+      const run = res.run;
+      const newSteps: any[] = res.newSteps || [];
+      for (const s of newSteps) ingestServerStep(s);
+      sinceStepRef.current += newSteps.length;
+      if (newSteps.length > 0) setSteps([...stepsRef.current]);
+      if (run.current_screenshot && !newSteps.some((s) => s.screenshot)) {
+        setCurrentScreenshot(run.current_screenshot);
+      }
+      if (run.status === "done") {
+        setSummary(run.summary || "Task completed.");
+        setStatus("done");
+        setIsRunning(false);
+        stopPolling();
+      } else if (run.status === "error") {
+        setStatus("error");
+        setIsRunning(false);
+        stopPolling();
+        toast.error(`Agent error: ${run.error || "unknown"}`);
+      } else if (run.status === "stopped") {
+        setStatus("done");
+        setIsRunning(false);
+        stopPolling();
+      } else {
+        setStatus("running");
+        setIsRunning(true);
+        setIsBooting(run.status === "starting");
+      }
+    } catch (e) {
+      console.warn("[poll] failed", e);
+    }
+  }, [getToken, ingestServerStep, stopPolling]);
+
+  const startPolling = useCallback((id: string) => {
+    stopPolling();
+    pollOnce(id);
+    pollTimerRef.current = setInterval(() => pollOnce(id), 2500);
+  }, [pollOnce, stopPolling]);
+
+  const attachToRun = useCallback(async (id: string, taskDesc: string) => {
+    setRunId(id);
+    setSteps([]);
+    stepsRef.current = [];
+    stepIdRef.current = 0;
+    sinceStepRef.current = 0;
+    setSummary(null);
+    setCurrentScreenshot(null);
+    framesRef.current = [];
+    taskRef.current = taskDesc;
+    setTask(taskDesc);
+    setStatus("running");
+    setIsRunning(true);
+    startPolling(id);
+  }, [startPolling]);
+
+  const startBackgroundRun = useCallback(async () => {
+    if (!task.trim()) { toast.error("Enter a task first"); return; }
+    setStatus("starting");
+    setIsRunning(true);
+    setSteps([]); stepsRef.current = []; stepIdRef.current = 0; sinceStepRef.current = 0;
+    setSummary(null);
+    framesRef.current = [];
+    taskRef.current = task.trim();
+    try {
+      const parsedEng: Engagement = {
+        ...engagement,
+        inScope: parseScopeList(scopeText),
+        outOfScope: parseScopeList(outScopeText),
+      };
+      const res = await cuApi("start_run", { task: task.trim(), engagement: parsedEng }, getToken, 20_000);
+      if (!res.runId) throw new Error("No runId returned");
+      setRunId(res.runId);
+      toast.success("Agent running in background — safe to close this tab");
+      startPolling(res.runId);
+    } catch (e: any) {
+      setStatus("error");
+      setIsRunning(false);
+      toast.error(e?.message || "Failed to start background run");
+    }
+  }, [task, engagement, scopeText, outScopeText, getToken, startPolling]);
+
+  const stopBackgroundRun = useCallback(async () => {
+    const id = runIdRef.current;
+    stopPolling();
+    if (id) {
+      try { await cuApi("stop_run", { runId: id }, getToken, 10_000); } catch {}
+    }
+    setRunId(null);
+    setIsRunning(false);
+    setStatus("done");
+    toast.success("Background run stopped");
+  }, [getToken, stopPolling]);
+
+  // Auto-discover resumable runs on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await cuApi("list_runs", {}, getToken, 10_000);
+        if (cancelled) return;
+        const runs = (res.runs || []) as any[];
+        setResumableRuns(runs.filter((r) => r.status === "running" || r.status === "starting"));
+      } catch { /* ignore — user may not be signed in */ }
+    })();
+    return () => { cancelled = true; stopPolling(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const startSession = useCallback(async () => {
+
     if (!task.trim()) { toast.error("Enter a task first"); return; }
     setStatus("starting");
     setSummary(null);
@@ -1074,15 +1227,55 @@ ${stepsHtml}
               onChange={(e) => setTask(e.target.value)}
               placeholder='e.g. "Test target.com for reflected XSS in the search field"'
               className="text-xs"
-              onKeyDown={(e) => { if (e.key === "Enter" && engagement.authorized) startSession(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && engagement.authorized) (backgroundMode ? startBackgroundRun : startSession)(); }}
             />
             <Button onClick={() => setShowEngagementForm((v) => !v)} size="sm" variant="outline" className="gap-1.5 px-3">
               <Shield className="h-3.5 w-3.5" /> Scope
             </Button>
-            <Button onClick={startSession} size="sm" className="gap-1.5 px-4">
+            <Button onClick={backgroundMode ? startBackgroundRun : startSession} size="sm" className="gap-1.5 px-4">
               <Play className="h-3.5 w-3.5" /> Start
             </Button>
           </div>
+
+          <div className="flex items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Switch id="bg-mode" checked={backgroundMode} onCheckedChange={setBackgroundMode} />
+              <Label htmlFor="bg-mode" className="text-[11px] cursor-pointer">
+                Run in background <span className="text-muted-foreground">(survives closed browser)</span>
+              </Label>
+            </div>
+            {backgroundMode && (
+              <Badge variant="outline" className="text-[9px] gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Server-side loop
+              </Badge>
+            )}
+          </div>
+
+          {resumableRuns.length > 0 && (
+            <div className="space-y-1.5 p-2 rounded-md border border-amber-500/30 bg-amber-500/5">
+              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                {resumableRuns.length} agent run{resumableRuns.length > 1 ? "s" : ""} still active in background
+              </p>
+              {resumableRuns.map((r) => (
+                <div key={r.id} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-foreground truncate">{r.task}</p>
+                    <p className="text-[9px] text-muted-foreground">{r.step_count} steps · started {new Date(r.started_at).toLocaleTimeString()}</p>
+                  </div>
+                  <Button size="sm" variant="secondary" className="h-6 text-[10px]" onClick={() => attachToRun(r.id, r.task)}>
+                    Resume
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={async () => {
+                    try { await cuApi("stop_run", { runId: r.id }, getToken, 10_000); } catch {}
+                    setResumableRuns((prev) => prev.filter((x) => x.id !== r.id));
+                  }}>
+                    Stop
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {showEngagementForm && (
             <div className="space-y-2 p-3 rounded-md border border-border bg-muted/30">
@@ -1090,7 +1283,6 @@ ${stepsHtml}
                 <Label className="text-[10px] text-muted-foreground">Session name (optional)</Label>
                 <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="My research session" className="h-7 text-xs" />
               </div>
-
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">
@@ -1108,6 +1300,7 @@ ${stepsHtml}
               </button>
             ))}
           </div>
+
         </div>
       )}
 
@@ -1119,24 +1312,31 @@ ${stepsHtml}
               <div className="flex flex-col h-full">
                 {/* Desktop toolbar */}
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card flex-shrink-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : status === "error" ? "bg-destructive" : "bg-muted-foreground"}`} />
                     <span className="text-[10px] font-mono text-foreground capitalize">{status}</span>
                     {sessionId && <span className="text-[9px] font-mono text-muted-foreground">{sessionId.slice(0, 12)}…</span>}
+                    {runId && (
+                      <Badge variant="outline" className="text-[9px] gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Background · safe to close
+                      </Badge>
+                    )}
                   </div>
                    <div className="flex items-center gap-1">
                     {status === "error" && (
-                      <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={startSession}>
+                      <Button variant="secondary" size="sm" className="h-6 gap-1 text-[10px]" onClick={backgroundMode ? startBackgroundRun : startSession}>
                         <RotateCcw className="h-3 w-3" /> Retry
                       </Button>
                     )}
                     {isRunning && (
-                      <Button variant="destructive" size="sm" className="h-6 gap-1 text-[10px]" onClick={stopSession}>
+                      <Button variant="destructive" size="sm" className="h-6 gap-1 text-[10px]" onClick={runId ? stopBackgroundRun : stopSession}>
                         <Square className="h-3 w-3" /> Stop
                       </Button>
                     )}
                   </div>
                 </div>
+
 
                 {/* Desktop view */}
                 <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden min-h-0">

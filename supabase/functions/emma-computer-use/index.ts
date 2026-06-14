@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Buffer } from "node:buffer";
 import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.0";
 import { PNG } from "https://esm.sh/pngjs@7.0.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1266,7 +1268,197 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
   }
 }
 
+// ============================================================
+// === Background Agent Runner (server-side autonomous loop) ===
+// ============================================================
+const SUPABASE_URL_BG = Deno.env.get("SUPABASE_URL") || "";
+const SERVICE_ROLE_BG = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const adminDb = () => createClient(SUPABASE_URL_BG, SERVICE_ROLE_BG, { auth: { persistSession: false } });
+const PER_INVOCATION_BUDGET_MS = 80_000;
+const MAX_STEPS = 250;
+const activeRunners = new Set<string>();
+
+async function loadRun(id: string): Promise<any | null> {
+  const { data } = await adminDb().from("agent_runs").select("*").eq("id", id).maybeSingle();
+  return data;
+}
+async function patchRun(id: string, patch: Record<string, unknown>) {
+  patch.updated_at = new Date().toISOString();
+  await adminDb().from("agent_runs").update(patch).eq("id", id);
+}
+async function appendStep(run: any, step: any) {
+  run.steps = [...(run.steps || []), { ...step, t: new Date().toISOString() }];
+  run.step_count = run.steps.length;
+  await patchRun(run.id, {
+    steps: run.steps,
+    step_count: run.step_count,
+    last_heartbeat: new Date().toISOString(),
+    current_screenshot: step.screenshot || run.current_screenshot,
+  });
+}
+
+async function executeActionForBg(sandbox: SandboxSession, actionType: string, params: any): Promise<{ success: boolean; error?: string; screenshot?: string }> {
+  try {
+    if (actionType === "open_url") {
+      const url = JSON.stringify(params?.url || "");
+      const launchChain = `(command -v firefox >/dev/null && firefox --new-window ${url}) || (command -v firefox-esr >/dev/null && firefox-esr --new-window ${url}) || (command -v chromium >/dev/null && chromium --no-sandbox --new-window ${url}) || (command -v chromium-browser >/dev/null && chromium-browser --no-sandbox --new-window ${url}) || xdg-open ${url}`;
+      await runCommand(sandbox, "bash", ["-c", `nohup setsid bash -c ${JSON.stringify(launchChain)} >/tmp/browser-launch.log 2>&1 </dev/null & disown; sleep 0.3`], 8);
+      await new Promise((r) => setTimeout(r, 2500));
+    } else if (actionType === "wait") {
+      const s = Math.max(1, Math.min(10, Number(params?.seconds || 2)));
+      await new Promise((r) => setTimeout(r, s * 1000));
+    } else {
+      // Refine click/move coords if present
+      if ((actionType === "click" || actionType === "double_click" || actionType === "move_mouse") &&
+          typeof params?.x === "number" && typeof params?.y === "number") {
+        try {
+          const { base64: pre } = await captureScreenshotData(sandbox);
+          const refined = await refineClickCoords(pre, params.x, params.y, params?.target || params?.hint);
+          if (refined.adjusted) { params.x = refined.x; params.y = refined.y; }
+        } catch { /* best effort */ }
+      }
+      const cmd = buildXdotoolCommand(actionType, params);
+      if (cmd) {
+        const r = await runCommand(sandbox, cmd.cmd, cmd.args, 15);
+        if (r.exitCode !== 0) {
+          return { success: false, error: r.stderr || r.stdout || "command failed" };
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const { base64 } = await captureScreenshotData(sandbox);
+      return { success: true, screenshot: base64 };
+    } catch {
+      return { success: true };
+    }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function runBackground(runId: string): Promise<void> {
+  if (activeRunners.has(runId)) return;
+  activeRunners.add(runId);
+  const deadline = Date.now() + PER_INVOCATION_BUDGET_MS;
+  console.log(`[bg ${runId.slice(0, 8)}] resume`);
+  try {
+    let run = await loadRun(runId);
+    if (!run) return;
+    if (run.status === "done" || run.status === "stopped" || run.status === "error") return;
+
+    // Bootstrap sandbox if missing
+    if (!run.session_id) {
+      await patchRun(runId, { status: "starting", last_heartbeat: new Date().toISOString() });
+      try {
+        const sb = await createSandbox(run.user_id, run.task);
+        await patchRun(runId, { session_id: sb.sandboxId, envd_token: sb.envdAccessToken });
+        await appendStep(run, { action: "create_sandbox", reasoning: `Sandbox created (${sb.sandboxId.slice(0, 8)}...)`, status: "done" });
+        run.session_id = sb.sandboxId; run.envd_token = sb.envdAccessToken;
+        kickstartDesktop(sb).catch(() => {});
+        const ready = await waitForDesktopReady(sb);
+        if (!ready.ready) {
+          await appendStep(run, { action: "boot_desktop", reasoning: `Boot failed: ${ready.errorCode || "unknown"}`, status: "error" });
+          await patchRun(runId, { status: "error", error: `boot_failed:${ready.errorCode || ""}`, ended_at: new Date().toISOString() });
+          return;
+        }
+        await appendStep(run, { action: "boot_desktop", reasoning: `Desktop ready (${Math.ceil(ready.waitedMs / 1000)}s)`, status: "done", screenshot: ready.screenshot });
+      } catch (e) {
+        await patchRun(runId, { status: "error", error: `start_failed: ${e instanceof Error ? e.message : String(e)}`, ended_at: new Date().toISOString() });
+        return;
+      }
+    }
+    await patchRun(runId, { status: "running", last_heartbeat: new Date().toISOString() });
+
+    while (Date.now() < deadline) {
+      run = await loadRun(runId);
+      if (!run) return;
+      if (run.status === "stopped" || run.status === "done" || run.status === "error") return;
+      if ((run.step_count || 0) >= MAX_STEPS) {
+        await patchRun(runId, { status: "error", error: "max_steps_reached", ended_at: new Date().toISOString() });
+        return;
+      }
+
+      // Acquire sandbox (recreate on failure)
+      let sandbox: SandboxSession;
+      try {
+        sandbox = await getSandbox(run.session_id, run.envd_token);
+      } catch {
+        try {
+          const sb = await createSandbox(run.user_id, run.task);
+          kickstartDesktop(sb).catch(() => {});
+          await waitForDesktopReady(sb);
+          run.session_id = sb.sandboxId; run.envd_token = sb.envdAccessToken;
+          run.action_history = [];
+          await patchRun(runId, { session_id: sb.sandboxId, envd_token: sb.envdAccessToken, action_history: [] });
+          await appendStep(run, { action: "sandbox_recreated", reasoning: "Sandbox expired — recreated from scratch.", status: "done" });
+          sandbox = sb;
+        } catch {
+          await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+          return; // try again next tick
+        }
+      }
+
+      // Snapshot
+      let shot = "";
+      try { shot = (await captureScreenshotData(sandbox)).base64; }
+      catch { await new Promise((r) => setTimeout(r, 1500)); continue; }
+
+      // Decide
+      const history = (run.action_history || []) as any[];
+      const initialUrl = extractInitialUrl(run.task);
+      let decision: any;
+      if (initialUrl && !history.some((h) => h?.action === "open_url")) {
+        decision = { action: "open_url", params: { url: initialUrl }, reasoning: `Opening initial URL ${initialUrl}.`, done: false };
+      } else if (history[history.length - 1]?.action === "open_url") {
+        decision = { action: "wait", params: { seconds: 4 }, reasoning: "Waiting for page to load.", done: false };
+      } else {
+        try {
+          decision = await aiReason(shot, run.task, history, undefined, run.engagement);
+        } catch (e) {
+          await appendStep(run, { action: "think_error", reasoning: e instanceof Error ? e.message : String(e), status: "error", screenshot: shot });
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+      }
+
+      await appendStep(run, { action: `think → ${decision.action}`, reasoning: decision.reasoning, status: "done", screenshot: shot, params: decision.params });
+      history.push({ action: decision.action, reasoning: decision.reasoning, params: decision.params });
+      await patchRun(runId, { action_history: history });
+
+      if (decision.done) {
+        await patchRun(runId, { status: "done", summary: decision.summary || "Task completed.", ended_at: new Date().toISOString() });
+        return;
+      }
+
+      if (decision.action !== "wait") {
+        const exec = await executeActionForBg(sandbox, decision.action, decision.params || {});
+        await appendStep(run, {
+          action: decision.action,
+          reasoning: exec.success ? `${decision.action} executed` : `failed: ${exec.error}`,
+          status: exec.success ? "done" : "error",
+          screenshot: exec.screenshot,
+          params: decision.params,
+        });
+      } else {
+        const s = Math.max(1, Math.min(10, Number(decision.params?.seconds || 2)));
+        await new Promise((r) => setTimeout(r, s * 1000));
+      }
+      await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+    }
+    // Budget exhausted — leave status=running; cron will resume.
+    await patchRun(runId, { last_heartbeat: new Date().toISOString() });
+    console.log(`[bg ${runId.slice(0, 8)}] yield (budget)`);
+  } catch (e) {
+    console.error(`[bg ${runId.slice(0, 8)}] crash`, e);
+    try { await patchRun(runId, { status: "error", error: e instanceof Error ? e.message : String(e), ended_at: new Date().toISOString() }); } catch {}
+  } finally {
+    activeRunners.delete(runId);
+  }
+}
+
 serve(async (req) => {
+
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const traceId = req.headers.get("x-trace-id") || crypto.randomUUID();
 
@@ -1279,9 +1471,38 @@ serve(async (req) => {
     const idempotencyKey = req.headers.get("Idempotency-Key") || body.idempotencyKey;
     console.log(`[emma-cu] action=${action} trace=${traceId}`);
 
+    // === Cron-protected background tick (no user auth) ===
+    if (action === "bg_tick") {
+      const provided = body.secret || req.headers.get("x-cron-secret");
+      const { data: secretRow } = await adminDb()
+        .from("cron_secrets").select("secret").eq("name", "emma-cu-bg").maybeSingle();
+      const expected = secretRow?.secret || Deno.env.get("CRON_SECRET");
+      if (!provided || !expected || provided !== expected) return json({ error: "unauthorized" }, 401);
+      const cutoff = new Date(Date.now() - 90_000).toISOString();
+      const { data } = await adminDb()
+        .from("agent_runs").select("id")
+        .in("status", ["running", "starting"])
+        .lt("last_heartbeat", cutoff)
+        .limit(10);
+      const ids = (data || []).map((r: any) => r.id);
+      for (const id of ids) {
+        // @ts-ignore — EdgeRuntime is available in Supabase runtime
+        try { EdgeRuntime.waitUntil(runBackground(id)); } catch { runBackground(id); }
+      }
+      return json({ resumed: ids, traceId });
+    }
+
+
     const userId = await getClerkUserId(req);
     if (!userId) return json({ error: "Unauthorized — sign in required", traceId }, 401);
     const idemScope = `${userId}:${action}:${idempotencyKey || ""}`;
+    if (idempotencyKey) {
+      const cached = idempotencyCache.get(idemScope);
+      if (cached && cached.expiresAt > Date.now()) {
+        return json({ ...(cached.response as Record<string, unknown>), idempotency: { replayed: true, key: idempotencyKey }, traceId });
+      }
+    }
+
     if (idempotencyKey) {
       const cached = idempotencyCache.get(idemScope);
       if (cached && cached.expiresAt > Date.now()) {
@@ -1751,8 +1972,90 @@ serve(async (req) => {
         return json({ success: true, status: "destroyed", traceId });
       }
 
+      // ============================================================
+      // === Background-run lifecycle (survive browser close) =======
+      // ============================================================
+      case "start_run": {
+        const task = String(body.task || "").trim();
+        if (!task) return json({ error: "Missing task" }, 400);
+        const db = adminDb();
+        // 1 active run per user
+        const { data: existing } = await db
+          .from("agent_runs").select("id")
+          .eq("user_id", userId).in("status", ["starting", "running"])
+          .limit(1).maybeSingle();
+        if (existing) return json({ runId: existing.id, status: "already_running", traceId });
+
+        const { data: row, error } = await db
+          .from("agent_runs")
+          .insert({ user_id: userId, task, engagement: body.engagement || {}, status: "starting" })
+          .select("id").single();
+        if (error || !row) return json({ error: error?.message || "Failed to create run" }, 500);
+
+        // @ts-ignore
+        try { EdgeRuntime.waitUntil(runBackground(row.id)); } catch { runBackground(row.id); }
+        return json({ runId: row.id, status: "starting", traceId });
+      }
+
+      case "get_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const sinceStep = Number(body.sinceStep || 0);
+        const { data } = await adminDb().from("agent_runs").select("*").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        const allSteps = (data.steps || []) as any[];
+        const newSteps = sinceStep > 0 ? allSteps.slice(sinceStep) : allSteps;
+        return json({
+          run: {
+            id: data.id, task: data.task, status: data.status,
+            step_count: data.step_count, summary: data.summary, error: data.error,
+            current_screenshot: data.current_screenshot,
+            started_at: data.started_at, ended_at: data.ended_at,
+            last_heartbeat: data.last_heartbeat,
+          },
+          newSteps,
+          traceId,
+        });
+      }
+
+      case "list_runs": {
+        const { data } = await adminDb()
+          .from("agent_runs")
+          .select("id, task, status, step_count, summary, started_at, ended_at, last_heartbeat")
+          .eq("user_id", userId)
+          .order("started_at", { ascending: false })
+          .limit(20);
+        return json({ runs: data || [], traceId });
+      }
+
+      case "stop_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const db = adminDb();
+        const { data } = await db.from("agent_runs").select("user_id, session_id").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        await db.from("agent_runs").update({ status: "stopped", ended_at: new Date().toISOString() }).eq("id", id);
+        if (data.session_id) {
+          try { await fetch(`${E2B_API_BASE}/sandboxes/${data.session_id}`, { method: "DELETE", headers: { "X-API-Key": apiKey } }); } catch {}
+        }
+        return json({ ok: true, traceId });
+      }
+
+      case "nudge_run": {
+        const id = body.runId;
+        if (!id) return json({ error: "Missing runId" }, 400);
+        const { data } = await adminDb().from("agent_runs").select("user_id, status").eq("id", id).maybeSingle();
+        if (!data || data.user_id !== userId) return json({ error: "Not found" }, 404);
+        if (data.status === "running" || data.status === "starting") {
+          // @ts-ignore
+          try { EdgeRuntime.waitUntil(runBackground(id)); } catch { runBackground(id); }
+        }
+        return json({ ok: true, traceId });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
+
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

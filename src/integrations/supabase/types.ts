@@ -112,6 +112,66 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_runs: {
+        Row: {
+          action_history: Json
+          current_screenshot: string | null
+          ended_at: string | null
+          engagement: Json | null
+          envd_token: string | null
+          error: string | null
+          id: string
+          last_heartbeat: string
+          session_id: string | null
+          started_at: string
+          status: string
+          step_count: number
+          steps: Json
+          summary: string | null
+          task: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action_history?: Json
+          current_screenshot?: string | null
+          ended_at?: string | null
+          engagement?: Json | null
+          envd_token?: string | null
+          error?: string | null
+          id?: string
+          last_heartbeat?: string
+          session_id?: string | null
+          started_at?: string
+          status?: string
+          step_count?: number
+          steps?: Json
+          summary?: string | null
+          task: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action_history?: Json
+          current_screenshot?: string | null
+          ended_at?: string | null
+          engagement?: Json | null
+          envd_token?: string | null
+          error?: string | null
+          id?: string
+          last_heartbeat?: string
+          session_id?: string | null
+          started_at?: string
+          status?: string
+          step_count?: number
+          steps?: Json
+          summary?: string | null
+          task?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       agent_tools: {
         Row: {
           code: string | null

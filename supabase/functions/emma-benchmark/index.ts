@@ -3,13 +3,13 @@ import { guardRequest, jsonResponse, safeError } from "../_shared/request-guard.
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
-async function callAI(apiKey: string, system: string, userContent: string): Promise<string> {
+async function callAI(apiKey: string, system: string, userContent: string, model = "google/gemini-2.5-pro"): Promise<string> {
   const resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      max_tokens: 4096,
+      model,
+      max_tokens: 2048,
       messages: [
         { role: "system", content: system },
         { role: "user", content: userContent },
@@ -20,19 +20,64 @@ async function callAI(apiKey: string, system: string, userContent: string): Prom
   return (await resp.json()).choices?.[0]?.message?.content || "";
 }
 
-function scoreAnswer(expected: string | null, actual: string): number {
-  if (!expected) return 5; // no ground truth — neutral
+// Strip prose preamble, code fences, surrounding quotes, trailing punctuation.
+function normalizeAnswer(raw: string): string {
+  let s = raw.trim();
+  // Strip markdown code fences but keep inner code
+  s = s.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, "");
+  // Strip common preambles
+  s = s.replace(/^(the\s+)?(final\s+)?answer\s*(is|:)\s*/i, "");
+  s = s.replace(/^answer\s*[:=]\s*/i, "");
+  // Strip surrounding quotes
+  s = s.replace(/^["'`]+|["'`]+$/g, "");
+  // Collapse whitespace
+  s = s.replace(/\s+/g, " ").trim();
+  // Strip a single trailing period if the answer is short
+  if (s.length < 80) s = s.replace(/[.!?]+$/g, "").trim();
+  return s;
+}
+
+function tokenize(s: string): Set<string> {
+  return new Set(
+    s.toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 2),
+  );
+}
+
+function scoreAnswer(expected: string | null, actualRaw: string, category: string): number {
+  if (!expected) return 5;
+  const actual = normalizeAnswer(actualRaw);
   const e = expected.toLowerCase().trim();
   const a = actual.toLowerCase().trim();
+  if (!a) return 0;
+
+  // Direct substring match in either direction is a full credit
   if (a.includes(e) || e.includes(a)) return 10;
-  // token overlap
-  const eTokens = new Set(e.split(/\s+/).filter((t) => t.length > 2));
-  const aTokens = new Set(a.split(/\s+/).filter((t) => t.length > 2));
+
+  // For planning/coding/conceptual answers: keyword coverage
+  const eTokens = tokenize(e);
+  const aTokens = tokenize(a);
   if (eTokens.size === 0) return 5;
   let hit = 0;
   for (const t of eTokens) if (aTokens.has(t)) hit++;
-  return Math.round((hit / eTokens.size) * 10);
+  const ratio = hit / eTokens.size;
+
+  // Planning/coding: concept-coverage style — 60% coverage = full credit
+  if (category === "planning" || category === "coding") {
+    if (ratio >= 0.6) return 10;
+    if (ratio >= 0.4) return 8;
+    if (ratio >= 0.25) return 6;
+    return Math.round(ratio * 10);
+  }
+
+  // Reasoning/mmlu: require closer match
+  if (ratio >= 0.8) return 10;
+  if (ratio >= 0.5) return 8;
+  return Math.round(ratio * 10);
 }
+
 
 serve(async (req) => {
   const guard = await guardRequest(req, {

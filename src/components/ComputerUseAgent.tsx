@@ -213,6 +213,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const runIdRef = useRef<string | null>(null);
   const sinceStepRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [restoreCount, setRestoreCount] = useState(0);
   const [resumableRuns, setResumableRuns] = useState<Array<{ id: string; task: string; status: string; step_count: number; started_at: string }>>([]);
 
   useEffect(() => { runIdRef.current = runId; }, [runId]);

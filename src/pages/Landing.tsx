@@ -217,7 +217,13 @@ export default function Landing() {
             <a href="#pricing" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Pricing</a>
             <Link to="/inventions" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Inventions</Link>
             <Link to="/changelog" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Changelog</Link>
-            <Link to="/demo" className="hidden sm:inline text-sm text-amber-300/90 hover:text-amber-200 px-3 py-2 transition-colors">Demo</Link>
+            <Link to="/benchmarks" className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-2 transition-colors">Benchmarks</Link>
+            <button
+              onClick={() => { localStorage.setItem("emma_demo_mode", "1"); navigate("/app"); }}
+              className="hidden sm:inline text-sm text-amber-300/90 hover:text-amber-200 px-3 py-2 transition-colors"
+            >
+              Demo
+            </button>
             {user ? (
               <Button onClick={() => navigate("/app")} size="sm" className="ml-2 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.5)]">
                 Open App<ArrowRight className="h-4 w-4 ml-1" />
@@ -308,15 +314,14 @@ export default function Landing() {
           >
             Get Membership — $12/month
           </Button>
-          <Link to="/demo">
-            <Button
-              size="lg"
-              variant="ghost"
-              className="h-14 px-6 text-base font-medium text-amber-200/90 hover:text-amber-100 hover:bg-amber-500/10"
-            >
-              View read-only demo →
-            </Button>
-          </Link>
+          <Button
+            onClick={() => { localStorage.setItem("emma_demo_mode", "1"); navigate("/app"); }}
+            size="lg"
+            variant="ghost"
+            className="h-14 px-6 text-base font-medium text-amber-200/90 hover:text-amber-100 hover:bg-amber-500/10"
+          >
+            Try the demo — no account →
+          </Button>
         </motion.div>
 
         <motion.div

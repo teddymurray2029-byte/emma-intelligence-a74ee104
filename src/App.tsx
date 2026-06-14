@@ -38,13 +38,15 @@ import SafetyPage from "./pages/Safety";
 import TransferPage from "./pages/Transfer";
 import ImageStudio from "./pages/ImageStudio";
 import Changelog from "./pages/Changelog";
-import Demo from "./pages/Demo";
+import Benchmarks from "./pages/Benchmarks";
 
 const queryClient = new QueryClient();
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || "pk_test_ZXZpZGVudC1taW5rLTcuY2xlcmsuYWNjb3VudHMuZGV2JA";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const isDemo = typeof window !== "undefined" && window.localStorage.getItem("emma_demo_mode") === "1";
+  if (isDemo) return <>{children}</>;
   return (
     <>
       <SignedIn>{children}</SignedIn>
@@ -86,7 +88,7 @@ const App = () => (
             <Route path="/transfer" element={<ProtectedRoute><TransferPage /></ProtectedRoute>} />
             <Route path="/images" element={<ProtectedRoute><ImageStudio /></ProtectedRoute>} />
             <Route path="/changelog" element={<Changelog />} />
-            <Route path="/demo" element={<Demo />} />
+            <Route path="/benchmarks" element={<Benchmarks />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

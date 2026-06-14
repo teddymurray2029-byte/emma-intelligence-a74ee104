@@ -10,7 +10,7 @@ interface BenchmarkResult {
   previousScore: number | null;
   delta: number | null;
   categoryScores: Record<string, number>;
-  results: { category: string; question: string; answer: string; score: number; reasoning: string; difficulty: number }[];
+  results: { category: string; question: string; answer: string; expected?: string; score: number; reasoning: string; difficulty: number }[];
   message: string;
 }
 

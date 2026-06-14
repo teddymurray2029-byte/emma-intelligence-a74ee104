@@ -1478,7 +1478,7 @@ serve(async (req) => {
         .from("cron_secrets").select("secret").eq("name", "emma-cu-bg").maybeSingle();
       const expected = secretRow?.secret || Deno.env.get("CRON_SECRET");
       if (!provided || !expected || provided !== expected) return json({ error: "unauthorized" }, 401);
-      const cutoff = new Date(Date.now() - 90_000).toISOString();
+      const cutoff = new Date(Date.now() - 30_000).toISOString();
       const { data } = await adminDb()
         .from("agent_runs").select("id")
         .in("status", ["running", "starting"])

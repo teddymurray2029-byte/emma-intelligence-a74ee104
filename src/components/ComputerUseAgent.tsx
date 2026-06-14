@@ -400,6 +400,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     stepsRef.current = [];
     stepIdRef.current = 0;
     sinceStepRef.current = 0;
+    setRestoreCount(0);
     setSummary(null);
     setCurrentScreenshot(null);
     framesRef.current = [];

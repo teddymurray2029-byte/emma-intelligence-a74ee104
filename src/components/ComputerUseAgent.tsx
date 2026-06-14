@@ -207,9 +207,20 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   const sandboxResetRef = useRef(false);
   const [isBuildingVideo, setIsBuildingVideo] = useState(false);
 
+  // === Background-run state (server-side loop, survives browser close) ===
+  const [backgroundMode, setBackgroundMode] = useState(true);
+  const [runId, setRunId] = useState<string | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const sinceStepRef = useRef(0);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [resumableRuns, setResumableRuns] = useState<Array<{ id: string; task: string; status: string; step_count: number; started_at: string }>>([]);
+
+  useEffect(() => { runIdRef.current = runId; }, [runId]);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [steps]);
+
 
   useEffect(() => {
     const cleanup = () => {

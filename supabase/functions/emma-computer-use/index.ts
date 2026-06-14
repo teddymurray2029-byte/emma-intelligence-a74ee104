@@ -1473,8 +1473,11 @@ serve(async (req) => {
 
     // === Cron-protected background tick (no user auth) ===
     if (action === "bg_tick") {
-      const secret = body.secret || req.headers.get("x-cron-secret");
-      if (!secret || secret !== Deno.env.get("CRON_SECRET")) return json({ error: "unauthorized" }, 401);
+      const provided = body.secret || req.headers.get("x-cron-secret");
+      const { data: secretRow } = await adminDb()
+        .from("cron_secrets").select("secret").eq("name", "emma-cu-bg").maybeSingle();
+      const expected = secretRow?.secret || Deno.env.get("CRON_SECRET");
+      if (!provided || !expected || provided !== expected) return json({ error: "unauthorized" }, 401);
       const cutoff = new Date(Date.now() - 90_000).toISOString();
       const { data } = await adminDb()
         .from("agent_runs").select("id")
@@ -1488,6 +1491,7 @@ serve(async (req) => {
       }
       return json({ resumed: ids, traceId });
     }
+
 
     const userId = await getClerkUserId(req);
     if (!userId) return json({ error: "Unauthorized — sign in required", traceId }, 401);

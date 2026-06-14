@@ -38,7 +38,7 @@ import SafetyPage from "./pages/Safety";
 import TransferPage from "./pages/Transfer";
 import ImageStudio from "./pages/ImageStudio";
 import Changelog from "./pages/Changelog";
-import Demo from "./pages/Demo";
+import Benchmarks from "./pages/Benchmarks";
 
 const queryClient = new QueryClient();
 

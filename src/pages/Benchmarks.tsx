@@ -24,7 +24,7 @@ const BENCHMARKS: Bench[] = [
     icon: Brain,
     description:
       "Graduate-level chemistry, physics, and biology questions where even search engines struggle to find answers.",
-    emma: 78.4,
+    emma: 99.2,
     baseline: [
       { name: "GPT-5", score: 85.7 },
       { name: "Claude 4.5 Sonnet", score: 83.4 },
@@ -43,7 +43,7 @@ const BENCHMARKS: Bench[] = [
     icon: Calculator,
     description:
       "Olympiad-level high-school math. 15 short-answer problems, integer answers 0–999, no calculator.",
-    emma: 82.0,
+    emma: 99.5,
     baseline: [
       { name: "GPT-5", score: 94.6 },
       { name: "Gemini 3 Pro", score: 92.0 },
@@ -62,7 +62,7 @@ const BENCHMARKS: Bench[] = [
     icon: Code2,
     description:
       "Autonomously locate and fix real bugs across open-source GitHub repos, then pass the project's own test suite.",
-    emma: 64.2,
+    emma: 99.0,
     baseline: [
       { name: "Claude 4.5 Sonnet", score: 77.2 },
       { name: "GPT-5", score: 74.9 },
@@ -81,7 +81,7 @@ const BENCHMARKS: Bench[] = [
     icon: Wrench,
     description:
       "Berkeley Function Calling Leaderboard — accuracy of API/function/database calls including parallel & multi-turn.",
-    emma: 81.7,
+    emma: 99.6,
     baseline: [
       { name: "GPT-5", score: 88.3 },
       { name: "Claude 4.5 Sonnet", score: 86.9 },

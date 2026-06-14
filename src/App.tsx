@@ -88,7 +88,7 @@ const App = () => (
             <Route path="/transfer" element={<ProtectedRoute><TransferPage /></ProtectedRoute>} />
             <Route path="/images" element={<ProtectedRoute><ImageStudio /></ProtectedRoute>} />
             <Route path="/changelog" element={<Changelog />} />
-            <Route path="/demo" element={<Demo />} />
+            <Route path="/benchmarks" element={<Benchmarks />} />
             <Route path="/app" element={<Index />} />
             <Route path="/payment-success" element={<PaymentSuccess />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

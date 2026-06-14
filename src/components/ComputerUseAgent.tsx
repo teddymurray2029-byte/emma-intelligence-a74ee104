@@ -416,6 +416,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     setStatus("starting");
     setIsRunning(true);
     setSteps([]); stepsRef.current = []; stepIdRef.current = 0; sinceStepRef.current = 0;
+    setRestoreCount(0);
     setSummary(null);
     framesRef.current = [];
     taskRef.current = task.trim();

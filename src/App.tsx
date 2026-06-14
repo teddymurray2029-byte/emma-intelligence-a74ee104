@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { ClerkProvider, SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react";
+import { ClerkProvider, SignedIn, SignedOut, RedirectToSignIn, useAuth as useClerkAuth } from "@clerk/clerk-react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { setAgiTokenGetter } from "@/lib/agi-api";
 import Index from "./pages/Index";
 import Landing from "./pages/Landing";
 import ClerkSignIn from "./pages/ClerkSignIn";
@@ -52,10 +54,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AgiTokenBridge() {
+  const { getToken } = useClerkAuth();
+
+  useEffect(() => {
+    setAgiTokenGetter(() => getToken());
+  }, [getToken]);
+
+  return null;
+}
+
 const App = () => (
   <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/sign-in">
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        <AgiTokenBridge />
         <Toaster />
         <Sonner />
         <BrowserRouter>

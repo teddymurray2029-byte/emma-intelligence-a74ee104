@@ -370,10 +370,12 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
         setIsRunning(false);
         stopPolling();
       } else if (run.status === "error") {
+        const message = run.error || "Agent stopped with an unspecified backend error.";
         setStatus("error");
         setIsRunning(false);
         stopPolling();
-        toast.error(`Agent error: ${run.error || "unknown"}`);
+        addStep({ action: "agent_error", reasoning: message, status: "error" });
+        toast.error(`Agent error: ${message}`);
       } else if (run.status === "stopped") {
         setStatus("done");
         setIsRunning(false);
@@ -386,7 +388,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
     } catch (e) {
       console.warn("[poll] failed", e);
     }
-  }, [getToken, ingestServerStep, stopPolling]);
+  }, [getToken, ingestServerStep, stopPolling, addStep]);
 
   const startPolling = useCallback((id: string) => {
     stopPolling();

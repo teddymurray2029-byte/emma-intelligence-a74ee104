@@ -361,6 +361,9 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
       if (run.current_screenshot && !newSteps.some((s) => s.screenshot)) {
         setCurrentScreenshot(run.current_screenshot);
       }
+      if (typeof run.restore_count === "number" && run.restore_count !== restoreCount) {
+        setRestoreCount(run.restore_count);
+      }
       if (run.status === "done") {
         setSummary(run.summary || "Task completed.");
         setStatus("done");

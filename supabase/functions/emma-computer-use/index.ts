@@ -2090,6 +2090,8 @@ serve(async (req) => {
             current_screenshot: data.current_screenshot,
             started_at: data.started_at, ended_at: data.ended_at,
             last_heartbeat: data.last_heartbeat,
+            restore_count: data.restore_count || 0,
+            last_url: data.last_url || null,
           },
           newSteps,
           traceId,

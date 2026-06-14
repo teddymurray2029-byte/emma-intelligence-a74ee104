@@ -907,7 +907,12 @@ function isDestructive(text: string): { destructive: boolean; matched?: string }
   return { destructive: false };
 }
 
-const ALLOWED_ACTIONS = new Set(["click", "double_click", "type", "hotkey", "scroll", "move_mouse", "wait", "open_url", "report_finding", "done"]);
+const ALLOWED_ACTIONS = new Set(["click", "double_click", "type", "hotkey", "scroll", "move_mouse", "drag_select", "wait", "open_url", "report_finding", "done"]);
+
+const SCREEN_W = 1024;
+const SCREEN_H = 768;
+const clampX = (n: number) => Math.max(0, Math.min(SCREEN_W - 1, Math.round(n)));
+const clampY = (n: number) => Math.max(0, Math.min(SCREEN_H - 1, Math.round(n)));
 
 function normalizeUrl(value: string): string | null {
   const cleaned = String(value || "").trim().replace(/[),.;]+$/, "");
@@ -978,6 +983,22 @@ function normalizeDecision(value: any): { action: string; params: any; reasoning
       (typeof params.x !== "number" || typeof params.y !== "number")) {
     return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: Coordinates were missing, so I am waiting and re-reading the screen instead of clicking blindly.`, done: false, parseWarning: "missing_coordinates" };
   }
+  if (action === "click" || action === "double_click" || action === "move_mouse") {
+    decision.params.x = clampX(params.x);
+    decision.params.y = clampY(params.y);
+  }
+  if (action === "drag_select") {
+    const { x1, y1, x2, y2 } = params || {};
+    if (![x1, y1, x2, y2].every((v) => typeof v === "number" && Number.isFinite(v))) {
+      return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: drag_select needs x1,y1,x2,y2 — waiting and re-reading instead.`, done: false, parseWarning: "missing_drag_coordinates" };
+    }
+    const cx1 = clampX(x1), cy1 = clampY(y1), cx2 = clampX(x2), cy2 = clampY(y2);
+    const dist = Math.hypot(cx2 - cx1, cy2 - cy1);
+    if (dist < 8) {
+      return { action: "click", params: { x: cx1, y: cy1, target: params.target }, reasoning: `${reasoning}\nDECISION: drag span <8px — converting to a single click.`, done: false, parseWarning: "drag_collapsed_to_click" };
+    }
+    decision.params = { x1: cx1, y1: cy1, x2: cx2, y2: cy2, target: params.target };
+  }
   if (action === "open_url") {
     const url = normalizeUrl(params.url || "");
     if (!url) return { action: "wait", params: { seconds: 2 }, reasoning: `${reasoning}\nDECISION: URL was invalid, so I am waiting and re-reading the task.`, done: false, parseWarning: "invalid_url" };
@@ -1018,6 +1039,8 @@ async function aiReason(
     const p = a.params;
     if (a.action === "click" || a.action === "double_click" || a.action === "move_mouse")
       return ` @(${p.x},${p.y})${p.target ? ` "${String(p.target).slice(0, 40)}"` : ""}`;
+    if (a.action === "drag_select")
+      return ` drag(${p.x1},${p.y1}→${p.x2},${p.y2})${p.target ? ` "${String(p.target).slice(0, 40)}"` : ""}`;
     if (a.action === "type") return ` "${String(p.text || "").slice(0, 60)}"`;
     if (a.action === "open_url") return ` ${p.url || ""}`;
     if (a.action === "hotkey") return ` [${(p.keys || []).join("+")}]`;
@@ -1040,10 +1063,15 @@ async function aiReason(
     Math.abs((a.params?.y || 0) - (b.params?.y || 0)) <= 12;
   const sameType = (a: any, b: any) =>
     a && b && a.action === "type" && b.action === "type" && (a.params?.text || "") === (b.params?.text || "");
+  const isSelectAll = (a: any) =>
+    a?.action === "hotkey" && Array.isArray(a?.params?.keys) &&
+    a.params.keys.map((k: string) => String(k).toLowerCase()).sort().join("+") === "a+ctrl";
   if ((sameClick(last, prev) && sameClick(prev, prev2)) || (sameType(last, prev) && sameType(prev, prev2))) {
     loopWarning = `\n\n⚠ LOOP DETECTED: you have repeated essentially the same action 3 times. It is NOT working. You MUST change strategy this turn: pick a different x,y (look ±30-80px), scroll to reveal the real target, switch to keyboard (Tab+Enter), or wait 3s for the UI to settle. Do NOT emit the same action again.`;
   } else if (sameClick(last, prev) || sameType(last, prev)) {
     loopWarning = `\n\n⚠ You just repeated the previous action. If the screen did not visibly change, the click missed or the field rejected input. Try a different coordinate, scroll, or use Tab to focus the next field.`;
+  } else if (isSelectAll(last) && isSelectAll(prev)) {
+    loopWarning = `\n\n⚠ You used Ctrl+A twice. Ctrl+A selects the ENTIRE document/field — if you only need a portion of text (word/line/paragraph), use action 'drag_select' with x1,y1 at the start glyph and x2,y2 at the end glyph instead.`;
   }
 
   const userIntervention = userMessage ? `\n\nUser intervention message: "${userMessage}"` : "";
@@ -1075,6 +1103,7 @@ Required shape:
 
 Allowed actions and params:
 - click/double_click/move_mouse: {"x": number, "y": number, "target": "brief description of element being clicked"}
+- drag_select: {"x1": number, "y1": number, "x2": number, "y2": number, "target": "what text/region you are selecting"}
 - type: {"text": "string"}
 - hotkey: {"keys": ["ctrl","a"]}
 - scroll: {"x": number, "y": number, "direction": "up" or "down", "amount": number}
@@ -1087,6 +1116,10 @@ Rules:
 - THE CURRENT SCREENSHOT IS GROUND TRUTH. Trust ONLY what you can see right now. Ignore any prior reasoning or history that contradicts the pixels on screen.
 - VERIFY EVERY ACTION: before taking a new action, check whether the previous action visibly changed the screen. If it didn't, the click missed or the field is invalid — DO NOT repeat it; try a different coordinate, scroll, or keyboard navigation.
 - NEVER repeat the exact same click (within ~15px) or the same typed text twice in a row. If a button doesn't respond, the target is wrong — re-locate it.
+- TEXT SELECTION:
+  - To highlight a SPECIFIC range (a word, a sentence, a paragraph, a code snippet): use 'drag_select' with x1,y1 at the first glyph and x2,y2 at the last glyph. This is mouse-down → drag → mouse-up and works in every editor, browser, and terminal.
+  - To select a single word, prefer 'double_click' on it.
+  - Use 'hotkey' ctrl+a ONLY when you genuinely want EVERY character in the field/document. Do NOT default to ctrl+a for partial selections.
 - REQUIRED FIELDS: before clicking any Submit / Continue / Next / Sign up / Pay button, scan the WHOLE form top-to-bottom. Every field marked with * or "required" (and standard fields like email, password, name, confirm-password, checkboxes for ToS) MUST be filled. If any required field is empty, fill it FIRST. If a validation error appears (red text, red border), fix that field before retrying submit.
 - ONE FIELD AT A TIME for typing: click the field → verify cursor/focus indicator appears → type → press Tab to confirm acceptance → move to next field.
 - If the screenshot shows the bottom of a page (e.g. footer/sponsor logos), do NOT claim you are looking at a list/menu/header that is not visible — scroll up first.
@@ -1102,7 +1135,7 @@ Rules:
 
   const requestBody: Record<string, unknown> = {
     model: "google/gemini-2.5-pro",
-    max_tokens: 4096,
+    max_tokens: 1024,
     messages: [
       { role: "system", content: systemPrompt },
       {
@@ -1117,6 +1150,8 @@ Rules:
     temperature: 0,
     response_format: { type: "json_object" },
   };
+
+  // Surface loopWarning to caller via parseWarning piggyback handled by caller
 
   let resp = await fetch(AI_GATEWAY_URL, {
     method: "POST",
@@ -1143,7 +1178,8 @@ Rules:
         const retryData = await resp.json();
         const retryContent = retryData.choices?.[0]?.message?.content || "";
         const retryParsed = parseAiDecision(retryContent);
-        return retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+        const fallback = retryParsed || { action: "wait", params: { seconds: 2 }, reasoning: `VISIBLE: I could not parse the fallback model decision. DECISION: Wait and re-analyze. Raw response starts: ${retryContent.slice(0, 180)}`, done: false, parseWarning: "fallback_unparseable_ai_response" };
+        return { ...fallback, loopWarning: loopWarning || undefined };
       }
     }
     throw new Error(`AI reasoning failed: ${err}`);
@@ -1153,7 +1189,7 @@ Rules:
   const content = data.choices?.[0]?.message?.content || "";
 
   const parsed = parseAiDecision(content);
-  if (parsed) return parsed;
+  if (parsed) return { ...parsed, loopWarning: loopWarning || undefined };
 
   return {
     action: "wait",
@@ -1161,6 +1197,7 @@ Rules:
     reasoning: `VISIBLE: I could not safely parse the model decision from the current screen. DECISION: Wait briefly and re-analyze instead of ending the task. Raw response starts: ${content.slice(0, 180)}`,
     done: false,
     parseWarning: "unparseable_ai_response",
+    loopWarning: loopWarning || undefined,
   };
 }
 
@@ -1179,22 +1216,36 @@ function buildXdotoolCommand(actionType: string, params: any): { cmd: string; ar
       return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${x} ${y} && sleep 0.08 && xdotool click --clearmodifiers --repeat 2 --delay 80 1`] };
     }
     case "move_mouse": {
-      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y}`] };
+      return { cmd: "bash", args: ["-c", `xdotool mousemove --sync ${params.x} ${params.y} && sleep 0.05`] };
+    }
+    case "drag_select": {
+      const { x1, y1, x2, y2 } = params;
+      // mouse-down at start, drag to end with intermediate settle, mouse-up.
+      // Two intermediate moves keep the WM's selection logic happy for long drags.
+      const mx = Math.round((x1 + x2) / 2);
+      const my = Math.round((y1 + y2) / 2);
+      return { cmd: "bash", args: ["-c",
+        `xdotool mousemove --sync ${x1} ${y1} && sleep 0.06 ` +
+        `&& xdotool mousedown 1 && sleep 0.05 ` +
+        `&& xdotool mousemove --sync ${mx} ${my} && sleep 0.04 ` +
+        `&& xdotool mousemove --sync ${x2} ${y2} && sleep 0.06 ` +
+        `&& xdotool mouseup 1`
+      ] };
     }
 
     case "type": {
       // xdotool type with delay; escape special chars
       const text = (params.text || "").replace(/'/g, "'\\''");
-      // For long text, chunk it
-      if (text.length > 100) {
+      // For long text, chunk it (smaller chunks + lower per-char delay = faster typing)
+      if (text.length > 50) {
         const chunks: string[] = [];
-        for (let i = 0; i < text.length; i += 50) {
-          chunks.push(text.slice(i, i + 50));
+        for (let i = 0; i < text.length; i += 25) {
+          chunks.push(text.slice(i, i + 25));
         }
-        const cmds = chunks.map(c => `xdotool type --delay 12 '${c}'`).join(" && ");
+        const cmds = chunks.map(c => `xdotool type --delay 8 '${c}'`).join(" && ");
         return { cmd: "bash", args: ["-c", cmds] };
       }
-      return { cmd: "bash", args: ["-c", `xdotool type --delay 12 '${text}'`] };
+      return { cmd: "bash", args: ["-c", `xdotool type --delay 8 '${text}'`] };
     }
     case "hotkey": {
       const keys = (params.keys as string[]).join("+");
@@ -1239,6 +1290,24 @@ serve(async (req) => {
     }
 
     switch (action) {
+      case "debug_metrics": {
+        const metrics: Record<string, any> = {};
+        for (const [tool, m] of toolMetrics.entries()) {
+          metrics[tool] = {
+            calls: m.calls,
+            failures: m.failures,
+            degraded: m.degraded,
+            failureRate: m.calls ? Number((m.failures / m.calls).toFixed(3)) : 0,
+            avgLatencyMs: m.calls ? Math.round(m.latencyTotalMs / m.calls) : 0,
+          };
+        }
+        const circuits: Record<string, any> = {};
+        for (const [tool, c] of toolCircuits.entries()) {
+          circuits[tool] = { failures: c.failures, open: c.openUntil > Date.now(), openUntil: c.openUntil };
+        }
+        return json({ metrics, circuits, sandboxes: sandboxCache.size, idempotencyCache: idempotencyCache.size, traceId });
+      }
+
       case "start_session": {
         console.log("[emma-cu] Creating sandbox...");
         const sandbox = await reliableToolCall("create_sandbox", traceId, () => createSandbox(userId, body.task), 30_000);
@@ -1370,10 +1439,37 @@ serve(async (req) => {
               console.warn(`[refine] skipped: ${e instanceof Error ? e.message : String(e)}`);
             }
           }
+          // === Drag-select endpoint refinement ===
+          if (actionType === "drag_select" &&
+              typeof params?.x1 === "number" && typeof params?.y1 === "number" &&
+              typeof params?.x2 === "number" && typeof params?.y2 === "number") {
+            try {
+              const { base64: preShot } = await reliableToolCall("refine_screenshot", traceId, () => captureScreenshotData(sandbox), 12_000);
+              const hint = params?.target ? `start of: ${params.target}` : "start of selection";
+              const hint2 = params?.target ? `end of: ${params.target}` : "end of selection";
+              const [r1, r2] = await Promise.all([
+                reliableToolCall("refine_drag_start", traceId, () => refineClickCoords(preShot, params.x1, params.y1, hint), 10_000),
+                reliableToolCall("refine_drag_end", traceId, () => refineClickCoords(preShot, params.x2, params.y2, hint2), 10_000),
+              ]);
+              const adjusted = r1.adjusted || r2.adjusted;
+              if (adjusted) {
+                result.refinement = {
+                  from: { x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2 },
+                  to: { x1: r1.x, y1: r1.y, x2: r2.x, y2: r2.y },
+                };
+                params.x1 = r1.x; params.y1 = r1.y; params.x2 = r2.x; params.y2 = r2.y;
+              }
+            } catch (e) {
+              console.warn(`[refine drag] skipped: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+          console.log(`[action] ${actionType} params=${JSON.stringify(params).slice(0, 200)} trace=${traceId}`);
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
+            const t0 = Date.now();
             try {
               const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
+              console.log(`[action] ${actionType} exit=${cmdResult.exitCode} latency=${Date.now() - t0}ms`);
               if (cmdResult.exitCode !== 0) {
                 result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
               }
@@ -1560,7 +1656,21 @@ serve(async (req) => {
           });
         }
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 15_000);
+        // === Speed: short-circuit obvious wait after open_url (skip model call) ===
+        const lastEntry = history[history.length - 1];
+        if (lastEntry?.action === "open_url") {
+          return json({
+            action: "wait",
+            params: { seconds: 4 },
+            reasoning: `VISIBLE: A browser was just launched and the page is still loading. DECISION: Wait 4s for first paint before reasoning about page contents (deterministic short-circuit — no model call).`,
+            done: false,
+            screenshot: screenshotBase64,
+            traceId,
+          });
+        }
+
+
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 40_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

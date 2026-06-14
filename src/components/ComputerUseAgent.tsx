@@ -425,7 +425,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           userMessage: pendingIntervention || undefined,
           envdAccessToken: curToken,
           engagement: engagementRef.current,
-        }, getToken, 60_000);
+        }, getToken, 50_000);
 
         // If sandbox_expired, wait for keepalive to recover
         if (decision.errorCode === "sandbox_expired") {
@@ -440,10 +440,17 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
           updateStep(thinkStepId, { screenshot: decision.screenshot });
         }
 
+        const guardrailFromWarning = decision.loopWarning
+          ? "loop_detected"
+          : decision.parseWarning
+          ? `parse:${decision.parseWarning}`
+          : undefined;
+
         updateStep(thinkStepId, {
           status: decision.status === "black_screen" ? "executing" : "done",
-          reasoning: decision.reasoning,
+          reasoning: decision.loopWarning ? `${decision.reasoning}\n\n${decision.loopWarning}` : decision.reasoning,
           action: `think → ${decision.action}`,
+          guardrail: guardrailFromWarning,
         });
 
         actionHistory.push({ action: decision.action, reasoning: decision.reasoning, params: decision.params });

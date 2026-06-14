@@ -1227,15 +1227,55 @@ ${stepsHtml}
               onChange={(e) => setTask(e.target.value)}
               placeholder='e.g. "Test target.com for reflected XSS in the search field"'
               className="text-xs"
-              onKeyDown={(e) => { if (e.key === "Enter" && engagement.authorized) startSession(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && engagement.authorized) (backgroundMode ? startBackgroundRun : startSession)(); }}
             />
             <Button onClick={() => setShowEngagementForm((v) => !v)} size="sm" variant="outline" className="gap-1.5 px-3">
               <Shield className="h-3.5 w-3.5" /> Scope
             </Button>
-            <Button onClick={startSession} size="sm" className="gap-1.5 px-4">
+            <Button onClick={backgroundMode ? startBackgroundRun : startSession} size="sm" className="gap-1.5 px-4">
               <Play className="h-3.5 w-3.5" /> Start
             </Button>
           </div>
+
+          <div className="flex items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Switch id="bg-mode" checked={backgroundMode} onCheckedChange={setBackgroundMode} />
+              <Label htmlFor="bg-mode" className="text-[11px] cursor-pointer">
+                Run in background <span className="text-muted-foreground">(survives closed browser)</span>
+              </Label>
+            </div>
+            {backgroundMode && (
+              <Badge variant="outline" className="text-[9px] gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Server-side loop
+              </Badge>
+            )}
+          </div>
+
+          {resumableRuns.length > 0 && (
+            <div className="space-y-1.5 p-2 rounded-md border border-amber-500/30 bg-amber-500/5">
+              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                {resumableRuns.length} agent run{resumableRuns.length > 1 ? "s" : ""} still active in background
+              </p>
+              {resumableRuns.map((r) => (
+                <div key={r.id} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-foreground truncate">{r.task}</p>
+                    <p className="text-[9px] text-muted-foreground">{r.step_count} steps · started {new Date(r.started_at).toLocaleTimeString()}</p>
+                  </div>
+                  <Button size="sm" variant="secondary" className="h-6 text-[10px]" onClick={() => attachToRun(r.id, r.task)}>
+                    Resume
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={async () => {
+                    try { await cuApi("stop_run", { runId: r.id }, getToken, 10_000); } catch {}
+                    setResumableRuns((prev) => prev.filter((x) => x.id !== r.id));
+                  }}>
+                    Stop
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {showEngagementForm && (
             <div className="space-y-2 p-3 rounded-md border border-border bg-muted/30">
@@ -1243,7 +1283,6 @@ ${stepsHtml}
                 <Label className="text-[10px] text-muted-foreground">Session name (optional)</Label>
                 <Input value={engagement.name} onChange={(e) => setEngagement({ ...engagement, name: e.target.value })} placeholder="My research session" className="h-7 text-xs" />
               </div>
-
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">
@@ -1261,6 +1300,7 @@ ${stepsHtml}
               </button>
             ))}
           </div>
+
         </div>
       )}
 

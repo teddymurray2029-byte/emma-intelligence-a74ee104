@@ -72,7 +72,7 @@ function scoreAnswer(expected: string | null, actualRaw: string, category: strin
   const ratio = hit / eTokens.size;
 
   if (category === "coding") {
-    if (/longest\s+common\s+subsequence/i.test(actualRaw)) {
+    if (/longest\s+common\s+subsequence|longestCommonSubsequence|\blcs\b/i.test(actualRaw)) {
       const hasDpTable = /\bdp\b/i.test(actualRaw) && /Array\s*\(/i.test(actualRaw);
       const hasNestedLoops = /for\s*\([^)]*\)\s*{[\s\S]*for\s*\(/i.test(actualRaw);
       const hasLcsRecurrence = /Math\.max\s*\(\s*dp\s*\[\s*i\s*-\s*1\s*\]\s*\[\s*j\s*\]\s*,\s*dp\s*\[\s*i\s*\]\s*\[\s*j\s*-\s*1\s*\]/i.test(actualRaw);

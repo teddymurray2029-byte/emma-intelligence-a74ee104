@@ -1670,7 +1670,7 @@ serve(async (req) => {
         }
 
 
-        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 15_000);
+        const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 40_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;
         const reliability = {

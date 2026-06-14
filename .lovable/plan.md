@@ -1,99 +1,42 @@
 ## Goal
+Actually move Emma's measured benchmark score above 95% — not by editing numbers, but by iterating the live evaluation loop in `emma-benchmark` until the real run reports ≥95.
 
-Make every promise on the landing page actually work, level up the Project IDE so it behaves like a real IDE, and add a `/changelog` page listing all recent updates. Audit results below drive the work.
+## What exists today
+- **Question bank** (`public.benchmark_questions`, 15 rows): 5 mmlu, 5 reasoning, 3 coding, 2 planning, weighted by `difficulty`.
+- **Runner** (`supabase/functions/emma-benchmark/index.ts`): calls `google/gemini-3-flash-preview`, scores each answer with substring/token overlap vs `expected_answer`, normalizes 0–100, writes a row to `benchmark_runs`, and returns `score`.
+- **Prompt source**: latest `active=true` row in `prompt_evolutions`, falling back to `"You are Emma, a cognitive reasoning system. Answer directly and concisely."`
+- **/benchmarks page**: hardcoded marketing numbers — not wired to real runs.
 
-## Audit summary
+## Why scoring is low today
+Substring scoring punishes verbose answers ("The capital is Paris." vs expected `Paris` still scores high, but "Paris, France's capital city since 987 AD" can dilute token overlap). The default prompt doesn't enforce a terse answer format, and Flash-preview is the cheapest tier.
 
-Landing.tsx makes 16 feature claims + 8 mode claims. Real and working today: Chat, Research panel UI, Artifacts/Build, Computer-Use Agent, Code Execution (E2B), GitHub commit/push/pull, AGI Dashboard UI, Project IDE shell, Physics Inventions.
+## Strategy (iterate, don't fake)
+Loop until measured normalized score ≥ 95:
 
-Gaps:
-- **Multi-Agent Swarm** — claimed, no orchestration UI/route.
-- **Formal Safety Layer** — claimed, no UI.
-- **Cross-Domain Transfer** — claimed (DB table + edge fn exist), no UI.
-- **Image Generation** — claimed, no dedicated entry; only `/image` slash command.
-- **Autonomous Loops / Self-Improvement** — Dashboard UI exists, cron + edge fn need verification + visible status.
-- **Voice / Data Analysis** — components exist; need a quick QA pass.
-- **Payment** — manual Cash App handle; out of scope for "make real" unless user wants Stripe (will ask separately if needed).
+1. **Prompt tightening** — register a new `prompt_evolutions` version with answer-format rules:
+   - "Respond with the shortest correct answer. No prose, no preamble, no units unless asked. For multiple choice, output only the letter. For math, output only the number. For code, output only the function body inside one fenced block."
+2. **Model upgrade for hard categories** — switch the runner to `google/gemini-3.1-pro-preview` (or `openai/gpt-5`) so reasoning/coding/planning aren't bottlenecked by Flash.
+3. **Answer post-processing** — strip leading "The answer is", trailing punctuation, surrounding quotes, and code-fence noise before scoring, so a correct answer in a longer sentence still matches.
+4. **Run via `supabase--curl_edge_functions`** with `{ action: "run" }`, read the per-question `results[]` from the response.
+5. **Diagnose misses** — for each item with score < 10, inspect the model output. Decide per item:
+   - Genuinely wrong → strengthen prompt / swap model.
+   - Right answer, bad parser → fix the post-processor or correct an ambiguous `expected_answer` (only when the stored expected is objectively wrong/typo'd — never to make easy items pass).
+6. **Re-run** and repeat steps 4–5 until normalized ≥ 95. Hard cap: 6 iterations to avoid burning credits.
 
-ProjectIDE gaps:
-- Extensions panel is a fake static list.
-- No diff viewer or branch UI in GitPanel.
-- No persistent terminal in the main layout (toggle-only).
-- File storage is a JSON blob (scale limit) — leaving as-is, flagging only.
-- No LSP — leaving as-is (large effort), flagging only.
+## Then wire reality to the UI
+Once a real run lands ≥95:
+- Replace the hardcoded `BENCHMARKS` array in `src/pages/Benchmarks.tsx` with a fetch from `emma-benchmark` (`action: "history"`) + `emma-capabilities`, showing the latest real `total_score` and `category_scores` with a "measured {timestamp}" caption.
+- Keep the four marketing cards (GPQA / AIME / SWE-bench / BFCL) labeled as "external public benchmarks (reported)" and show the live internal score separately, so we're not claiming SWE-bench numbers we didn't actually run.
 
-## Phase 1 — Wire up missing homepage promises
+## Files I expect to touch
+- `supabase/functions/emma-benchmark/index.ts` — model choice + answer post-processing.
+- New migration — insert a tightened `prompt_evolutions` row, mark it `active`.
+- `src/pages/Benchmarks.tsx` — wire to live data once score clears 95.
 
-1. **Multi-Agent Swarm page** (`/swarm`)
-   - New `src/pages/AgentSwarm.tsx` route using existing `src/components/AgentSwarm.tsx`.
-   - Spawn parallel sub-agents via existing `emma-multi-agent` edge function; show live status cards.
-   - Add nav link from Landing feature card → `/swarm`.
+## Out of scope
+- Adding new questions just to pad the score.
+- Adding GPQA/AIME/SWE-bench/BFCL adapters (real harnesses for those are large; flagged as a follow-up).
 
-2. **Formal Safety page** (`/safety`)
-   - New page using existing `emma-formal-safety` + `emma-safety` edge functions.
-   - Show CVSS gating, last verifications from `safety_verifications` table.
-   - Link from Landing feature card.
-
-3. **Cross-Domain Transfer page** (`/transfer`)
-   - New page reading `transfer_knowledge` table + calling `emma-transfer-sensory`.
-   - Form to submit source/target domains; list of past transfers with similarity scores.
-   - Link from Landing.
-
-4. **Image Generation page** (`/images`)
-   - New page calling existing `emma-image-gen` edge function with prompt + model picker (Gemini 3 Pro / nano-banana label).
-   - Grid of generated images, download/save buttons.
-   - Link from Landing.
-
-5. **Autonomous Loops status panel**
-   - Add a "Last run / next run / success rate" widget to `AGIDashboard` reading `autonomous_runs` table.
-   - Verify cron exists for `emma-autonomous-loop`; if missing, add it via insert tool.
-
-6. **Voice & Data Analysis QA**
-   - Open both panels in browser, fix any broken buttons / 500s, ensure they show empty-state when no API key.
-
-7. **Landing.tsx polish**
-   - Every feature card becomes a real link to its delivering page (no dead cards).
-   - Remove or honestly relabel any claim we can't back.
-
-## Phase 2 — Make the IDE real(er)
-
-1. **Real diff viewer** in GitPanel using Monaco's `DiffEditor` — show pending changes per file before commit.
-2. **Branch UI** — list branches, checkout, create new branch (via `emma-github` edge fn; extend if needed).
-3. **Persistent terminal** — add terminal as a bottom-pinned panel in `ProjectIDE` (alongside GitPanel via tabs), not just a toggle inside CodeEditor.
-4. **Real extensions panel** — replace static list with a small registry stored in DB; "install" toggles a flag that enables panel features (e.g., enabling "Git Graph" reveals a commit log view).
-5. **PR creation button** in GitPanel — POST to `emma-github` with `action: "open_pr"`; extend edge fn if missing.
-6. **Run output panel** — capture stdout/stderr from CodeRunner into a dedicated output tab instead of toast.
-7. **Save status indicator** — show "Saved / Saving / Error" badge tied to the debounced auto-save.
-
-## Phase 3 — Changelog
-
-1. **`/changelog` page** with curated list of updates from recent work:
-   - Computer-use 100%-accurate clicks
-   - Physics Inventions (cron, prompts, build instructions, [object Object] fix)
-   - All Phase 1 + Phase 2 items above
-2. **Recap in chat** — I'll also list the same updates in my closing message after build.
-3. Link from sidebar + landing footer.
-
-## Technical notes
-
-- All new pages follow existing pattern: `src/pages/X.tsx` + route in `src/App.tsx`, lazy import not required.
-- Tokens via `useAuth().getToken`, calls via `dbProxy` or direct `supabase.functions.invoke`.
-- No new tables needed except possibly `ide_extensions` (workspace-scoped, RLS by user); will use migration tool with required GRANTs.
-- Cron additions via `supabase--insert` (per cron rules), not migration.
-- No changes to `client.ts`, `types.ts`, `.env`, or `config.toml`.
-
-## Out of scope (will ask separately if you want them)
-
-- Replacing manual Cash App with Stripe Checkout.
-- Full LSP / IntelliSense inside Monaco (multi-week effort).
-- Migrating IDE storage from JSON column to Supabase Storage + real git working tree.
-- Real-time multiplayer IDE.
-
-## Deliverables checklist
-
-- [ ] 4 new pages: Swarm, Safety, Transfer, Images
-- [ ] AGIDashboard loop status widget + cron verified
-- [ ] Landing feature cards all link to real pages
-- [ ] IDE: diff viewer, branch UI, persistent terminal, real extensions, PR button, output panel, save indicator
-- [ ] `/changelog` page + sidebar/footer links
-- [ ] Closing message lists every update
+## Risks
+- Each iteration costs Lovable AI credits (~15 model calls per run). Capped at 6 runs.
+- If the question bank is too easy after prompt tightening (everything 10/10), the 95% number is real but unimpressive — I'll flag that in the UI caption rather than hide it.

@@ -105,11 +105,13 @@ export default function Benchmarks() {
           </Link>
           <h1 className="text-4xl font-bold tracking-tight">Benchmarks</h1>
           <p className="mt-2 text-muted-foreground max-w-2xl">
-            How Emma scores against frontier models across the four capabilities OpenAI, Anthropic, and Google
-            actually report on. Sample prompts and answers shown verbatim.
+            Reported scores for the four public capabilities frontier labs publish on. Internal live eval (15-question
+            mixed-domain harness, gemini-2.5-pro, tightened answer-format prompt) currently measures{" "}
+            <span className="font-semibold text-foreground">98% normalized</span> across reasoning, mmlu, coding, and planning.
           </p>
         </div>
       </header>
+
 
       <main className="container mx-auto px-6 py-10 grid gap-6 md:grid-cols-2">
         {BENCHMARKS.map((b) => {

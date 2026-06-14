@@ -389,7 +389,7 @@ export function ComputerUseAgent({ getToken }: ComputerUseAgentProps) {
   }, [task, getToken, addStep, updateStep, startKeepalive]);
 
   const runAgentLoop = async (sid: string, taskDesc: string, token: string) => {
-    const actionHistory: { action: string; reasoning: string }[] = [];
+    const actionHistory: { action: string; reasoning: string; params?: any }[] = [];
 
     while (true) {
       if (abortRef.current) {

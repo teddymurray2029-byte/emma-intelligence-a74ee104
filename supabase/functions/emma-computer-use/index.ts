@@ -1277,6 +1277,7 @@ const adminDb = () => createClient(SUPABASE_URL_BG, SERVICE_ROLE_BG, { auth: { p
 const PER_INVOCATION_BUDGET_MS = 80_000;
 const MAX_STEPS = 250;
 const activeRunners = new Set<string>();
+type RunBackgroundOptions = { forceClaim?: boolean; staleAfterMs?: number };
 
 async function loadRun(id: string): Promise<any | null> {
   const { data } = await adminDb().from("agent_runs").select("*").eq("id", id).maybeSingle();
@@ -1286,6 +1287,25 @@ async function patchRun(id: string, patch: Record<string, unknown>) {
   patch.updated_at = new Date().toISOString();
   await adminDb().from("agent_runs").update(patch).eq("id", id);
 }
+
+async function claimRunForBackground(id: string, options: RunBackgroundOptions = {}): Promise<boolean> {
+  const cutoff = new Date(Date.now() - (options.staleAfterMs ?? 30_000)).toISOString();
+  let query = adminDb()
+    .from("agent_runs")
+    .update({ last_heartbeat: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .in("status", ["starting", "running"]);
+
+  if (!options.forceClaim) query = query.lt("last_heartbeat", cutoff);
+
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) {
+    console.warn(`[bg ${id.slice(0, 8)}] claim failed: ${error.message}`);
+    return false;
+  }
+  return Boolean(data?.id);
+}
+
 async function appendStep(run: any, step: any) {
   run.steps = [...(run.steps || []), { ...step, t: new Date().toISOString() }];
   run.step_count = run.steps.length;
@@ -1361,8 +1381,10 @@ async function probeActiveUrl(sandbox: SandboxSession): Promise<string | null> {
 
 const MAX_RESTORES = 5;
 
-async function runBackground(runId: string): Promise<void> {
+async function runBackground(runId: string, options: RunBackgroundOptions = {}): Promise<void> {
   if (activeRunners.has(runId)) return;
+  const claimed = await claimRunForBackground(runId, options);
+  if (!claimed) return;
   activeRunners.add(runId);
   const deadline = Date.now() + PER_INVOCATION_BUDGET_MS;
   console.log(`[bg ${runId.slice(0, 8)}] resume`);

@@ -133,7 +133,7 @@ export function ChatInput({ onSend, disabled, userId }: ChatInputProps) {
             handleSubmit();
           }
         }}
-        placeholder={isListening ? "Listening..." : "Message Emma…  (try /image to generate)"}
+        placeholder={isListening ? "Listening..." : "Message Emma…  (try /image or /video [5|10])"}
         disabled={disabled}
         rows={1}
         className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground/70 text-sm resize-none outline-none px-2 py-2 max-h-40 font-sans leading-relaxed"

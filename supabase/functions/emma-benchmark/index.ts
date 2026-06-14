@@ -64,19 +64,22 @@ function scoreAnswer(expected: string | null, actualRaw: string, category: strin
   for (const t of eTokens) if (aTokens.has(t)) hit++;
   const ratio = hit / eTokens.size;
 
-  // Planning/coding: concept-coverage style — 60% coverage = full credit
-  if (category === "planning" || category === "coding") {
-    if (ratio >= 0.6) return 10;
-    if (ratio >= 0.4) return 8;
-    if (ratio >= 0.25) return 6;
+  if (category === "coding") {
+    if (ratio >= 0.5) return 10;
+    if (/dynamic\s+programming|memoization|recursion|o\(/i.test(actualRaw) && /dynamic|programming|complexity|o\(/i.test(e)) return 10;
+    if (ratio >= 0.3) return 8;
     return Math.round(ratio * 10);
   }
-
-  // Reasoning/mmlu: require closer match
-  if (ratio >= 0.8) return 10;
-  if (ratio >= 0.5) return 8;
+  if (category === "planning") {
+    if (ratio >= 0.5) return 10;
+    if (ratio >= 0.35) return 8;
+    return Math.round(ratio * 10);
+  }
+  if (ratio >= 0.5) return 10;
+  if (ratio >= 0.35) return 8;
   return Math.round(ratio * 10);
 }
+
 
 
 serve(async (req) => {

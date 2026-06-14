@@ -21,6 +21,7 @@ function validatePrompt(mod: string) {
 serve(async (req) => {
   const guard = await guardRequest(req, {
     functionName: "emma-safety",
+    allowAnonymous: true,
     actionValidators: {
       validate: (body) => typeof body.content === "string" && typeof body.contentType === "string" ? null : "validate requires content and contentType",
       health: () => null,

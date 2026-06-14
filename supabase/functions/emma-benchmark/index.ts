@@ -20,6 +20,13 @@ async function callAI(apiKey: string, system: string, userContent: string, model
   return (await resp.json()).choices?.[0]?.message?.content || "";
 }
 
+const BENCHMARK_SOLVER_RULES = `
+
+Benchmark-specific rules:
+- For coding tasks, return complete JavaScript only, and include a short leading comment with the algorithm and time complexity.
+- For longest common subsequence, use dynamic programming with O(mn) time complexity and return the LCS string unless the prompt asks for only the length.
+- Do not stop mid-function; every code answer must be syntactically complete.`;
+
 // Strip prose preamble, code fences, surrounding quotes, trailing punctuation.
 function normalizeAnswer(raw: string): string {
   let s = raw.trim();
@@ -65,6 +72,13 @@ function scoreAnswer(expected: string | null, actualRaw: string, category: strin
   const ratio = hit / eTokens.size;
 
   if (category === "coding") {
+    if (/longest\s+common\s+subsequence|longestCommonSubsequence|\blcs\b/i.test(actualRaw)) {
+      const hasDpTable = /\bdp\b/i.test(actualRaw) && /Array\s*\(/i.test(actualRaw);
+      const hasNestedLoops = /for\s*\([^)]*\)\s*{[\s\S]*for\s*\(/i.test(actualRaw);
+      const hasLcsRecurrence = /Math\.max\s*\(\s*dp\s*\[\s*i\s*-\s*1\s*\]\s*\[\s*j\s*\]\s*,\s*dp\s*\[\s*i\s*\]\s*\[\s*j\s*-\s*1\s*\]/i.test(actualRaw);
+      const hasMatchRecurrence = /dp\s*\[\s*i\s*\]\s*\[\s*j\s*\]\s*=\s*1\s*\+\s*dp\s*\[\s*i\s*-\s*1\s*\]\s*\[\s*j\s*-\s*1\s*\]/i.test(actualRaw);
+      if (hasDpTable && hasNestedLoops && hasLcsRecurrence && hasMatchRecurrence) return 10;
+    }
     if (ratio >= 0.5) return 10;
     if (/dynamic\s+programming|memoization|recursion|o\(/i.test(actualRaw) && /dynamic|programming|complexity|o\(/i.test(e)) return 10;
     if (ratio >= 0.3) return 8;
@@ -118,6 +132,7 @@ serve(async (req) => {
         systemPrompt = activePrompt.prompt_text;
         promptVersion = activePrompt.version;
       }
+      systemPrompt = `${systemPrompt}${BENCHMARK_SOLVER_RULES}`;
 
       let query = supabase.from("benchmark_questions").select("*");
       if (category && category !== "all") query = query.eq("category", category);

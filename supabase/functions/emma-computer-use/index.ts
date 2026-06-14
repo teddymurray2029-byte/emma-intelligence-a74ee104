@@ -1656,6 +1656,20 @@ serve(async (req) => {
           });
         }
 
+        // === Speed: short-circuit obvious wait after open_url (skip model call) ===
+        const lastEntry = history[history.length - 1];
+        if (lastEntry?.action === "open_url") {
+          return json({
+            action: "wait",
+            params: { seconds: 4 },
+            reasoning: `VISIBLE: A browser was just launched and the page is still loading. DECISION: Wait 4s for first paint before reasoning about page contents (deterministic short-circuit — no model call).`,
+            done: false,
+            screenshot: screenshotBase64,
+            traceId,
+          });
+        }
+
+
         const decision = await reliableToolCall("ai_reason", traceId, () => aiReason(screenshotBase64, task, history, userMessage, engagement), 15_000);
         const m = toolMetrics.get("ai_reason");
         const calls = m?.calls || 0;

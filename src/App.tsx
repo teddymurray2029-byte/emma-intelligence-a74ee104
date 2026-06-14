@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ClerkProvider, SignedIn, SignedOut, RedirectToSignIn, useAuth as useClerkAuth } from "@clerk/clerk-react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -57,7 +57,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AgiTokenBridge() {
   const { getToken } = useClerkAuth();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setAgiTokenGetter(() => getToken());
   }, [getToken]);
 

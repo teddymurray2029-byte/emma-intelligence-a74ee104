@@ -121,6 +121,12 @@ export function BenchmarkPanel() {
         lines.push("```");
         lines.push(r.answer);
         lines.push("```");
+        if (r.expected) {
+          lines.push(`**Expected Answer:**`);
+          lines.push("```");
+          lines.push(r.expected);
+          lines.push("```");
+        }
         lines.push(`**Evaluator Reasoning:** ${r.reasoning}`);
         lines.push("");
       });

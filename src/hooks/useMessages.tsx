@@ -18,6 +18,7 @@ export function useMessages(conversationId: string | null, getToken?: () => Prom
           role: m.role as "user" | "assistant",
           content: m.content,
           imageUrl: m.metadata?.imageUrl,
+          videoUrl: m.metadata?.videoUrl,
         })));
       }
     } catch (e) {

@@ -120,14 +120,18 @@ export type Database = {
           engagement: Json | null
           envd_token: string | null
           error: string | null
+          form_state: Json
           id: string
           last_heartbeat: string
+          last_url: string | null
+          restore_count: number
           session_id: string | null
           started_at: string
           status: string
           step_count: number
           steps: Json
           summary: string | null
+          tab_urls: Json
           task: string
           updated_at: string
           user_id: string
@@ -139,14 +143,18 @@ export type Database = {
           engagement?: Json | null
           envd_token?: string | null
           error?: string | null
+          form_state?: Json
           id?: string
           last_heartbeat?: string
+          last_url?: string | null
+          restore_count?: number
           session_id?: string | null
           started_at?: string
           status?: string
           step_count?: number
           steps?: Json
           summary?: string | null
+          tab_urls?: Json
           task: string
           updated_at?: string
           user_id: string
@@ -158,14 +166,18 @@ export type Database = {
           engagement?: Json | null
           envd_token?: string | null
           error?: string | null
+          form_state?: Json
           id?: string
           last_heartbeat?: string
+          last_url?: string | null
+          restore_count?: number
           session_id?: string | null
           started_at?: string
           status?: string
           step_count?: number
           steps?: Json
           summary?: string | null
+          tab_urls?: Json
           task?: string
           updated_at?: string
           user_id?: string

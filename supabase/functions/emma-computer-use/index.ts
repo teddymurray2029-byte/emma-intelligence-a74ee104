@@ -1471,9 +1471,34 @@ serve(async (req) => {
     const idempotencyKey = req.headers.get("Idempotency-Key") || body.idempotencyKey;
     console.log(`[emma-cu] action=${action} trace=${traceId}`);
 
+    // === Cron-protected background tick (no user auth) ===
+    if (action === "bg_tick") {
+      const secret = body.secret || req.headers.get("x-cron-secret");
+      if (!secret || secret !== Deno.env.get("CRON_SECRET")) return json({ error: "unauthorized" }, 401);
+      const cutoff = new Date(Date.now() - 90_000).toISOString();
+      const { data } = await adminDb()
+        .from("agent_runs").select("id")
+        .in("status", ["running", "starting"])
+        .lt("last_heartbeat", cutoff)
+        .limit(10);
+      const ids = (data || []).map((r: any) => r.id);
+      for (const id of ids) {
+        // @ts-ignore — EdgeRuntime is available in Supabase runtime
+        try { EdgeRuntime.waitUntil(runBackground(id)); } catch { runBackground(id); }
+      }
+      return json({ resumed: ids, traceId });
+    }
+
     const userId = await getClerkUserId(req);
     if (!userId) return json({ error: "Unauthorized — sign in required", traceId }, 401);
     const idemScope = `${userId}:${action}:${idempotencyKey || ""}`;
+    if (idempotencyKey) {
+      const cached = idempotencyCache.get(idemScope);
+      if (cached && cached.expiresAt > Date.now()) {
+        return json({ ...(cached.response as Record<string, unknown>), idempotency: { replayed: true, key: idempotencyKey }, traceId });
+      }
+    }
+
     if (idempotencyKey) {
       const cached = idempotencyCache.get(idemScope);
       if (cached && cached.expiresAt > Date.now()) {

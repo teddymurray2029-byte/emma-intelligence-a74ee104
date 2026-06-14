@@ -94,6 +94,15 @@ export async function generateImage(prompt: string): Promise<{ imageUrl: string;
   return resp.json();
 }
 
+const VIDEO_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/emma-video-gen`;
+
+export async function generateVideo(prompt: string, duration: number = 5): Promise<{ videoUrl: string; duration: number; text: string }> {
+  const auth = await getAuthHeader();
+  const resp = await fetch(VIDEO_URL, { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body: JSON.stringify({ prompt, duration }) });
+  if (!resp.ok) { const data = await resp.json().catch(() => ({ error: "Video generation failed" })); throw new Error(data.error || `Error ${resp.status}`); }
+  return resp.json();
+}
+
 export async function runResearch(objective: string): Promise<ResearchReport> {
   const auth = await getAuthHeader();
   const resp = await fetch(RESEARCH_URL, { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body: JSON.stringify({ objective }) });

@@ -314,15 +314,14 @@ export default function Landing() {
           >
             Get Membership — $12/month
           </Button>
-          <Link to="/demo">
-            <Button
-              size="lg"
-              variant="ghost"
-              className="h-14 px-6 text-base font-medium text-amber-200/90 hover:text-amber-100 hover:bg-amber-500/10"
-            >
-              View read-only demo →
-            </Button>
-          </Link>
+          <Button
+            onClick={() => { localStorage.setItem("emma_demo_mode", "1"); navigate("/app"); }}
+            size="lg"
+            variant="ghost"
+            className="h-14 px-6 text-base font-medium text-amber-200/90 hover:text-amber-100 hover:bg-amber-500/10"
+          >
+            Try the demo — no account →
+          </Button>
         </motion.div>
 
         <motion.div

@@ -1439,10 +1439,37 @@ serve(async (req) => {
               console.warn(`[refine] skipped: ${e instanceof Error ? e.message : String(e)}`);
             }
           }
+          // === Drag-select endpoint refinement ===
+          if (actionType === "drag_select" &&
+              typeof params?.x1 === "number" && typeof params?.y1 === "number" &&
+              typeof params?.x2 === "number" && typeof params?.y2 === "number") {
+            try {
+              const { base64: preShot } = await reliableToolCall("refine_screenshot", traceId, () => captureScreenshotData(sandbox), 12_000);
+              const hint = params?.target ? `start of: ${params.target}` : "start of selection";
+              const hint2 = params?.target ? `end of: ${params.target}` : "end of selection";
+              const [r1, r2] = await Promise.all([
+                reliableToolCall("refine_drag_start", traceId, () => refineClickCoords(preShot, params.x1, params.y1, hint), 10_000),
+                reliableToolCall("refine_drag_end", traceId, () => refineClickCoords(preShot, params.x2, params.y2, hint2), 10_000),
+              ]);
+              const adjusted = r1.adjusted || r2.adjusted;
+              if (adjusted) {
+                result.refinement = {
+                  from: { x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2 },
+                  to: { x1: r1.x, y1: r1.y, x2: r2.x, y2: r2.y },
+                };
+                params.x1 = r1.x; params.y1 = r1.y; params.x2 = r2.x; params.y2 = r2.y;
+              }
+            } catch (e) {
+              console.warn(`[refine drag] skipped: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+          console.log(`[action] ${actionType} params=${JSON.stringify(params).slice(0, 200)} trace=${traceId}`);
           const xdoCmd = buildXdotoolCommand(actionType, params);
           if (xdoCmd) {
+            const t0 = Date.now();
             try {
               const cmdResult = await reliableToolCall("execute_action", traceId, () => runCommand(sandbox, xdoCmd.cmd, xdoCmd.args, 15), 20_000);
+              console.log(`[action] ${actionType} exit=${cmdResult.exitCode} latency=${Date.now() - t0}ms`);
               if (cmdResult.exitCode !== 0) {
                 result = { success: false, error: cmdResult.stderr || cmdResult.stdout || "Command failed" };
               }

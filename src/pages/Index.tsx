@@ -170,17 +170,16 @@ export default function Index() {
           updateLastAssistant(content, imageUrl);
           if (convId) await saveMessage("assistant", content, { imageUrl }, convId);
         } else {
-          // /video [5|10] prompt — duration optional, defaults to 5s. Max 10s per clip (Kling).
+          // /video [5-30] prompt — duration in seconds, default 5. Backend chains 10s Kling clips.
           let rest = input.slice(7).trim();
           let duration = 5;
           const m = rest.match(/^(\d{1,2})\s+(.+)$/);
           if (m) {
-            const d = parseInt(m[1], 10);
-            if (d >= 6) duration = 10; else duration = 5;
+            duration = Math.max(5, Math.min(30, parseInt(m[1], 10)));
             rest = m[2];
           }
           if (!rest) { toast.error("Please provide a video prompt"); setIsLoading(false); return; }
-          updateLastAssistant(`🎬 Generating ${duration}s video... (this can take 1-3 minutes)`);
+          updateLastAssistant(`🎬 Generating ${duration}s video${duration > 10 ? ` (${Math.ceil(duration / 10)} chained clips)` : ""}... this can take 3-8 minutes.`);
           const { videoUrl, text } = await generateVideo(rest, duration);
           const content = text || `Generated video: "${rest}"`;
           updateLastAssistant(content, undefined, videoUrl);
